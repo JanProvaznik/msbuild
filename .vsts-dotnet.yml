@@ -124,6 +124,9 @@ extends:
           value: Products/$(System.TeamProject)/$(Build.Repository.Name)/$(Build.SourceBranchName)/$(Build.BuildNumber)
 
         steps:
+        - pwsh: Get-MpComputerStatus
+        - pwsh: Set-MpPreference -DisableRealtimeMonitoring $true
+
         - task: NuGetToolInstaller@1
           displayName: 'Install NuGet.exe'
 
