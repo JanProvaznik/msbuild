@@ -1,4 +1,4 @@
-name: Version Bumper
+name: Version Bump Bot
 
 on:
   issue_comment:
@@ -6,6 +6,7 @@ on:
 
 jobs:
   bump-version:
+    # Only trigger on PR comments starting with "/bump"
     if: ${{ github.event.issue.pull_request && startsWith(github.event.comment.body, '/bump') }}
     runs-on: ubuntu-latest
     permissions:
@@ -13,18 +14,23 @@ jobs:
       pull-requests: write
 
     steps:
+      # Fetch PR information
       - name: Get PR Info
         id: pr-info
         run: |
-          echo "PR_URL=${{ github.event.issue.pull_request.url }}" >> $GITHUB_ENV
-        shell: bash
+          echo "PR_NUMBER=${{ github.event.issue.number }}" >> $GITHUB_ENV
+          echo "PR_HEAD_REF=$(gh pr view ${{ github.event.issue.number }} --json headRefName -q '.headRefName')" >> $GITHUB_ENV
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Checkout the PR branch
       - name: Checkout PR branch
         uses: actions/checkout@v3
         with:
-          ref: ${{ github.event.issue.pull_request.head.ref }}
+          ref: ${{ env.PR_HEAD_REF }}
           fetch-depth: 0
 
+      # Update the version in Versions.props
       - name: Update Version
         id: update-version
         shell: pwsh
@@ -51,6 +57,7 @@ jobs:
               echo "changed=false" >> $env:GITHUB_OUTPUT
           }
 
+      # Commit the updated version to the PR branch
       - name: Commit and Push Changes
         if: steps.update-version.outputs.changed == 'true'
         shell: bash
@@ -64,4 +71,4 @@ jobs:
           Triggered by: @${{ github.event.comment.user.login }}
           Timestamp (UTC): $(date -u +"%Y-%m-%d %H:%M:%S")"
 
-          git push
+          git push origin $PR_HEAD_REF
