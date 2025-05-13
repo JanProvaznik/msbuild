@@ -53,6 +53,7 @@
     <SystemDiagnosticsEventLogVersion>9.0.0</SystemDiagnosticsEventLogVersion>
     <SystemFormatsAsn1Version>9.0.0</SystemFormatsAsn1Version>
     <SystemFormatsNrbfVersion>9.0.0</SystemFormatsNrbfVersion>
+    <SystemIOHashingVersion>9.0.0</SystemIOHashingVersion>
     <SystemReflectionMetadataVersion>9.0.0</SystemReflectionMetadataVersion>
     <SystemReflectionMetadataLoadContextVersion>9.0.0</SystemReflectionMetadataLoadContextVersion>
     <SystemResourcesExtensionsVersion>9.0.0</SystemResourcesExtensionsVersion>

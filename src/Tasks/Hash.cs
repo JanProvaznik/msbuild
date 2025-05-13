@@ -2,7 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
-using System.Security.Cryptography;
+using System.IO.Hashing;
 using System.Text;
 using Microsoft.Build.Framework;
 
@@ -14,13 +14,11 @@ namespace Microsoft.Build.Tasks
     /// Generates a hash of a given ItemGroup items. Metadata is not considered in the hash.
     /// </summary>
     /// <remarks>
-    /// Currently uses SHA256. Implementation subject to change between MSBuild versions.
+    /// Currently uses XxHash64. Implementation subject to change between MSBuild versions.
     /// This class is not intended as a cryptographic security measure, only uniqueness between build executions
-    /// - collisions can theoretically be possible in the future (should we move to noncrypto hash) and should be handled gracefully by the caller.
+    /// - collisions can theoretically be possible and should be handled gracefully by the caller.
     ///
-    /// Usage of cryptographic secure hash brings slight performance penalty, but it is considered acceptable.
-    /// Would this need to be revised - XxHash64 from System.Io.Hashing could be used instead for better performance.
-    /// (That however currently requires load of additional binary into VS process which has it's own costs)
+    /// Usage of non-cryptographic hash brings better performance compared to cryptographic secure hash like SHA256.
     /// </remarks>
     public class Hash : TaskExtension
     {
@@ -28,9 +26,9 @@ namespace Microsoft.Build.Tasks
         private static readonly Encoding s_encoding = Encoding.UTF8;
         private static readonly byte[] s_itemSeparatorCharacterBytes = s_encoding.GetBytes([ItemSeparatorCharacter]);
 
-        // Size of buffer where bytes of the strings are stored until sha.TransformBlock is to be run on them.
-        // It is needed to get a balance between amount of costly sha.TransformBlock calls and amount of allocated memory.
-        private const int ShaBufferSize = 512;
+        // Size of buffer where bytes of the strings are stored until hash update is to be run on them.
+        // It is needed to get a balance between amount of calls and amount of allocated memory.
+        private const int HashBufferSize = 512;
 
         // Size of chunks in which ItemSpecs would be cut.
         // We have chosen this length so itemSpecChunkByteBuffer rented from ArrayPool will be close but not bigger than 512.
@@ -56,116 +54,115 @@ namespace Microsoft.Build.Tasks
         /// <summary>
         /// Execute the task.
         /// </summary>
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA5350:Do Not Use Weak Cryptographic Algorithms", Justification = "This is not intended as a cryptographic security measure, only for uniqueness between build executions.")]
         public override bool Execute()
         {
             if (ItemsToHash?.Length > 0)
             {
-                using (var sha = CreateHashAlgorithm())
+                var xxHash = new XxHash64();
+
+                // Buffer in which bytes of the strings are to be stored until their number reaches the limit size.
+                // Once the limit is reached, the hash.Append is to be run on all the bytes of this buffer.
+                byte[] hashBuffer = null;
+
+                // Buffer in which bytes of items' ItemSpec are to be stored.
+                byte[] itemSpecChunkByteBuffer = null;
+
+                try
                 {
-                    // Buffer in which bytes of the strings are to be stored until their number reaches the limit size.
-                    // Once the limit is reached, the sha.TransformBlock is to be run on all the bytes of this buffer.
-                    byte[] shaBuffer = null;
+                    hashBuffer = System.Buffers.ArrayPool<byte>.Shared.Rent(HashBufferSize);
+                    itemSpecChunkByteBuffer = System.Buffers.ArrayPool<byte>.Shared.Rent(s_encoding.GetMaxByteCount(MaxInputChunkLength));
 
-                    // Buffer in which bytes of items' ItemSpec are to be stored.
-                    byte[] itemSpecChunkByteBuffer = null;
-
-                    try
+                    int hashBufferPosition = 0;
+                    for (int i = 0; i < ItemsToHash.Length; i++)
                     {
-                        shaBuffer = System.Buffers.ArrayPool<byte>.Shared.Rent(ShaBufferSize);
-                        itemSpecChunkByteBuffer = System.Buffers.ArrayPool<byte>.Shared.Rent(s_encoding.GetMaxByteCount(MaxInputChunkLength));
+                        string itemSpec = IgnoreCase ? ItemsToHash[i].ItemSpec.ToUpperInvariant() : ItemsToHash[i].ItemSpec;
 
-                        int shaBufferPosition = 0;
-                        for (int i = 0; i < ItemsToHash.Length; i++)
+                        // Slice the itemSpec string into chunks of reasonable size and add them to hash buffer.
+                        for (int itemSpecPosition = 0; itemSpecPosition < itemSpec.Length; itemSpecPosition += MaxInputChunkLength)
                         {
-                            string itemSpec = IgnoreCase ? ItemsToHash[i].ItemSpec.ToUpperInvariant() : ItemsToHash[i].ItemSpec;
+                            int charsToProcess = Math.Min(itemSpec.Length - itemSpecPosition, MaxInputChunkLength);
+                            int byteCount = s_encoding.GetBytes(itemSpec, itemSpecPosition, charsToProcess, itemSpecChunkByteBuffer, 0);
 
-                            // Slice the itemSpec string into chunks of reasonable size and add them to sha buffer.
-                            for (int itemSpecPosition = 0; itemSpecPosition < itemSpec.Length; itemSpecPosition += MaxInputChunkLength)
-                            {
-                                int charsToProcess = Math.Min(itemSpec.Length - itemSpecPosition, MaxInputChunkLength);
-                                int byteCount = s_encoding.GetBytes(itemSpec, itemSpecPosition, charsToProcess, itemSpecChunkByteBuffer, 0);
-
-                                shaBufferPosition = AddBytesToShaBuffer(sha, shaBuffer, shaBufferPosition, ShaBufferSize, itemSpecChunkByteBuffer, byteCount);
-                            }
-
-                            shaBufferPosition = AddBytesToShaBuffer(sha, shaBuffer, shaBufferPosition, ShaBufferSize, s_itemSeparatorCharacterBytes, s_itemSeparatorCharacterBytes.Length);
+                            hashBufferPosition = AddBytesToHashBuffer(xxHash, hashBuffer, hashBufferPosition, HashBufferSize, itemSpecChunkByteBuffer, byteCount);
                         }
 
-                        sha.TransformFinalBlock(shaBuffer, 0, shaBufferPosition);
-
-#if NET
-                        HashResult = Convert.ToHexStringLower(sha.Hash);
-#else
-                        using (var stringBuilder = new ReuseableStringBuilder(sha.HashSize))
-                        {
-                            foreach (var b in sha.Hash)
-                            {
-                                stringBuilder.Append(b.ToString("x2"));
-                            }
-                            HashResult = stringBuilder.ToString();
-                        }
-#endif
+                        hashBufferPosition = AddBytesToHashBuffer(xxHash, hashBuffer, hashBufferPosition, HashBufferSize, s_itemSeparatorCharacterBytes, s_itemSeparatorCharacterBytes.Length);
                     }
-                    finally
+
+                    // Process any remaining bytes
+                    if (hashBufferPosition > 0)
                     {
-                        if (shaBuffer != null)
+                        xxHash.Append(hashBuffer.AsSpan(0, hashBufferPosition));
+                    }
+
+                    byte[] hashResult = BitConverter.GetBytes(xxHash.GetCurrentHashAsUInt64());
+                    
+#if NET
+                    HashResult = Convert.ToHexStringLower(hashResult);
+#else
+                    using (var stringBuilder = new ReuseableStringBuilder(hashResult.Length * 2))
+                    {
+                        foreach (var b in hashResult)
                         {
-                            System.Buffers.ArrayPool<byte>.Shared.Return(shaBuffer);
+                            stringBuilder.Append(b.ToString("x2"));
                         }
-                        if (itemSpecChunkByteBuffer != null)
-                        {
-                            System.Buffers.ArrayPool<byte>.Shared.Return(itemSpecChunkByteBuffer);
-                        }
+                        HashResult = stringBuilder.ToString();
+                    }
+#endif
+                }
+                finally
+                {
+                    if (hashBuffer != null)
+                    {
+                        System.Buffers.ArrayPool<byte>.Shared.Return(hashBuffer);
+                    }
+                    if (itemSpecChunkByteBuffer != null)
+                    {
+                        System.Buffers.ArrayPool<byte>.Shared.Return(itemSpecChunkByteBuffer);
                     }
                 }
             }
             return true;
         }
 
-        private HashAlgorithm CreateHashAlgorithm()
-        {
-            return SHA256.Create();
-        }
-
         /// <summary>
-        /// Add bytes to the sha buffer. Once the limit size is reached, sha.TransformBlock is called and the buffer is flushed.
+        /// Add bytes to the hash buffer. Once the limit size is reached, hash.Append is called and the buffer is flushed.
         /// </summary>
-        /// <param name="sha">Hashing algorithm sha.</param>
-        /// <param name="shaBuffer">The sha buffer which stores bytes of the strings. Bytes should be added to this buffer.</param>
-        /// <param name="shaBufferPosition">Number of used bytes of the sha buffer.</param>
-        /// <param name="shaBufferSize">The size of sha buffer.</param>
-        /// <param name="byteBuffer">Bytes buffer which contains bytes to be written to sha buffer.</param>
-        /// <param name="byteCount">Amount of bytes that are to be added to sha buffer.</param>
-        /// <returns>Updated shaBufferPosition.</returns>
-        private int AddBytesToShaBuffer(HashAlgorithm sha, byte[] shaBuffer, int shaBufferPosition, int shaBufferSize, byte[] byteBuffer, int byteCount)
+        /// <param name="hash">XxHash64 hashing algorithm instance.</param>
+        /// <param name="hashBuffer">The hash buffer which stores bytes of the strings. Bytes should be added to this buffer.</param>
+        /// <param name="hashBufferPosition">Number of used bytes of the hash buffer.</param>
+        /// <param name="hashBufferSize">The size of hash buffer.</param>
+        /// <param name="byteBuffer">Bytes buffer which contains bytes to be written to hash buffer.</param>
+        /// <param name="byteCount">Amount of bytes that are to be added to hash buffer.</param>
+        /// <returns>Updated hashBufferPosition.</returns>
+        private int AddBytesToHashBuffer(XxHash64 hash, byte[] hashBuffer, int hashBufferPosition, int hashBufferSize, byte[] byteBuffer, int byteCount)
         {
             int bytesProcessed = 0;
-            while (shaBufferPosition + byteCount >= shaBufferSize)
+            while (hashBufferPosition + byteCount >= hashBufferSize)
             {
-                int shaBufferFreeSpace = shaBufferSize - shaBufferPosition;
+                int hashBufferFreeSpace = hashBufferSize - hashBufferPosition;
 
-                if (shaBufferPosition == 0)
+                if (hashBufferPosition == 0)
                 {
-                    // If sha buffer is empty and bytes number is big enough there is no need to copy bytes to sha buffer.
-                    // Pass the bytes to TransformBlock right away.
-                    sha.TransformBlock(byteBuffer, bytesProcessed, shaBufferSize, null, 0);
+                    // If hash buffer is empty and bytes number is big enough there is no need to copy bytes to hash buffer.
+                    // Pass the bytes to Append right away.
+                    hash.Append(byteBuffer.AsSpan(bytesProcessed, hashBufferSize));
                 }
                 else
                 {
-                    Array.Copy(byteBuffer, bytesProcessed, shaBuffer, shaBufferPosition, shaBufferFreeSpace);
-                    sha.TransformBlock(shaBuffer, 0, shaBufferSize, null, 0);
-                    shaBufferPosition = 0;
+                    Array.Copy(byteBuffer, bytesProcessed, hashBuffer, hashBufferPosition, hashBufferFreeSpace);
+                    hash.Append(hashBuffer.AsSpan(0, hashBufferSize));
+                    hashBufferPosition = 0;
                 }
 
-                bytesProcessed += shaBufferFreeSpace;
-                byteCount -= shaBufferFreeSpace;
+                bytesProcessed += hashBufferFreeSpace;
+                byteCount -= hashBufferFreeSpace;
             }
 
-            Array.Copy(byteBuffer, bytesProcessed, shaBuffer, shaBufferPosition, byteCount);
-            shaBufferPosition += byteCount;
+            Array.Copy(byteBuffer, bytesProcessed, hashBuffer, hashBufferPosition, byteCount);
+            hashBufferPosition += byteCount;
 
-            return shaBufferPosition;
+            return hashBufferPosition;
         }
     }
 }
