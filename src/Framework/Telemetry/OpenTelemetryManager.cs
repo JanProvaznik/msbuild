@@ -1,10 +1,8 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 #if NETFRAMEWORK
-using Microsoft.VisualStudio.OpenTelemetry.ClientExtensions;
-using Microsoft.VisualStudio.OpenTelemetry.ClientExtensions.Exporters;
-using Microsoft.VisualStudio.OpenTelemetry.Collector.Interfaces;
-using Microsoft.VisualStudio.OpenTelemetry.Collector.Settings;
+using Microsoft.VisualStudio.OpenTelemetry.Client;
+using Microsoft.VisualStudio.OpenTelemetry.Client.Api;
 using OpenTelemetry;
 using OpenTelemetry.Trace;
 #endif
@@ -36,7 +34,7 @@ namespace Microsoft.Build.Framework.Telemetry
 
 #if NETFRAMEWORK
         private TracerProvider? _tracerProvider;
-        private IOpenTelemetryCollector? _collector;
+        private IOpenTelemetrySession? _session;
 #endif
 
         public string? LoadFailureExceptionMessage { get; set; }
@@ -48,6 +46,7 @@ namespace Microsoft.Build.Framework.Telemetry
 
         private OpenTelemetryManager()
         {
+            
         }
 
         /// <summary>
@@ -94,20 +93,20 @@ namespace Microsoft.Build.Framework.Telemetry
 #if NETFRAMEWORK
             try
             {
-                InitializeTracerProvider();
-
-                // TODO: Enable commented logic when Collector is present in VS
-                // if (isStandalone)
-                InitializeCollector();
-
-                // }
+                if (isStandalone)
+                {
+                    InitializeStandalone();
+                }
+                else
+                {
+                    InitializeInVS();
+                }
             }
             catch (Exception ex) when (ex is System.IO.FileNotFoundException or System.IO.FileLoadException)
             {
                 // catch exceptions from loading the OTel SDK or Collector to maintain usability of Microsoft.Build.Framework package in our and downstream tests in VS.
                 _telemetryState = TelemetryState.Unsampled;
                 LoadFailureExceptionMessage = ex.ToString();
-                return;
             }
 #endif
         }
@@ -124,34 +123,25 @@ namespace Microsoft.Build.Framework.Telemetry
         /// Initializes the OpenTelemetry SDK TracerProvider with VS default exporter settings.
         /// </summary>
         [MethodImpl(MethodImplOptions.NoInlining)] // avoid assembly loads
-        private void InitializeTracerProvider()
+        private void InitializeInVS()
         {
-            var exporterSettings = OpenTelemetryExporterSettingsBuilder
-                .CreateVSDefault(TelemetryConstants.VSMajorVersion)
-                .Build();
-
-            TracerProviderBuilder tracerProviderBuilder = Sdk
-                .CreateTracerProviderBuilder()
-                                // this adds listeners to ActivitySources with the prefix "Microsoft.VisualStudio.OpenTelemetry."
-                                .AddVisualStudioDefaultTraceExporter(exporterSettings);
-
-            _tracerProvider = tracerProviderBuilder.Build();
-            _telemetryState = TelemetryState.ExporterInitialized;
+            // ?
+            // var openTelemetryService = GlobalServiceProvider.GetService(typeof(IVsOpenTelemetryService));?
+            // Assumes.Present(openTelemetryService);?
+            // var openTelemetrySession = openTelemetryService.GetDefaultSession();?
+            var sessionSettings = OpenTelemetrySessionSettingsBuilder.CreateVSDefault(TelemetryConstants.VSMajorVersion).WithNoCollector().Build();
+            
+            OpenTelemetryService.Initialize(sessionSettings);
         }
 
         /// <summary>
         /// Initializes the VS OpenTelemetry Collector with VS default settings.
         /// </summary>
         [MethodImpl(MethodImplOptions.NoInlining)] // avoid assembly loads
-        private void InitializeCollector()
+        private void InitializeStandalone()
         {
-            IOpenTelemetryCollectorSettings collectorSettings = OpenTelemetryCollectorSettingsBuilder
-                .CreateVSDefault(TelemetryConstants.VSMajorVersion)
-                .Build();
-
-            _collector = OpenTelemetryCollectorProvider.CreateCollector(collectorSettings);
-            _collector.StartAsync().GetAwaiter().GetResult();
-
+            var sessionSettings = OpenTelemetrySessionSettingsBuilder.CreateVSDefault(TelemetryConstants.VSMajorVersion).Build();
+            OpenTelemetryService.Initialize(sessionSettings);
             _telemetryState = TelemetryState.CollectorInitialized;
         }
 #endif
@@ -180,8 +170,7 @@ namespace Microsoft.Build.Framework.Telemetry
         {
 #if NETFRAMEWORK
             _tracerProvider?.Shutdown();
-            // Dispose stops the collector, with a default drain timeout of 10s
-            _collector?.Dispose();
+            _session?.Dispose();
 #endif
         }
 

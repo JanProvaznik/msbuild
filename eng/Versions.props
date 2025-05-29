@@ -64,7 +64,7 @@
     <SystemThreadingTasksDataflowVersion>9.0.0</SystemThreadingTasksDataflowVersion>
   </PropertyGroup>
   <PropertyGroup>
-    <MicrosoftVisualStudioOpenTelemetryVersion>0.2.104-beta</MicrosoftVisualStudioOpenTelemetryVersion>
+    <MicrosoftVisualStudioOpenTelemetryVersion>1.0.15</MicrosoftVisualStudioOpenTelemetryVersion>
     <!-- maintained in eng/dependabot/Packages.props -->
     <!--
     <SystemCodeDomVersion></SystemCodeDomVersion>
