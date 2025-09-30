@@ -14,7 +14,7 @@ namespace VisualStudioDemo
     /// This class demonstrates unwrapped File/Directory API usage.
     /// 
     /// Try the code fixer:
-    /// 1. Place cursor on any MSB4260 warning (green squiggle)
+    /// 1. Place cursor on any MSB9999 warning (green squiggle)
     /// 2. Press Ctrl+. to open Quick Actions
     /// 3. Select "Wrap with TaskEnvironment.GetAbsolutePath()"
     /// 4. Watch the warning disappear!
@@ -30,35 +30,35 @@ namespace VisualStudioDemo
 
         public bool Execute()
         {
-            // ❌ MSB4260: File.Exists with unwrapped path - Code fixer available!
+            // ❌ MSB9999: File.Exists with unwrapped path - Code fixer available!
             if (File.Exists(InputFile))
             {
-                // ❌ MSB4260: Directory.Exists with unwrapped path
+                // ❌ MSB9999: Directory.Exists with unwrapped path
                 if (!Directory.Exists(OutputDirectory))
                 {
-                    // ❌ MSB4260: Directory.CreateDirectory with unwrapped path
+                    // ❌ MSB9999: Directory.CreateDirectory with unwrapped path
                     Directory.CreateDirectory(OutputDirectory);
                 }
 
-                // ❌ MSB4260: File.ReadAllText with unwrapped path
+                // ❌ MSB9999: File.ReadAllText with unwrapped path
                 string content = File.ReadAllText(InputFile);
 
-                // ❌ MSB4260: Path.GetFullPath - always banned (use TaskEnvironment.GetAbsolutePath instead)
+                // ❌ MSB9999: Path.GetFullPath - always banned (use TaskEnvironment.GetAbsolutePath instead)
                 string fullPath = Path.GetFullPath(InputFile);
 
-                // ❌ MSB4260: new FileInfo with unwrapped path
+                // ❌ MSB9999: new FileInfo with unwrapped path
                 var fileInfo = new FileInfo(InputFile);
 
-                // ❌ MSB4260: new DirectoryInfo with unwrapped path
+                // ❌ MSB9999: new DirectoryInfo with unwrapped path
                 var dirInfo = new DirectoryInfo(OutputDirectory);
 
-                // ❌ MSB4260: new StreamReader with unwrapped path
+                // ❌ MSB9999: new StreamReader with unwrapped path
                 using (var reader = new StreamReader(InputFile))
                 {
                     string line = reader.ReadLine();
                 }
 
-                // ❌ MSB4260: File.WriteAllText with unwrapped path
+                // ❌ MSB9999: File.WriteAllText with unwrapped path
                 File.WriteAllText(Path.Combine(OutputDirectory, "output.txt"), content);
 
                 return true;
@@ -69,7 +69,7 @@ namespace VisualStudioDemo
     }
 
     /// <summary>
-    /// Example of CORRECT code - no MSB4260 warnings!
+    /// Example of CORRECT code - no MSB9999 warnings!
     /// All File/Directory operations use absolute paths via TaskEnvironment.GetAbsolutePath().
     /// This is what your code should look like after applying the code fixer.
     /// </summary>
@@ -84,20 +84,20 @@ namespace VisualStudioDemo
 
         public bool Execute()
         {
-            // ✅ Wrapped with TaskEnvironment.GetAbsolutePath() - NO MSB4260 warning
+            // ✅ Wrapped with TaskEnvironment.GetAbsolutePath() - NO MSB9999 warning
             if (File.Exists(TaskEnvironment.GetAbsolutePath(InputFile)))
             {
-                // ✅ Wrapped path - NO MSB4260 warning
+                // ✅ Wrapped path - NO MSB9999 warning
                 if (!Directory.Exists(TaskEnvironment.GetAbsolutePath(OutputDirectory)))
                 {
-                    // ✅ Wrapped path - NO MSB4260 warning
+                    // ✅ Wrapped path - NO MSB9999 warning
                     Directory.CreateDirectory(TaskEnvironment.GetAbsolutePath(OutputDirectory));
                 }
 
-                // ✅ Wrapped path - NO MSB4260 warning
+                // ✅ Wrapped path - NO MSB9999 warning
                 string content = File.ReadAllText(TaskEnvironment.GetAbsolutePath(InputFile));
                 
-                // ✅ Path.Combine result wrapped - NO MSB4260 warning
+                // ✅ Path.Combine result wrapped - NO MSB9999 warning
                 var outputFile = TaskEnvironment.GetAbsolutePath(
                     Path.Combine(TaskEnvironment.GetAbsolutePath(OutputDirectory), "output.txt"));
                 File.WriteAllText(outputFile, content);

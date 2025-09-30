@@ -27,7 +27,7 @@ namespace Microsoft.Build.Utilities.Analyzer
         /// Diagnostic rule for detecting banned API usage in IMultiThreadableTask implementations.
         /// </summary>
         public static readonly DiagnosticDescriptor MultiThreadableTaskSymbolIsBannedRule = new DiagnosticDescriptor(
-            id: "MSB4260",
+            id: "MSB9999",
             title: "Symbol is banned in IMultiThreadableTask implementations",
             messageFormat: "Symbol '{0}' is banned in IMultiThreadableTask implementations{1}",
             category: "Usage",

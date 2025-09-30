@@ -10,7 +10,7 @@ This demo project validates the IMultiThreadableTask analyzer and code fixer fun
 
 2. **Open the demo file**: `DemoTask.cs`
 
-3. **Observe warnings**: ProblematicTask should show 9 green squiggles (MSB4260 diagnostics)
+3. **Observe warnings**: ProblematicTask should show 9 green squiggles (MSB9999 diagnostics)
 
 4. **Test code fixer**:
    - Place cursor on any warning
@@ -22,7 +22,7 @@ This demo project validates the IMultiThreadableTask analyzer and code fixer fun
 
 ### ProblematicTask (Lines 12-68)
 
-**9 MSB4260 warnings** on unwrapped File/Directory API calls:
+**9 MSB9999 warnings** on unwrapped File/Directory API calls:
 
 - Line 34: `File.Exists(InputFile)`
 - Line 37: `Directory.Exists(OutputDirectory)`
@@ -36,7 +36,7 @@ This demo project validates the IMultiThreadableTask analyzer and code fixer fun
 
 ### CorrectTask (Lines 70-105)
 
-**0 MSB4260 warnings** - all paths wrapped with `TaskEnvironment.GetAbsolutePath()`
+**0 MSB9999 warnings** - all paths wrapped with `TaskEnvironment.GetAbsolutePath()`
 
 ## Build Verification
 
@@ -44,7 +44,7 @@ This demo project validates the IMultiThreadableTask analyzer and code fixer fun
 dotnet build VisualStudioDemo.csproj
 ```
 
-**Expected**: 9 MSB4260 warnings
+**Expected**: 9 MSB9999 warnings
 
 ## What This Demonstrates
 

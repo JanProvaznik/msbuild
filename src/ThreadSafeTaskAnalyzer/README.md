@@ -8,7 +8,7 @@ Roslyn analyzer and code fixer for detecting unsafe API usage in MSBuild tasks i
 
 Multithreaded MSBuild tasks must avoid APIs that depend on process-global state (working directory, environment variables, culture settings). This analyzer:
 
-1. **Detects unsafe API usage** with MSB4260 diagnostics
+1. **Detects unsafe API usage** with MSB9999 diagnostics
 2. **Provides automated fixes** via code actions for file system operations
 3. **Guides developers** toward thread-safe alternatives using `TaskEnvironment`
 

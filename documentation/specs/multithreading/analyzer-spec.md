@@ -37,7 +37,7 @@ CSharpIMultiThreadableTaskCodeFixProvider
 
 ### 2.2 Diagnostic Information
 
-**Diagnostic ID**: `MSB4260`  
+**Diagnostic ID**: `MSB9999`  
 **Category**: `Microsoft.Build.Tasks`  
 **Default Severity**: `Warning`  
 **Title**: "Symbol is banned in IMultiThreadableTask implementations"  
@@ -142,7 +142,7 @@ For each invocation or object creation:
 File.Exists(path)
 → parameter: string path
 → argument: 'path' (unwrapped)
-→ MSB4260: Uses current working directory
+→ MSB9999: Uses current working directory
 
 // Case 2: Wrapped - NO WARNING
 File.Exists(TaskEnvironment.GetAbsolutePath(path))
@@ -256,7 +256,7 @@ The fixer does NOT appear for:
 
 The fixer registers with:
 - **Language**: C#
-- **Diagnostic ID**: MSB4260
+- **Diagnostic ID**: MSB9999
 - **Code Actions**: Single action per diagnostic
 
 Visual Studio integration:
@@ -406,20 +406,20 @@ src/ThreadSafeTaskAnalyzer/
 ### 6.2 Demo Task Design
 
 **ProblematicTask**: Demonstrates all unwrapped API patterns
-- Each line that should warn has a comment: `// ❌ MSB4260: ...`
+- Each line that should warn has a comment: `// ❌ MSB9999: ...`
 - Covers: File, Directory, FileInfo, DirectoryInfo, StreamReader, Path.GetFullPath
-- Expected: 9 MSB4260 warnings
+- Expected: 9 MSB9999 warnings
 
 **CorrectTask**: Demonstrates proper usage with wrapped paths
-- Each line has a comment: `// ✅ NO MSB4260 warning`
+- Each line has a comment: `// ✅ NO MSB9999 warning`
 - Shows same operations as ProblematicTask but with `TaskEnvironment.GetAbsolutePath()`
-- Expected: 0 MSB4260 warnings
+- Expected: 0 MSB9999 warnings
 
 ### 6.3 Validation Criteria
 
 ✅ **Analyzer Accuracy**:
-- ProblematicTask: Exactly 9 MSB4260 warnings
-- CorrectTask: 0 MSB4260 warnings
+- ProblematicTask: Exactly 9 MSB9999 warnings
+- CorrectTask: 0 MSB9999 warnings
 - No false positives on wrapped calls
 
 ✅ **Code Fixer Functionality**:
@@ -431,7 +431,7 @@ src/ThreadSafeTaskAnalyzer/
 ✅ **Visual Studio Integration**:
 - Green squiggles appear on diagnostics
 - Error List shows all warnings with correct locations
-- Build output includes MSB4260 diagnostics
+- Build output includes MSB9999 diagnostics
 - Live analysis works during editing
 
 ### 6.4 Manual Testing Procedure
@@ -567,10 +567,10 @@ Or via package reference:
 Support `.editorconfig` for customization:
 ```ini
 # Disable analyzer for specific projects
-dotnet_diagnostic.MSB4260.severity = none
+dotnet_diagnostic.MSB9999.severity = none
 
 # Treat as error instead of warning
-dotnet_diagnostic.MSB4260.severity = error
+dotnet_diagnostic.MSB9999.severity = error
 ```
 
 ## 10. Future Enhancements
@@ -606,7 +606,7 @@ dotnet_diagnostic.MSB4260.severity = error
 
 3. **Custom Attributes**
    - `[AbsolutePath]` attribute to mark parameters/returns
-   - Suppress warnings with justification: `[SuppressMessage("MSB4260", Justification = "...")]`
+   - Suppress warnings with justification: `[SuppressMessage("MSB9999", Justification = "...")]`
    - Analyzer honors these annotations
 
 4. **IDE Enhancements**
@@ -642,7 +642,7 @@ These are documented and expected limitations, not implementation defects.
 
 For unsupported patterns, developers should:
 1. Manually wrap paths with `TaskEnvironment.GetAbsolutePath()`
-2. Use `#pragma warning disable MSB4260` with justification comment
+2. Use `#pragma warning disable MSB9999` with justification comment
 3. Report feedback for common patterns to guide future enhancements
 
 ## 12. Maintenance and Support
@@ -674,7 +674,7 @@ To add new file system types (e.g., `System.IO.Pipes.NamedPipeClientStream`):
 
 ### 12.3 Diagnostic ID Allocation
 
-MSB4260 is allocated for this analyzer. Future related diagnostics should use:
+MSB9999 is allocated for this analyzer. Future related diagnostics should use:
 - MSB4261, MSB4262, etc. for related thread-safety issues
 - Different IDs prevent conflicting suppressions
 
