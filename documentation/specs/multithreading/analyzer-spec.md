@@ -1,10 +1,54 @@
 # IMultiThreadableTask Analyzer and Code Fixer - Implementation Specification
 
+**Status**: Draft for Review  
+**Target MSBuild Version**: 17.15+  
+**Authors**: MSBuild Team  
+**Last Updated**: September 30, 2025
+
+---
+
+## Executive Summary
+
+### Problem Statement
+
+MSBuild's new multithreaded execution feature allows tasks implementing `IMultiThreadableTask` to run concurrently within a single process. However, many .NET APIs commonly used in tasks depend on process-global state (e.g., current working directory, environment variables), creating race conditions and incorrect behavior when multiple tasks execute simultaneously.
+
+**Example Issue**:
+```csharp
+// Task A sets working directory to C:\ProjectA
+// Task B sets working directory to C:\ProjectB  (races with Task A)
+// Task A calls File.Exists("bin\output.dll")    (resolves to C:\ProjectB\bin - WRONG!)
+```
+
+### Proposed Solution
+
+A Roslyn analyzer that:
+1. **Detects** unsafe API usage in `IMultiThreadableTask` implementations at compile time
+2. **Provides** automated code fixes to wrap paths with `TaskEnvironment.GetAbsolutePath()`
+3. **Ships** automatically with `Microsoft.Build.Utilities.Core` NuGet package
+4. **Educates** task authors about thread-safety requirements through actionable diagnostics
+
+### Key Benefits
+
+- **Prevents runtime race conditions** by catching issues at compile time
+- **Reduces support burden** by preventing common multithreading mistakes
+- **Accelerates adoption** of `IMultiThreadableTask` through automated fixes
+- **Maintains backward compatibility** - tasks can still run in single-threaded mode
+
+### Decision Points for Review
+
+1. **Distribution**: Should analyzer ship with `Microsoft.Build.Utilities.Core` or as standalone package? (Recommendation: Ship with Utilities.Core - see §12.2)
+2. **Severity**: Should default severity be Warning or Error? (Recommendation: Warning for 17.15, consider Error in future)
+3. **Opt-Out**: Should there be global opt-out property? (Recommendation: Yes - `EnableMSBuildThreadSafetyAnalyzer`)
+4. **Scope**: Should analyzer run on all code or only `IMultiThreadableTask` types? (Recommendation: Scoped to IMultiThreadableTask only)
+
+---
+
 ## 1. Overview
 
 ### 1.1 Purpose
 
-This specification defines the design and implementation of a Roslyn analyzer and code fixer for detecting and correcting unsafe API usage in MSBuild tasks that implement `IMultiThreadableTask`. The analyzer enforces the threading safety requirements outlined in [mtspec.md](mtspec.md) by identifying APIs that rely on or modify global process state.
+This specification defines the design and implementation of a Roslyn analyzer and code fixer for detecting and correcting unsafe API usage in MSBuild tasks that implement `IMultiThreadableTask`. The analyzer enforces the threading safety requirements outlined in [thread-safe-tasks-api-analysis.md](thread-safe-tasks-api-analysis.md) by identifying APIs that rely on or modify global process state.
 
 ### 1.2 Scope
 
@@ -645,9 +689,297 @@ For unsupported patterns, developers should:
 2. Use `#pragma warning disable MSB9999` with justification comment
 3. Report feedback for common patterns to guide future enhancements
 
-## 12. Maintenance and Support
+## 12. Distribution and Consumption
 
-### 12.1 Updating Banned APIs
+### 12.1 Overview
+
+This section discusses how the IMultiThreadableTask analyzer will be distributed to customers and automatically enabled in their projects. The primary goal is to provide seamless integration that "just works" for task authors while offering flexibility for advanced scenarios.
+
+### 12.2 Proposed Distribution Model: Ship with Microsoft.Build.Utilities.Core
+
+**Primary Approach**: The analyzer should be packaged and distributed as part of the `Microsoft.Build.Utilities.Core` NuGet package.
+
+#### 12.2.1 Rationale
+
+1. **Natural Discovery**: Task authors already reference `Microsoft.Build.Utilities.Core` to inherit from `Task` or `MultiThreadableTask` base classes
+2. **Zero Configuration**: No additional package references or setup required
+3. **Version Alignment**: Analyzer version stays synchronized with the MSBuild APIs it validates
+4. **Consistent Developer Experience**: Aligns with how other Microsoft analyzers ship (e.g., Platform Compatibility Analyzer ships with .NET SDK)
+5. **Automatic Updates**: Task authors get analyzer updates when they update their MSBuild package reference
+
+#### 12.2.2 Implementation Approach
+
+The analyzer DLL should be included in the `Microsoft.Build.Utilities.Core` NuGet package with proper MSBuild integration:
+
+**Package Structure**:
+```
+Microsoft.Build.Utilities.Core.nupkg
+├── lib/
+│   ├── netstandard2.0/
+│   │   └── Microsoft.Build.Utilities.Core.dll
+│   └── net8.0/
+│       └── Microsoft.Build.Utilities.Core.dll
+├── analyzers/
+│   └── dotnet/
+│       └── cs/
+│           ├── Microsoft.Build.Utilities.Analyzer.dll
+│           └── (analyzer dependencies)
+└── build/
+    ├── Microsoft.Build.Utilities.Core.props
+    └── Microsoft.Build.Utilities.Core.targets
+```
+
+**Auto-Enable Mechanism** (`build/Microsoft.Build.Utilities.Core.props`):
+```xml
+<Project>
+  <ItemGroup>
+    <Analyzer Include="$(MSBuildThisFileDirectory)..\analyzers\dotnet\cs\Microsoft.Build.Utilities.Analyzer.dll" />
+  </ItemGroup>
+</Project>
+```
+
+This automatically adds the analyzer to any project that references `Microsoft.Build.Utilities.Core`.
+
+#### 12.2.3 Activation Behavior
+
+- **Automatic Activation**: Analyzer activates automatically for any project referencing `Microsoft.Build.Utilities.Core`
+- **Scoped Analysis**: Only analyzes code within types implementing `IMultiThreadableTask` (minimal performance impact)
+- **No False Positives**: Regular tasks not implementing `IMultiThreadableTask` are not analyzed
+
+### 12.3 Alternative Distribution Approaches (Considered but Not Recommended)
+
+#### 12.3.1 Standalone NuGet Analyzer Package
+
+**Approach**: Publish as separate package like `Microsoft.Build.Analyzers` or `Microsoft.Build.ThreadSafety.Analyzers`
+
+**Pros**:
+- Clear separation between runtime and analyzer
+- Explicit opt-in
+- Independent versioning
+
+**Cons**:
+- **Discovery Problem**: Task authors may not know the package exists
+- **Extra Step**: Requires manual package reference
+- **Version Skew**: Analyzer and runtime API versions can drift apart
+- **Inconsistent Adoption**: Some teams will forget to add it
+
+**Verdict**: ❌ Not recommended - Creates friction and reduces adoption
+
+#### 12.3.2 Visual Studio Extension
+
+**Approach**: Ship as VS extension installed separately
+
+**Pros**:
+- Works across all projects without package reference
+- Can provide rich VS-specific UI
+
+**Cons**:
+- **CLI Builds Miss Analysis**: Doesn't run in `dotnet build` or CI/CD
+- **Inconsistent Experience**: Different behavior between VS and CLI
+- **Deployment Complexity**: Requires separate installation/updates
+- **Not Cross-Platform**: Doesn't help VS Code or command-line users
+
+**Verdict**: ❌ Not recommended - Fragmentary solution
+
+#### 12.3.3 MSBuild SDK
+
+**Approach**: Include in an MSBuild SDK (like `Microsoft.Build.NoTargets`)
+
+**Pros**:
+- Follows SDK pattern
+- Clear opt-in
+
+**Cons**:
+- **Requires SDK Import**: Extra step for task authors
+- **Not Standard**: Most task projects don't use custom SDKs
+- **Visibility**: Harder to discover than package reference
+
+**Verdict**: ❌ Not recommended - Adds unnecessary complexity
+
+### 12.4 Opt-Out Mechanisms
+
+Even with automatic enablement, developers need escape hatches for legitimate scenarios.
+
+#### 12.4.1 Per-Project Opt-Out
+
+Disable the analyzer entirely for a project:
+
+```xml
+<Project>
+  <PropertyGroup>
+    <EnableMSBuildThreadSafetyAnalyzer>false</EnableMSBuildThreadSafetyAnalyzer>
+  </PropertyGroup>
+</Project>
+```
+
+Implementation in `Microsoft.Build.Utilities.Core.props`:
+```xml
+<ItemGroup Condition="'$(EnableMSBuildThreadSafetyAnalyzer)' != 'false'">
+  <Analyzer Include="$(MSBuildThisFileDirectory)..\analyzers\dotnet\cs\Microsoft.Build.Utilities.Analyzer.dll" />
+</ItemGroup>
+```
+
+#### 12.4.2 Per-File Opt-Out
+
+Disable for a specific file:
+
+```csharp
+#pragma warning disable MSB9999
+// file content
+#pragma warning restore MSB9999
+```
+
+#### 12.4.3 Per-Diagnostic Opt-Out
+
+Suppress specific warnings:
+
+```csharp
+[SuppressMessage("MSBuild.ThreadSafety", "MSB9999", Justification = "Legacy code - refactoring in progress")]
+public bool Execute() { ... }
+```
+
+#### 12.4.4 Change Severity in .editorconfig
+
+```ini
+[*.cs]
+# Treat as error
+dotnet_diagnostic.MSB9999.severity = error
+
+# Disable entirely
+dotnet_diagnostic.MSB9999.severity = none
+
+# Info only
+dotnet_diagnostic.MSB9999.severity = suggestion
+```
+
+### 12.5 Version Compatibility Considerations
+
+#### 12.5.1 Minimum MSBuild Version
+
+- **Analyzer Targets**: MSBuild 15.0+ (Visual Studio 2017+)
+  - Roslyn analyzers work with all modern MSBuild versions
+  - No runtime dependency on new MSBuild features
+
+- **`IMultiThreadableTask` Runtime**: MSBuild 17.15+
+  - Interface and `TaskEnvironment` API introduced in 17.15
+  - Tasks using the interface can't load in older MSBuild
+
+#### 12.5.2 Graceful Degradation
+
+For projects targeting older MSBuild versions (<17.15):
+
+1. **Analyzer Still Runs**: Validates code even if `IMultiThreadableTask` doesn't exist at runtime
+2. **Build Compatibility**: Projects can build with newer Utilities package but run on older MSBuild
+3. **Conditional Compilation**: Task authors can use `#if` to provide fallback implementations
+
+Example:
+```csharp
+#if SUPPORTS_MULTITHREADING
+public class MyTask : MultiThreadableTask
+{
+    public override bool Execute()
+    {
+        string absolutePath = TaskEnvironment.GetAbsolutePath(RelativePath);
+        // ...
+    }
+}
+#else
+public class MyTask : Task
+{
+    public override bool Execute()
+    {
+        string absolutePath = Path.GetFullPath(RelativePath);
+        // ...
+    }
+}
+#endif
+```
+
+#### 12.5.3 Forward Compatibility
+
+- **New Banned APIs**: Future MSBuild versions can add new banned APIs by updating the analyzer
+- **Package Updates**: Task authors get new rules when they update `Microsoft.Build.Utilities.Core`
+- **No Breaking Changes**: Adding warnings is non-breaking (severity can be adjusted)
+
+### 12.6 Open Questions for Review
+
+These questions should be addressed during PM and engineering review:
+
+#### 12.6.1 Distribution Questions
+
+1. **Should the analyzer ship in preview builds or wait for stable release?**
+   - Recommendation: Ship in preview to get early feedback from task authors
+
+2. **Should there be a separate "strict mode" analyzer with additional checks?**
+   - Example: Warn on any `Path.Combine` usage even with absolute paths
+   - Recommendation: Start conservative, add opt-in strict mode later if needed
+
+3. **Should we provide analyzer suppressions for known-safe patterns?**
+   - Example: `File.Exists` with string literal absolute paths like `"C:\\Windows\\System32\\cmd.exe"`
+   - Recommendation: Yes, but in a future iteration (requires constant analysis)
+
+#### 12.6.2 User Experience Questions
+
+1. **What should happen if user references both old and new Utilities.Core?**
+   - Scenario: Transitive dependency on old version, direct on new version
+   - Recommendation: Newest version wins (standard NuGet behavior)
+
+2. **Should there be telemetry to track analyzer warnings?**
+   - Useful for understanding adoption and common mistakes
+   - Privacy considerations required
+
+3. **Should Code Fixer be enabled by default or require opt-in?**
+   - Current: Enabled by default
+   - Alternative: Require explicit gesture (right-click menu)
+   - Recommendation: Keep enabled - follows standard Roslyn patterns
+
+#### 12.6.3 Documentation Questions
+
+1. **Where should customer-facing documentation live?**
+   - Microsoft Learn articles
+   - In-package README
+   - Both
+
+2. **Should there be a migration guide for existing non-thread-safe tasks?**
+   - Recommendation: Yes - critical for adoption
+
+3. **Should there be samples in the MSBuild samples repository?**
+   - Recommendation: Yes - both correct and incorrect usage examples
+
+### 12.7 Success Metrics
+
+To measure effectiveness of the analyzer distribution:
+
+1. **Adoption Rate**: % of task projects using `IMultiThreadableTask`
+2. **Warning Frequency**: How often MSB9999 appears in builds
+3. **Suppression Rate**: How often warnings are suppressed (high rate indicates false positives)
+4. **Code Fixer Usage**: How often automated fixes are applied
+5. **Support Tickets**: Number of analyzer-related issues reported
+
+### 12.8 Rollout Plan Recommendation
+
+1. **Phase 1 (Preview)**: Ship in MSBuild 17.15 Preview
+   - Gather feedback from early adopters
+   - Default severity: Warning
+
+2. **Phase 2 (Stable)**: Ship in MSBuild 17.15 RTM
+   - Refine based on preview feedback
+   - Add migration documentation
+
+3. **Phase 3 (Enforcement)**: Future version (17.16+)
+   - Consider increasing severity to Error for new projects
+   - Provide bulk suppression tools for legacy code
+
+4. **Phase 4 (Extended)**: Future versions
+   - Add strict mode
+   - Add constant analysis for literal paths
+   - Expand to cover more threading issues
+
+---
+
+## 13. Maintenance and Support
+
+### 13.1 Updating Banned APIs
 
 To add new banned APIs:
 
@@ -678,19 +1010,22 @@ MSB9999 is allocated for this analyzer. Future related diagnostics should use:
 - MSB4261, MSB4262, etc. for related thread-safety issues
 - Different IDs prevent conflicting suppressions
 
-## 13. References
+## 14. References
 
-### 13.1 Related Specifications
-- [mtspec.md](mtspec.md) - Thread-Safe Tasks API Analysis Reference
-- MSBuild Threading Specification (future)
-- TaskEnvironment API Documentation (future)
+### 14.1 Related Specifications
 
-### 13.2 Roslyn Documentation
+- [thread-safe-tasks-api-analysis.md](thread-safe-tasks-api-analysis.md) - Thread-Safe Tasks API Analysis Reference
+- [thread-safe-tasks.md](thread-safe-tasks.md) - Thread-Safe Tasks Overview
+- [multithreaded-msbuild.md](multithreaded-msbuild.md) - Multithreaded MSBuild Specification
+
+### 14.2 Roslyn Documentation
+
 - [Analyzer Development](https://github.com/dotnet/roslyn/blob/main/docs/analyzers/Analyzer%20Actions%20Semantics.md)
 - [Code Fix Providers](https://github.com/dotnet/roslyn/blob/main/docs/analyzers/FixAllProvider.md)
 - [Symbol Documentation IDs](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/xmldoc/)
 
-### 13.3 Testing Resources
+### 14.3 Testing Resources
+
 - Demo Project: `src/ThreadSafeTaskAnalyzer/VisualStudioDemo/`
 - Expected Output: 9 warnings in ProblematicTask, 0 in CorrectTask
 
