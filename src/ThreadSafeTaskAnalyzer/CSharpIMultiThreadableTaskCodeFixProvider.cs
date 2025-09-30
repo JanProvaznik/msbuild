@@ -17,14 +17,15 @@ namespace Microsoft.Build.Utilities.Analyzer
 {
     /// <summary>
     /// Code fixer for IMultiThreadableTask banned API analyzer.
-    /// Provides fixes for common path-related issues by wrapping calls with TaskEnvironment.GetAbsolutePath().
+    /// Provides fixes for:
+    /// - MSB9997: File path APIs - wraps with TaskEnvironment.GetAbsolutePath()
+    /// - MSB9998: Simple API migrations - replaces with TaskEnvironment equivalents
     /// </summary>
     [ExportCodeFixProvider(LanguageNames.CSharp, Name = nameof(CSharpIMultiThreadableTaskCodeFixProvider)), Shared]
     public class CSharpIMultiThreadableTaskCodeFixProvider : CodeFixProvider
     {
-        private const string Title = "Wrap with TaskEnvironment.GetAbsolutePath()";
-
-        public sealed override ImmutableArray<string> FixableDiagnosticIds => ImmutableArray.Create("MSB4260");
+        public sealed override ImmutableArray<string> FixableDiagnosticIds => 
+            ImmutableArray.Create("MSB9997", "MSB9998");
 
         public sealed override FixAllProvider GetFixAllProvider() => WellKnownFixAllProviders.BatchFixer;
 
@@ -38,19 +39,95 @@ namespace Microsoft.Build.Utilities.Analyzer
 
             var diagnostic = context.Diagnostics.First();
             var diagnosticSpan = diagnostic.Location.SourceSpan;
-
-            // Find the node that triggered the diagnostic
             var node = root.FindNode(diagnosticSpan);
 
-            // Only offer fix for string path arguments
-            if (IsPathStringArgument(node, out var argumentSyntax))
+            // Handle based on diagnostic ID
+            if (diagnostic.Id == "MSB9997")
             {
-                context.RegisterCodeFix(
-                    CodeAction.Create(
-                        title: Title,
-                        createChangedDocument: c => WrapWithGetAbsolutePathAsync(context.Document, argumentSyntax!, c),
-                        equivalenceKey: Title),
-                    diagnostic);
+                // MSB9997: File path wrapping
+                if (IsPathStringArgument(node, out var argumentSyntax))
+                {
+                    context.RegisterCodeFix(
+                        CodeAction.Create(
+                            title: "Wrap with TaskEnvironment.GetAbsolutePath()",
+                            createChangedDocument: c => WrapWithGetAbsolutePathAsync(context.Document, argumentSyntax!, c),
+                            equivalenceKey: "WrapWithGetAbsolutePath"),
+                        diagnostic);
+                }
+            }
+            else if (diagnostic.Id == "MSB9998")
+            {
+                // MSB9998: TaskEnvironment API migrations
+                RegisterMSB9998Fixes(context, node, diagnostic);
+            }
+        }
+
+        private void RegisterMSB9998Fixes(CodeFixContext context, SyntaxNode node, Diagnostic diagnostic)
+        {
+            // Handle Environment.CurrentDirectory
+            if (node is IdentifierNameSyntax identifier && 
+                identifier.Identifier.Text == "CurrentDirectory")
+            {
+                var memberAccess = identifier.Parent as MemberAccessExpressionSyntax;
+                if (memberAccess?.Expression is IdentifierNameSyntax envIdentifier && 
+                    envIdentifier.Identifier.Text == "Environment")
+                {
+                    context.RegisterCodeFix(
+                        CodeAction.Create(
+                            title: "Use TaskEnvironment.ProjectCurrentDirectory",
+                            createChangedDocument: c => ReplaceEnvironmentCurrentDirectoryAsync(context.Document, memberAccess, c),
+                            equivalenceKey: "UseProjectCurrentDirectory"),
+                        diagnostic);
+                    return;
+                }
+            }
+
+            // Handle Environment.GetEnvironmentVariable
+            if (node is InvocationExpressionSyntax invocation)
+            {
+                if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
+                {
+                    var methodName = (memberAccess.Name as IdentifierNameSyntax)?.Identifier.Text;
+                    var targetType = (memberAccess.Expression as IdentifierNameSyntax)?.Identifier.Text;
+
+                    if (targetType == "Environment")
+                    {
+                        if (methodName == "GetEnvironmentVariable")
+                        {
+                            context.RegisterCodeFix(
+                                CodeAction.Create(
+                                    title: "Use TaskEnvironment.GetEnvironmentVariable()",
+                                    createChangedDocument: c => ReplaceEnvironmentMethodAsync(context.Document, invocation, "GetEnvironmentVariable", c),
+                                    equivalenceKey: "UseGetEnvironmentVariable"),
+                                diagnostic);
+                            return;
+                        }
+                        else if (methodName == "SetEnvironmentVariable")
+                        {
+                            // Only offer fix for 2-parameter version
+                            if (invocation.ArgumentList.Arguments.Count == 2)
+                            {
+                                context.RegisterCodeFix(
+                                    CodeAction.Create(
+                                        title: "Use TaskEnvironment.SetEnvironmentVariable()",
+                                        createChangedDocument: c => ReplaceEnvironmentMethodAsync(context.Document, invocation, "SetEnvironmentVariable", c),
+                                        equivalenceKey: "UseSetEnvironmentVariable"),
+                                    diagnostic);
+                            }
+                            return;
+                        }
+                    }
+                    else if (targetType == "Path" && methodName == "GetFullPath")
+                    {
+                        context.RegisterCodeFix(
+                            CodeAction.Create(
+                                title: "Use TaskEnvironment.GetAbsolutePath()",
+                                createChangedDocument: c => ReplacePathGetFullPathAsync(context.Document, invocation, c),
+                                equivalenceKey: "UseGetAbsolutePath"),
+                            diagnostic);
+                        return;
+                    }
+                }
             }
         }
 
@@ -111,6 +188,60 @@ namespace Microsoft.Build.Utilities.Analyzer
             var newArgument = argumentSyntax.WithExpression((ExpressionSyntax)wrappedExpression);
             editor.ReplaceNode(argumentSyntax, newArgument);
 
+            return editor.GetChangedDocument();
+        }
+
+        private async Task<Document> ReplaceEnvironmentCurrentDirectoryAsync(
+            Document document,
+            MemberAccessExpressionSyntax memberAccess,
+            CancellationToken cancellationToken)
+        {
+            var editor = await DocumentEditor.CreateAsync(document, cancellationToken).ConfigureAwait(false);
+
+            // Replace Environment.CurrentDirectory with TaskEnvironment.ProjectCurrentDirectory
+            var newExpression = SyntaxFactory.MemberAccessExpression(
+                SyntaxKind.SimpleMemberAccessExpression,
+                SyntaxFactory.IdentifierName("TaskEnvironment"),
+                SyntaxFactory.IdentifierName("ProjectCurrentDirectory"));
+
+            editor.ReplaceNode(memberAccess, newExpression);
+            return editor.GetChangedDocument();
+        }
+
+        private async Task<Document> ReplaceEnvironmentMethodAsync(
+            Document document,
+            InvocationExpressionSyntax invocation,
+            string methodName,
+            CancellationToken cancellationToken)
+        {
+            var editor = await DocumentEditor.CreateAsync(document, cancellationToken).ConfigureAwait(false);
+
+            // Replace Environment.MethodName(...) with TaskEnvironment.MethodName(...)
+            var newMemberAccess = SyntaxFactory.MemberAccessExpression(
+                SyntaxKind.SimpleMemberAccessExpression,
+                SyntaxFactory.IdentifierName("TaskEnvironment"),
+                SyntaxFactory.IdentifierName(methodName));
+
+            var newInvocation = invocation.WithExpression(newMemberAccess);
+            editor.ReplaceNode(invocation, newInvocation);
+            return editor.GetChangedDocument();
+        }
+
+        private async Task<Document> ReplacePathGetFullPathAsync(
+            Document document,
+            InvocationExpressionSyntax invocation,
+            CancellationToken cancellationToken)
+        {
+            var editor = await DocumentEditor.CreateAsync(document, cancellationToken).ConfigureAwait(false);
+
+            // Replace Path.GetFullPath(...) with TaskEnvironment.GetAbsolutePath(...)
+            var newMemberAccess = SyntaxFactory.MemberAccessExpression(
+                SyntaxKind.SimpleMemberAccessExpression,
+                SyntaxFactory.IdentifierName("TaskEnvironment"),
+                SyntaxFactory.IdentifierName("GetAbsolutePath"));
+
+            var newInvocation = invocation.WithExpression(newMemberAccess);
+            editor.ReplaceNode(invocation, newInvocation);
             return editor.GetChangedDocument();
         }
     }

@@ -24,19 +24,55 @@ namespace Microsoft.Build.Utilities.Analyzer
         private const string IMultiThreadableTaskInterfaceName = "Microsoft.Build.Framework.IMultiThreadableTask";
 
         /// <summary>
-        /// Diagnostic rule for detecting banned API usage in IMultiThreadableTask implementations.
+        /// MSB9999: Critical errors - APIs that are never safe in multithreaded tasks.
         /// </summary>
-        public static readonly DiagnosticDescriptor MultiThreadableTaskSymbolIsBannedRule = new DiagnosticDescriptor(
+        public static readonly DiagnosticDescriptor CriticalErrorRule = new DiagnosticDescriptor(
             id: "MSB9999",
-            title: "Symbol is banned in IMultiThreadableTask implementations",
+            title: "API is never safe in IMultiThreadableTask implementations",
             messageFormat: "Symbol '{0}' is banned in IMultiThreadableTask implementations{1}",
+            category: "Usage",
+            defaultSeverity: DiagnosticSeverity.Error,
+            isEnabledByDefault: true,
+            description: "This API has no safe alternative in multithreaded tasks and affects the entire process (e.g., Environment.Exit, ThreadPool settings, CultureInfo defaults).");
+
+        /// <summary>
+        /// MSB9998: TaskEnvironment required - APIs that must use TaskEnvironment instead.
+        /// </summary>
+        public static readonly DiagnosticDescriptor TaskEnvironmentRequiredRule = new DiagnosticDescriptor(
+            id: "MSB9998",
+            title: "API requires TaskEnvironment alternative in IMultiThreadableTask implementations",
+            messageFormat: "Symbol '{0}' requires TaskEnvironment alternative{1}",
             category: "Usage",
             defaultSeverity: DiagnosticSeverity.Warning,
             isEnabledByDefault: true,
-            description: "This symbol is banned when used within types that implement IMultiThreadableTask due to threading concerns. Multithreadable tasks should not use APIs that depend on process-global state such as current working directory, environment variables, or process-wide culture settings.");
+            description: "This API accesses process-global state and must use TaskEnvironment alternatives (e.g., TaskEnvironment.ProjectCurrentDirectory, GetEnvironmentVariable, GetAbsolutePath).");
+
+        /// <summary>
+        /// MSB9997: File path APIs that need absolute paths.
+        /// </summary>
+        public static readonly DiagnosticDescriptor FilePathRequiresAbsoluteRule = new DiagnosticDescriptor(
+            id: "MSB9997",
+            title: "File path API requires absolute path in IMultiThreadableTask implementations",
+            messageFormat: "Symbol '{0}' requires absolute path{1}",
+            category: "Usage",
+            defaultSeverity: DiagnosticSeverity.Warning,
+            isEnabledByDefault: true,
+            description: "File system APIs must use absolute paths. Wrap path arguments with TaskEnvironment.GetAbsolutePath() to ensure thread-safe path resolution.");
+
+        /// <summary>
+        /// MSB9996: Potentially problematic APIs that require case-by-case review.
+        /// </summary>
+        public static readonly DiagnosticDescriptor PotentialIssueRule = new DiagnosticDescriptor(
+            id: "MSB9996",
+            title: "API may cause threading issues in IMultiThreadableTask implementations",
+            messageFormat: "Symbol '{0}' may cause threading issues{1}",
+            category: "Usage",
+            defaultSeverity: DiagnosticSeverity.Warning,
+            isEnabledByDefault: true,
+            description: "This API may cause threading issues (e.g., Console I/O, Assembly.Load). Review usage carefully for thread-safety.");
 
         public sealed override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } =
-            ImmutableArray.Create(MultiThreadableTaskSymbolIsBannedRule);
+            ImmutableArray.Create(CriticalErrorRule, TaskEnvironmentRequiredRule, FilePathRequiresAbsoluteRule, PotentialIssueRule);
 
         protected abstract SymbolDisplayFormat SymbolDisplayFormat { get; }
         protected abstract bool IsTypeDeclaration(SyntaxNode node);
@@ -58,68 +94,85 @@ namespace Microsoft.Build.Utilities.Analyzer
         }
 
         /// <summary>
-        /// Gets the hardcoded list of APIs that are ALWAYS banned, regardless of arguments.
-        /// These are APIs that should NEVER be used in IMultiThreadableTask implementations.
+        /// Categorizes banned APIs by diagnostic code.
         /// </summary>
-        private static ImmutableArray<(string DeclarationId, string Message)> GetBannedApiDefinitions()
+        private enum ApiCategory
+        {
+            CriticalError,      // MSB9999
+            TaskEnvironment,    // MSB9998
+            PotentialIssue      // MSB9996
+        }
+
+        /// <summary>
+        /// Gets the hardcoded list of APIs with their category and message.
+        /// File path APIs (MSB9997) are handled separately via pattern matching.
+        /// </summary>
+        private static ImmutableArray<(string DeclarationId, ApiCategory Category, string Message)> GetBannedApiDefinitions()
         {
             return ImmutableArray.Create(
-                // System.IO.Path - GetFullPath relies on current directory
-                ("M:System.IO.Path.GetFullPath(System.String)", "Uses current working directory - use TaskEnvironment.GetAbsolutePath instead"),
-                ("M:System.IO.Path.GetFullPath(System.String,System.String)", "Base path parameter may cause issues - use TaskEnvironment.GetAbsolutePath instead"),
+                // MSB9998: Path.GetFullPath - use TaskEnvironment.GetAbsolutePath
+                ("M:System.IO.Path.GetFullPath(System.String)", ApiCategory.TaskEnvironment, "Use TaskEnvironment.GetAbsolutePath instead"),
+                ("M:System.IO.Path.GetFullPath(System.String,System.String)", ApiCategory.TaskEnvironment, "Use TaskEnvironment.GetAbsolutePath instead"),
 
-                // System.Environment Class - Modifies or accesses process-level state
-                ("P:System.Environment.CurrentDirectory", "Accesses process-level state - use TaskEnvironment.ProjectDirectory instead"),
-                ("M:System.Environment.SetEnvironmentVariable(System.String,System.String)", "Modifies process-level state - use TaskEnvironment.SetEnvironmentVariable instead"),
-                ("M:System.Environment.SetEnvironmentVariable(System.String,System.String,System.EnvironmentVariableTarget)", "Modifies process-level state - use TaskEnvironment.SetEnvironmentVariable instead"),
-                ("M:System.Environment.Exit(System.Int32)", "Terminates entire process - return false from task or throw exception instead"),
-                ("M:System.Environment.FailFast(System.String)", "Terminates entire process - return false from task or throw exception instead"),
-                ("M:System.Environment.FailFast(System.String,System.Exception)", "Terminates entire process - return false from task or throw exception instead"),
-                ("M:System.Environment.FailFast(System.String,System.Exception,System.String)", "Terminates entire process - return false from task or throw exception instead"),
+                // MSB9998: Environment - use TaskEnvironment alternatives
+                ("P:System.Environment.CurrentDirectory", ApiCategory.TaskEnvironment, "Use TaskEnvironment.ProjectCurrentDirectory instead"),
+                ("M:System.Environment.GetEnvironmentVariable(System.String)", ApiCategory.TaskEnvironment, "Use TaskEnvironment.GetEnvironmentVariable instead"),
+                ("M:System.Environment.SetEnvironmentVariable(System.String,System.String)", ApiCategory.TaskEnvironment, "Use TaskEnvironment.SetEnvironmentVariable instead"),
+                ("M:System.Environment.SetEnvironmentVariable(System.String,System.String,System.EnvironmentVariableTarget)", ApiCategory.TaskEnvironment, "Drop target parameter - no direct TaskEnvironment equivalent"),
 
-                // System.Diagnostics.Process Class - Process control and startup
-                ("M:System.Diagnostics.Process.Kill", "Terminates process"),
-                ("M:System.Diagnostics.Process.Kill(System.Boolean)", "Terminates process"),
-                ("M:System.Diagnostics.Process.Start(System.String)", "May inherit environment and working directory - use TaskEnvironment.GetProcessStartInfo instead"),
-                ("M:System.Diagnostics.Process.Start(System.String,System.String)", "May inherit environment and working directory - use TaskEnvironment.GetProcessStartInfo instead"),
+                // MSB9999: Critical - Process termination
+                ("M:System.Environment.Exit(System.Int32)", ApiCategory.CriticalError, "Terminates entire process - return false from task or throw exception instead"),
+                ("M:System.Environment.FailFast(System.String)", ApiCategory.CriticalError, "Terminates entire process - return false from task or throw exception instead"),
+                ("M:System.Environment.FailFast(System.String,System.Exception)", ApiCategory.CriticalError, "Terminates entire process - return false from task or throw exception instead"),
+                ("M:System.Environment.FailFast(System.String,System.Exception,System.String)", ApiCategory.CriticalError, "Terminates entire process - return false from task or throw exception instead"),
 
-                // System.Diagnostics.ProcessStartInfo Class - All constructors may inherit process state
-                ("M:System.Diagnostics.ProcessStartInfo.#ctor", "May inherit process state - use TaskEnvironment.GetProcessStartInfo instead"),
-                ("M:System.Diagnostics.ProcessStartInfo.#ctor(System.String)", "May inherit process state - use TaskEnvironment.GetProcessStartInfo instead"),
-                ("M:System.Diagnostics.ProcessStartInfo.#ctor(System.String,System.String)", "May inherit process state - use TaskEnvironment.GetProcessStartInfo instead"),
+                // MSB9999: Critical - Process control
+                ("M:System.Diagnostics.Process.Kill", ApiCategory.CriticalError, "Terminates process"),
+                ("M:System.Diagnostics.Process.Kill(System.Boolean)", ApiCategory.CriticalError, "Terminates process"),
 
-                // System.Threading.ThreadPool Class - Modifies process-wide settings
-                ("M:System.Threading.ThreadPool.SetMinThreads(System.Int32,System.Int32)", "Modifies process-wide settings"),
-                ("M:System.Threading.ThreadPool.SetMaxThreads(System.Int32,System.Int32)", "Modifies process-wide settings"),
+                // MSB9998: Process.Start - use TaskEnvironment.GetProcessStartInfo
+                ("M:System.Diagnostics.Process.Start(System.String)", ApiCategory.TaskEnvironment, "Use TaskEnvironment.GetProcessStartInfo instead"),
+                ("M:System.Diagnostics.Process.Start(System.String,System.String)", ApiCategory.TaskEnvironment, "Use TaskEnvironment.GetProcessStartInfo instead"),
+                ("M:System.Diagnostics.Process.Start(System.String,System.String,System.String,System.Security.SecureString,System.String)", ApiCategory.TaskEnvironment, "Use TaskEnvironment.GetProcessStartInfo instead"),
+                ("M:System.Diagnostics.Process.Start(System.String,System.Collections.Generic.IEnumerable`1<System.String>)", ApiCategory.TaskEnvironment, "Use TaskEnvironment.GetProcessStartInfo instead"),
 
-                // System.Globalization.CultureInfo Class - Culture modification
-                ("P:System.Globalization.CultureInfo.DefaultThreadCurrentCulture", "Affects new threads - modify thread culture instead"),
-                ("P:System.Globalization.CultureInfo.DefaultThreadCurrentUICulture", "Affects new threads - modify thread culture instead"),
+                // MSB9998: ProcessStartInfo constructors - use TaskEnvironment.GetProcessStartInfo
+                ("M:System.Diagnostics.ProcessStartInfo.#ctor", ApiCategory.TaskEnvironment, "Use TaskEnvironment.GetProcessStartInfo instead"),
+                ("M:System.Diagnostics.ProcessStartInfo.#ctor(System.String)", ApiCategory.TaskEnvironment, "Use TaskEnvironment.GetProcessStartInfo instead"),
+                ("M:System.Diagnostics.ProcessStartInfo.#ctor(System.String,System.String)", ApiCategory.TaskEnvironment, "Use TaskEnvironment.GetProcessStartInfo instead"),
 
-                // Assembly Loading - May cause version conflicts in multithreaded environments
-                ("M:System.Reflection.Assembly.LoadFrom(System.String)", "May cause version conflicts - use absolute paths and be aware of potential conflicts"),
-                ("M:System.Reflection.Assembly.LoadFile(System.String)", "May cause version conflicts - be aware of potential conflicts"),
-                ("M:System.Reflection.Assembly.Load(System.String)", "May cause version conflicts - be aware of potential conflicts"),
-                ("M:System.Reflection.Assembly.Load(System.Byte[])", "May cause version conflicts - be aware of potential conflicts"),
-                ("M:System.Reflection.Assembly.Load(System.Byte[],System.Byte[])", "May cause version conflicts - be aware of potential conflicts"),
-                ("M:System.Reflection.Assembly.LoadWithPartialName(System.String)", "May cause version conflicts - be aware of potential conflicts"),
-                ("M:System.Activator.CreateInstanceFrom(System.String,System.String)", "May cause version conflicts - use absolute paths and be aware of potential conflicts"),
-                ("M:System.Activator.CreateInstance(System.String,System.String)", "May cause version conflicts - be aware of potential conflicts"),
+                // MSB9999: Critical - ThreadPool (process-wide settings)
+                ("M:System.Threading.ThreadPool.SetMinThreads(System.Int32,System.Int32)", ApiCategory.CriticalError, "Modifies process-wide thread pool settings"),
+                ("M:System.Threading.ThreadPool.SetMaxThreads(System.Int32,System.Int32)", ApiCategory.CriticalError, "Modifies process-wide thread pool settings"),
 
-                // Console operations - May interfere with build output and logging
-                ("P:System.Console.Out", "May interfere with build logging - use task logging methods instead"),
-                ("P:System.Console.Error", "May interfere with build logging - use task logging methods instead"),
-                ("P:System.Console.In", "May cause deadlocks in automated builds"),
-                ("M:System.Console.Write(System.String)", "May interfere with build output - use task logging methods instead"),
-                ("M:System.Console.WriteLine(System.String)", "May interfere with build output - use task logging methods instead"),
-                ("M:System.Console.ReadLine", "May cause deadlocks in automated builds"),
-                ("M:System.Console.ReadKey", "May cause deadlocks in automated builds"),
+                // MSB9999: Critical - CultureInfo (affects all new threads)
+                ("P:System.Globalization.CultureInfo.DefaultThreadCurrentCulture", ApiCategory.CriticalError, "Affects all new threads in process"),
+                ("P:System.Globalization.CultureInfo.DefaultThreadCurrentUICulture", ApiCategory.CriticalError, "Affects all new threads in process"),
 
-                // AppDomain operations - May cause version conflicts
-                ("M:System.AppDomain.Load(System.String)", "May cause version conflicts - be aware of potential conflicts"),
-                ("M:System.AppDomain.Load(System.Byte[])", "May cause version conflicts - be aware of potential conflicts"),
-                ("M:System.AppDomain.CreateInstanceFrom(System.String,System.String)", "May cause version conflicts - use absolute paths and be aware of potential conflicts"),
-                ("M:System.AppDomain.CreateInstance(System.String,System.String)", "May cause version conflicts - be aware of potential conflicts")
+                // MSB9996: Potential issues - Assembly loading
+                ("M:System.Reflection.Assembly.LoadFrom(System.String)", ApiCategory.PotentialIssue, "May cause version conflicts"),
+                ("M:System.Reflection.Assembly.LoadFile(System.String)", ApiCategory.PotentialIssue, "May cause version conflicts"),
+                ("M:System.Reflection.Assembly.Load(System.String)", ApiCategory.PotentialIssue, "May cause version conflicts"),
+                ("M:System.Reflection.Assembly.Load(System.Byte[])", ApiCategory.PotentialIssue, "May cause version conflicts"),
+                ("M:System.Reflection.Assembly.Load(System.Byte[],System.Byte[])", ApiCategory.PotentialIssue, "May cause version conflicts"),
+                ("M:System.Reflection.Assembly.LoadWithPartialName(System.String)", ApiCategory.PotentialIssue, "May cause version conflicts"),
+                ("M:System.Activator.CreateInstanceFrom(System.String,System.String)", ApiCategory.PotentialIssue, "May cause version conflicts"),
+                ("M:System.Activator.CreateInstance(System.String,System.String)", ApiCategory.PotentialIssue, "May cause version conflicts"),
+
+                // MSB9996: Potential issues - Console I/O
+                ("P:System.Console.Out", ApiCategory.PotentialIssue, "May interfere with build logging - use task logging methods instead"),
+                ("P:System.Console.Error", ApiCategory.PotentialIssue, "May interfere with build logging - use task logging methods instead"),
+                ("P:System.Console.In", ApiCategory.PotentialIssue, "May cause deadlocks in automated builds"),
+                ("M:System.Console.Write(System.String)", ApiCategory.PotentialIssue, "May interfere with build output - use task logging methods instead"),
+                ("M:System.Console.WriteLine(System.String)", ApiCategory.PotentialIssue, "May interfere with build output - use task logging methods instead"),
+                ("M:System.Console.ReadLine", ApiCategory.PotentialIssue, "May cause deadlocks in automated builds"),
+                ("M:System.Console.ReadKey", ApiCategory.PotentialIssue, "May cause deadlocks in automated builds"),
+
+                // MSB9996: Potential issues - AppDomain
+                ("M:System.AppDomain.Load(System.String)", ApiCategory.PotentialIssue, "May cause version conflicts"),
+                ("M:System.AppDomain.Load(System.Byte[])", ApiCategory.PotentialIssue, "May cause version conflicts"),
+                ("M:System.AppDomain.CreateInstanceFrom(System.String,System.String)", ApiCategory.PotentialIssue, "May cause version conflicts"),
+                ("M:System.AppDomain.CreateInstance(System.String,System.String)", ApiCategory.PotentialIssue, "May cause version conflicts")
             );
         }
 
@@ -154,12 +207,12 @@ namespace Microsoft.Build.Utilities.Analyzer
             var result = new Dictionary<string, BanFileEntry>();
             var bannedApiDefinitions = GetBannedApiDefinitions();
 
-            foreach (var (declarationId, message) in bannedApiDefinitions)
+            foreach (var (declarationId, category, message) in bannedApiDefinitions)
             {
                 var symbols = GetSymbolsFromDeclarationId(compilation, declarationId);
                 if (symbols.Any())
                 {
-                    result[declarationId] = new BanFileEntry(declarationId, message, symbols);
+                    result[declarationId] = new BanFileEntry(declarationId, category, message, symbols);
                 }
             }
 
@@ -202,7 +255,7 @@ namespace Microsoft.Build.Utilities.Analyzer
                     if (IsPathMethodWithUnwrappedArgument(invocation.TargetMethod, invocation.Arguments))
                     {
                         var diagnostic = Diagnostic.Create(
-                            MultiThreadableTaskSymbolIsBannedRule,
+                            FilePathRequiresAbsoluteRule,
                             invocation.Syntax.GetLocation(),
                             invocation.TargetMethod.ToDisplayString(SymbolDisplayFormat),
                             ": Uses current working directory - use absolute paths with TaskEnvironment.GetAbsolutePath");
@@ -210,7 +263,7 @@ namespace Microsoft.Build.Utilities.Analyzer
                     }
                     else
                     {
-                        // Check if it's in the always-banned list
+                        // Check if it's in the banned list
                         VerifySymbol(context.ReportDiagnostic, invocation.TargetMethod, context.Operation.Syntax, bannedApis);
                     }
                     break;
@@ -226,7 +279,7 @@ namespace Microsoft.Build.Utilities.Analyzer
                         if (IsPathMethodWithUnwrappedArgument(objectCreation.Constructor, objectCreation.Arguments))
                         {
                             var diagnostic = Diagnostic.Create(
-                                MultiThreadableTaskSymbolIsBannedRule,
+                                FilePathRequiresAbsoluteRule,
                                 objectCreation.Syntax.GetLocation(),
                                 objectCreation.Constructor.ContainingType.ToDisplayString(SymbolDisplayFormat),
                                 ": Constructor uses current working directory - use absolute paths with TaskEnvironment.GetAbsolutePath");
@@ -234,7 +287,7 @@ namespace Microsoft.Build.Utilities.Analyzer
                         }
                         else
                         {
-                            // Check if it's in the always-banned list
+                            // Check if it's in the banned list
                             VerifySymbol(context.ReportDiagnostic, objectCreation.Constructor, context.Operation.Syntax, bannedApis);
                         }
                     }
@@ -360,8 +413,17 @@ namespace Microsoft.Build.Utilities.Analyzer
                 var entry = kvp.Value;
                 if (entry.Symbols.Any(bannedSymbol => SymbolEqualityComparer.Default.Equals(symbol, bannedSymbol)))
                 {
+                    // Select the appropriate diagnostic rule based on category
+                    var rule = entry.Category switch
+                    {
+                        ApiCategory.CriticalError => CriticalErrorRule,
+                        ApiCategory.TaskEnvironment => TaskEnvironmentRequiredRule,
+                        ApiCategory.PotentialIssue => PotentialIssueRule,
+                        _ => TaskEnvironmentRequiredRule // Default fallback
+                    };
+
                     var diagnostic = Diagnostic.Create(
-                        MultiThreadableTaskSymbolIsBannedRule,
+                        rule,
                         syntaxNode.GetLocation(),
                         symbol.ToDisplayString(SymbolDisplayFormat),
                         string.IsNullOrWhiteSpace(entry.Message) ? "" : ": " + entry.Message);
@@ -375,12 +437,14 @@ namespace Microsoft.Build.Utilities.Analyzer
         private sealed class BanFileEntry
         {
             public string DeclarationId { get; }
+            public ApiCategory Category { get; }
             public string Message { get; }
             public ImmutableArray<ISymbol> Symbols { get; }
 
-            public BanFileEntry(string declarationId, string message, ImmutableArray<ISymbol> symbols)
+            public BanFileEntry(string declarationId, ApiCategory category, string message, ImmutableArray<ISymbol> symbols)
             {
                 DeclarationId = declarationId;
+                Category = category;
                 Message = message;
                 Symbols = symbols;
             }
