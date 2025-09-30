@@ -1,99 +1,122 @@
-# ThreadSafeTaskAnalyzer
-
-This analyzer detects problematic API usage patterns in multithreadable MSBuild tasks that implement `IMultiThreadableTask`.
+# IMultiThreadableTask Analyzer
 
 ## Overview
 
-The analyzer flags APIs that should not be used in `IMultiThreadableTask` implementations due to threading concerns. Multithreadable tasks run in parallel and must not use APIs that depend on process-global state such as current working directory, environment variables, or process-wide culture settings.
+Roslyn analyzer and code fixer for detecting unsafe API usage in MSBuild tasks implementing `IMultiThreadableTask`. Enforces threading safety requirements by identifying APIs that rely on or modify global process state.
 
-## Banned APIs
+## Purpose
 
-The analyzer has **80+ banned APIs** hardcoded, organized into these categories:
+Multithreaded MSBuild tasks must avoid APIs that depend on process-global state (working directory, environment variables, culture settings). This analyzer:
 
-### 1. File System Operations
-- `System.IO.File` - All methods use current working directory for relative paths
-- `System.IO.Directory` - All methods use current working directory for relative paths
-- `System.IO.Path.GetFullPath()` - Uses current working directory
-- `System.IO.FileInfo`, `System.IO.DirectoryInfo` constructors - Use current working directory
-- `System.IO.FileStream`, `System.IO.StreamReader`, `System.IO.StreamWriter` constructors with file paths
+1. **Detects unsafe API usage** with MSB4260 diagnostics
+2. **Provides automated fixes** via code actions for file system operations
+3. **Guides developers** toward thread-safe alternatives using `TaskEnvironment`
 
-**Alternative**: Use absolute paths or `TaskEnvironment.GetAbsolutePath()`
+## Components
 
-### 2. Environment & Process State
-- `System.Environment.CurrentDirectory` - Accesses process-level state
-- `System.Environment.SetEnvironmentVariable()` - Modifies process-level state  
-- `System.Environment.Exit()`, `FailFast()` - Terminates entire process
-- `System.Diagnostics.Process.Start()` - May inherit environment and working directory
-- `System.Diagnostics.ProcessStartInfo` constructors - May inherit process state
+- **IMultiThreadableTaskBannedAnalyzer.cs** - Abstract analyzer base class
+- **CSharpIMultiThreadableTaskBannedAnalyzer.cs** - C# implementation
+- **CSharpIMultiThreadableTaskCodeFixProvider.cs** - Automated code fixes
+- **VisualStudioDemo/** - Interactive demonstration project
 
-**Alternative**: Use `TaskEnvironment.GetEnvironmentVariable()`, `TaskEnvironment.SetEnvironmentVariable()`, `TaskEnvironment.GetProcessStartInfo()`
+## Detection Modes
 
-### 3. Console I/O
-- `System.Console.Write()`, `WriteLine()` - May interfere with build output
-- `System.Console.ReadLine()`, `ReadKey()` - May cause deadlocks in automated builds
-- `System.Console.Out`, `Error`, `In` properties
+### Always-Banned APIs
 
-**Alternative**: Use MSBuild's `Log.LogMessage()`, `Log.LogError()`, etc.
+APIs that should **never** be used in multithreaded tasks:
 
-### 4. Threading & Culture
-- `System.Threading.ThreadPool.SetMinThreads()`, `SetMaxThreads()` - Modifies process-wide settings
-- `System.Globalization.CultureInfo.DefaultThreadCurrentCulture/UICulture` - Affects new threads
+- `Path.GetFullPath()` - Use `TaskEnvironment.GetAbsolutePath()` instead
+- `Environment.Exit()`, `Environment.CurrentDirectory` - Process-level operations
+- `Process.Kill()`, `Console.WriteLine()` - Interfere with build process
+- ThreadPool, Culture, Assembly loading APIs - Process-wide modifications
 
-**Alternative**: Modify thread-specific culture settings
+### Conditionally-Banned APIs (Smart Detection)
 
-### 5. Assembly Loading
-- `System.Reflection.Assembly.Load*()` methods - May cause version conflicts
-- `System.Activator.CreateInstance*()` methods - May cause version conflicts
-- `System.AppDomain.Load*()` and `CreateInstance*()` methods
+File system APIs are safe with **absolute paths** but dangerous with relative paths:
 
-**Warning**: These emit warnings rather than errors due to legitimate use cases
+- ❌ `File.Exists(relativePath)` → MSB4260 warning
+- ✅ `File.Exists(TaskEnvironment.GetAbsolutePath(relativePath))` → No warning
 
-## Diagnostic ID
-
-**MSB4260**: Symbol is banned in IMultiThreadableTask implementations
+**Detected types**: File, Directory, FileInfo, DirectoryInfo, FileStream, StreamReader, StreamWriter
 
 ## Code Fixer
 
-The analyzer includes a code fixer that can automatically wrap path arguments with `TaskEnvironment.GetAbsolutePath()` for common file system operations.
+Provides "Wrap with TaskEnvironment.GetAbsolutePath()" quick action:
 
-### Supported Fixes
+```csharp
+// Before (warns)
+File.Exists(path)
 
-The code fixer can automatically fix violations for:
-- `File.Exists(path)` → `File.Exists(TaskEnvironment.GetAbsolutePath(path))`
-- `Directory.Exists(path)` → `Directory.Exists(TaskEnvironment.GetAbsolutePath(path))`
-- `new FileInfo(path)` → `new FileInfo(TaskEnvironment.GetAbsolutePath(path))`
-- And other path-related API calls
+// After applying fix (no warning)
+File.Exists(TaskEnvironment.GetAbsolutePath(path))
+```
 
-### Using the Code Fixer
+**Usage**: Press `Ctrl+.` on MSB4260 warning in Visual Studio
 
-In Visual Studio or VS Code with C# extension:
-1. Click on the warning squiggle or place cursor on the warning
-2. Press `Ctrl+.` (Quick Actions)
-3. Select "Wrap with TaskEnvironment.GetAbsolutePath()"
+## Demo Project
 
-**Note**: The code fixer provides a quick fix for path-related issues, but you should review the changes to ensure they're appropriate for your scenario. Some APIs (like Console.WriteLine or Environment.SetEnvironmentVariable) require manual migration to the appropriate TaskEnvironment or MSBuild logging methods.
+Test the analyzer interactively:
 
-## Usage
+```powershell
+cd VisualStudioDemo
+start VisualStudioDemo.sln
+```
 
-The analyzer automatically activates when analyzing projects that reference it. No additional configuration is needed - all banned APIs are hardcoded in the analyzer.
+Open `DemoTask.cs` to see:
 
-### Example Integration
+- **ProblematicTask**: 9 MSB4260 warnings (unwrapped paths)
+- **CorrectTask**: 0 warnings (proper TaskEnvironment usage)
+
+See [VisualStudioDemo/README.md](VisualStudioDemo/README.md) for testing guide.
+
+## Build & Verify
+
+```powershell
+# Build analyzer
+dotnet build ThreadSafeTaskAnalyzer.csproj
+
+# Verify with demo (expect 9 warnings)
+dotnet build VisualStudioDemo/VisualStudioDemo.csproj
+```
+
+## Documentation
+
+- **[analyzer-spec.md](../../analyzer-spec.md)** - Complete implementation specification
+- **[mtspec.md](../../mtspec.md)** - Thread-Safe Tasks API reference
+- **[VisualStudioDemo/README.md](VisualStudioDemo/README.md)** - Demo testing guide
+
+## Diagnostic
+
+**ID**: MSB4260  
+**Category**: Microsoft.Build.Tasks  
+**Severity**: Warning  
+**Message**: "Symbol '{0}' is banned in IMultiThreadableTask implementations{1}"
+
+## Integration
+
+Reference the analyzer in task projects:
 
 ```xml
 <ItemGroup>
-  <Analyzer Include="Microsoft.Build.Utilities.MultiThreadableTaskAnalyzer.dll" />
+  <Analyzer Include="path\to\Microsoft.Build.Utilities.MultiThreadableTaskAnalyzer.dll" />
 </ItemGroup>
 ```
 
-## Demo
+Or via NuGet package (when available):
 
-See the `demo/` directory for examples of:
-- Tasks that trigger warnings (`SimpleTest.cs`)
-- Correct thread-safe implementations (`GoodTask`)
-- Common migration scenarios
-
-Run the demo:
-```powershell
-cd demo
-dotnet build RealDemo.csproj
+```xml
+<PackageReference Include="Microsoft.Build.Utilities.MultiThreadableTaskAnalyzer" Version="1.0.0">
+  <PrivateAssets>all</PrivateAssets>
+  <IncludeAssets>analyzers</IncludeAssets>
+</PackageReference>
 ```
+
+## Status
+
+**Implementation**: Prototype/Reference  
+**Target Framework**: netstandard2.0  
+**Dependencies**: Microsoft.CodeAnalysis.CSharp (Roslyn 4.x), Microsoft.CodeAnalysis.Workspaces
+
+---
+
+For next developer implementing final version: See [analyzer-spec.md](../../analyzer-spec.md) for comprehensive design rationale, algorithms, and enhancement opportunities.

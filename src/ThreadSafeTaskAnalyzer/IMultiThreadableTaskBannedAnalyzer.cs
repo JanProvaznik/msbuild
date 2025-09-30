@@ -42,41 +42,31 @@ namespace Microsoft.Build.Utilities.Analyzer
         protected abstract bool IsTypeDeclaration(SyntaxNode node);
 
         /// <summary>
-        /// Gets the hardcoded list of banned APIs with their documentation IDs and messages.
+        /// Gets types whose methods with string path parameters should be checked.
+        /// These are safe IF called with absolute paths (wrapped with TaskEnvironment.GetAbsolutePath).
+        /// </summary>
+        private static ImmutableArray<string> GetTypesWithPathMethods()
+        {
+            return ImmutableArray.Create(
+                "System.IO.File",
+                "System.IO.Directory",
+                "System.IO.FileInfo",
+                "System.IO.DirectoryInfo",
+                "System.IO.FileStream",
+                "System.IO.StreamReader",
+                "System.IO.StreamWriter");
+        }
+
+        /// <summary>
+        /// Gets the hardcoded list of APIs that are ALWAYS banned, regardless of arguments.
+        /// These are APIs that should NEVER be used in IMultiThreadableTask implementations.
         /// </summary>
         private static ImmutableArray<(string DeclarationId, string Message)> GetBannedApiDefinitions()
         {
             return ImmutableArray.Create(
-                // System.IO.Path Class - Uses current working directory
+                // System.IO.Path - GetFullPath relies on current directory
                 ("M:System.IO.Path.GetFullPath(System.String)", "Uses current working directory - use TaskEnvironment.GetAbsolutePath instead"),
-                ("M:System.IO.Path.GetFullPath(System.String,System.String)", "Base path parameter may cause issues - use absolute paths"),
-
-                // System.IO.File Class - All methods use current working directory when given relative paths
-                ("T:System.IO.File", "Methods use current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.File.Create(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.File.Delete(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.File.Exists(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.File.ReadAllText(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.File.ReadAllLines(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.File.ReadAllBytes(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.File.WriteAllText(System.String,System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.File.WriteAllLines(System.String,System.String[])", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.File.WriteAllBytes(System.String,System.Byte[])", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.File.Copy(System.String,System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.File.Move(System.String,System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.File.Replace(System.String,System.String,System.String)", "Uses current working directory for relative paths - use absolute paths"),
-
-                // System.IO.Directory Class - All methods use current working directory when given relative paths
-                ("T:System.IO.Directory", "Methods use current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.Directory.CreateDirectory(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.Directory.Delete(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.Directory.Exists(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.Directory.GetFiles(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.Directory.GetDirectories(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.Directory.GetFileSystemEntries(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.Directory.EnumerateFiles(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.Directory.EnumerateDirectories(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.Directory.Move(System.String,System.String)", "Uses current working directory for relative paths - use absolute paths"),
+                ("M:System.IO.Path.GetFullPath(System.String,System.String)", "Base path parameter may cause issues - use TaskEnvironment.GetAbsolutePath instead"),
 
                 // System.Environment Class - Modifies or accesses process-level state
                 ("P:System.Environment.CurrentDirectory", "Accesses process-level state - use TaskEnvironment.ProjectDirectory instead"),
@@ -86,39 +76,6 @@ namespace Microsoft.Build.Utilities.Analyzer
                 ("M:System.Environment.FailFast(System.String)", "Terminates entire process - return false from task or throw exception instead"),
                 ("M:System.Environment.FailFast(System.String,System.Exception)", "Terminates entire process - return false from task or throw exception instead"),
                 ("M:System.Environment.FailFast(System.String,System.Exception,System.String)", "Terminates entire process - return false from task or throw exception instead"),
-
-                // System.IO.FileInfo Class - Constructor and methods using relative paths
-                ("M:System.IO.FileInfo.#ctor(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.FileInfo.CopyTo(System.String)", "Destination path relative to current directory - use absolute paths"),
-                ("M:System.IO.FileInfo.CopyTo(System.String,System.Boolean)", "Destination path relative to current directory - use absolute paths"),
-                ("M:System.IO.FileInfo.MoveTo(System.String)", "Destination path relative to current directory - use absolute paths"),
-                ("M:System.IO.FileInfo.Replace(System.String,System.String)", "Paths relative to current directory - use absolute paths"),
-                ("M:System.IO.FileInfo.Replace(System.String,System.String,System.Boolean)", "Paths relative to current directory - use absolute paths"),
-
-                // System.IO.DirectoryInfo Class - Constructor and methods using relative paths
-                ("M:System.IO.DirectoryInfo.#ctor(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.DirectoryInfo.MoveTo(System.String)", "Destination path relative to current directory - use absolute paths"),
-
-                // System.IO.FileStream Class - Constructors using relative paths
-                ("M:System.IO.FileStream.#ctor(System.String,System.IO.FileMode)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.FileStream.#ctor(System.String,System.IO.FileMode,System.IO.FileAccess)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.FileStream.#ctor(System.String,System.IO.FileMode,System.IO.FileAccess,System.IO.FileShare)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.FileStream.#ctor(System.String,System.IO.FileMode,System.IO.FileAccess,System.IO.FileShare,System.Int32)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.FileStream.#ctor(System.String,System.IO.FileMode,System.IO.FileAccess,System.IO.FileShare,System.Int32,System.Boolean)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.FileStream.#ctor(System.String,System.IO.FileMode,System.IO.FileAccess,System.IO.FileShare,System.Int32,System.IO.FileOptions)", "Uses current working directory for relative paths - use absolute paths"),
-
-                // System.IO.StreamReader Class - Constructors using relative paths
-                ("M:System.IO.StreamReader.#ctor(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.StreamReader.#ctor(System.String,System.Boolean)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.StreamReader.#ctor(System.String,System.Text.Encoding)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.StreamReader.#ctor(System.String,System.Text.Encoding,System.Boolean)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.StreamReader.#ctor(System.String,System.Text.Encoding,System.Boolean,System.Int32)", "Uses current working directory for relative paths - use absolute paths"),
-
-                // System.IO.StreamWriter Class - Constructors using relative paths
-                ("M:System.IO.StreamWriter.#ctor(System.String)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.StreamWriter.#ctor(System.String,System.Boolean)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.StreamWriter.#ctor(System.String,System.Boolean,System.Text.Encoding)", "Uses current working directory for relative paths - use absolute paths"),
-                ("M:System.IO.StreamWriter.#ctor(System.String,System.Boolean,System.Text.Encoding,System.Int32)", "Uses current working directory for relative paths - use absolute paths"),
 
                 // System.Diagnostics.Process Class - Process control and startup
                 ("M:System.Diagnostics.Process.Kill", "Terminates process"),
@@ -241,21 +198,46 @@ namespace Microsoft.Build.Utilities.Analyzer
             switch (context.Operation)
             {
                 case IInvocationOperation invocation:
-                    VerifySymbol(context.ReportDiagnostic, invocation.TargetMethod, context.Operation.Syntax, bannedApis);
-                    VerifyType(context.ReportDiagnostic, invocation.TargetMethod.ContainingType, context.Operation.Syntax, bannedApis);
+                    // Check if this is a File/Directory method with unwrapped path argument
+                    if (IsPathMethodWithUnwrappedArgument(invocation.TargetMethod, invocation.Arguments))
+                    {
+                        var diagnostic = Diagnostic.Create(
+                            MultiThreadableTaskSymbolIsBannedRule,
+                            invocation.Syntax.GetLocation(),
+                            invocation.TargetMethod.ToDisplayString(SymbolDisplayFormat),
+                            ": Uses current working directory - use absolute paths with TaskEnvironment.GetAbsolutePath");
+                        context.ReportDiagnostic(diagnostic);
+                    }
+                    else
+                    {
+                        // Check if it's in the always-banned list
+                        VerifySymbol(context.ReportDiagnostic, invocation.TargetMethod, context.Operation.Syntax, bannedApis);
+                    }
                     break;
 
                 case IMemberReferenceOperation memberReference:
                     VerifySymbol(context.ReportDiagnostic, memberReference.Member, context.Operation.Syntax, bannedApis);
-                    VerifyType(context.ReportDiagnostic, memberReference.Member.ContainingType, context.Operation.Syntax, bannedApis);
                     break;
 
                 case IObjectCreationOperation objectCreation:
                     if (objectCreation.Constructor != null)
                     {
-                        VerifySymbol(context.ReportDiagnostic, objectCreation.Constructor, context.Operation.Syntax, bannedApis);
+                        // Check if this is a FileInfo/DirectoryInfo/FileStream/StreamReader/StreamWriter constructor with unwrapped path
+                        if (IsPathMethodWithUnwrappedArgument(objectCreation.Constructor, objectCreation.Arguments))
+                        {
+                            var diagnostic = Diagnostic.Create(
+                                MultiThreadableTaskSymbolIsBannedRule,
+                                objectCreation.Syntax.GetLocation(),
+                                objectCreation.Constructor.ContainingType.ToDisplayString(SymbolDisplayFormat),
+                                ": Constructor uses current working directory - use absolute paths with TaskEnvironment.GetAbsolutePath");
+                            context.ReportDiagnostic(diagnostic);
+                        }
+                        else
+                        {
+                            // Check if it's in the always-banned list
+                            VerifySymbol(context.ReportDiagnostic, objectCreation.Constructor, context.Operation.Syntax, bannedApis);
+                        }
                     }
-                    VerifyType(context.ReportDiagnostic, objectCreation.Type, context.Operation.Syntax, bannedApis);
                     break;
             }
         }
@@ -287,6 +269,85 @@ namespace Microsoft.Build.Utilities.Analyzer
             return typeSymbol.AllInterfaces.Any(i => i.ToDisplayString() == IMultiThreadableTaskInterfaceName);
         }
 
+        /// <summary>
+        /// Checks if a method/constructor is on a path-related type with a string parameter
+        /// that is NOT wrapped with TaskEnvironment.GetAbsolutePath().
+        /// </summary>
+        private bool IsPathMethodWithUnwrappedArgument(IMethodSymbol method, ImmutableArray<IArgumentOperation> arguments)
+        {
+            var containingTypeName = method.ContainingType?.ToDisplayString();
+            if (containingTypeName == null)
+            {
+                return false;
+            }
+
+            // Check if this is one of the path-related types
+            var pathTypes = GetTypesWithPathMethods();
+            if (!pathTypes.Contains(containingTypeName))
+            {
+                return false;
+            }
+
+            // Check if method has at least one string parameter (likely a path)
+            var hasStringParameter = method.Parameters.Any(p => p.Type.SpecialType == SpecialType.System_String);
+            if (!hasStringParameter)
+            {
+                return false;
+            }
+
+            // Find the first string argument and check if it's wrapped
+            foreach (var arg in arguments)
+            {
+                if (arg.Parameter?.Type.SpecialType == SpecialType.System_String)
+                {
+                    // Check if this argument is a call to TaskEnvironment.GetAbsolutePath()
+                    if (IsWrappedWithGetAbsolutePath(arg.Value))
+                    {
+                        // Path is already wrapped - no warning needed
+                        return false;
+                    }
+                    // Found unwrapped string argument - this needs a warning
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Checks if an operation is a call to TaskEnvironment.GetAbsolutePath().
+        /// </summary>
+        private bool IsWrappedWithGetAbsolutePath(IOperation operation)
+        {
+            // Check for direct call: TaskEnvironment.GetAbsolutePath(...)
+            if (operation is IInvocationOperation invocation)
+            {
+                var methodName = invocation.TargetMethod.Name;
+                var containingType = invocation.TargetMethod.ContainingType?.ToDisplayString();
+                
+                if (methodName == "GetAbsolutePath" && 
+                    containingType == "Microsoft.Build.Framework.TaskEnvironment")
+                {
+                    return true;
+                }
+            }
+
+            // Check for conversion from AbsolutePath to string
+            if (operation is IConversionOperation conversion)
+            {
+                var sourceType = conversion.Operand.Type?.ToDisplayString();
+                if (sourceType == "Microsoft.Build.Framework.AbsolutePath")
+                {
+                    return true;
+                }
+                
+                // Recursively check the converted expression
+                return IsWrappedWithGetAbsolutePath(conversion.Operand);
+            }
+
+            return false;
+        }
+
         private void VerifySymbol(
             Action<Diagnostic> reportDiagnostic,
             ISymbol symbol,
@@ -303,35 +364,6 @@ namespace Microsoft.Build.Utilities.Analyzer
                         MultiThreadableTaskSymbolIsBannedRule,
                         syntaxNode.GetLocation(),
                         symbol.ToDisplayString(SymbolDisplayFormat),
-                        string.IsNullOrWhiteSpace(entry.Message) ? "" : ": " + entry.Message);
-
-                    reportDiagnostic(diagnostic);
-                    return;
-                }
-            }
-        }
-
-        private void VerifyType(
-            Action<Diagnostic> reportDiagnostic,
-            ITypeSymbol? type,
-            SyntaxNode syntaxNode,
-            Dictionary<string, BanFileEntry> bannedApis)
-        {
-            if (type == null)
-            {
-                return;
-            }
-
-            foreach (var kvp in bannedApis)
-            {
-                var declarationId = kvp.Key;
-                var entry = kvp.Value;
-                if (entry.Symbols.Any(bannedSymbol => SymbolEqualityComparer.Default.Equals(type, bannedSymbol)))
-                {
-                    var diagnostic = Diagnostic.Create(
-                        MultiThreadableTaskSymbolIsBannedRule,
-                        syntaxNode.GetLocation(),
-                        type.ToDisplayString(SymbolDisplayFormat),
                         string.IsNullOrWhiteSpace(entry.Message) ? "" : ": " + entry.Message);
 
                     reportDiagnostic(diagnostic);

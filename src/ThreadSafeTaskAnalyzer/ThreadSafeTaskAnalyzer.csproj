@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <Compile Remove="demo/**" />
+    <Compile Remove="VisualStudioDemo/**" />
   </ItemGroup>
 
 </Project>

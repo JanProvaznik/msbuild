@@ -5,6 +5,7 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <OutputType>Library</OutputType>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <!-- Reference the actual Framework assembly -->
@@ -14,7 +15,7 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Include the built analyzer -->
+  <!-- Include the built analyzer with code fixer -->
   <ItemGroup>
     <Analyzer Include="..\..\..\artifacts\bin\ThreadSafeTaskAnalyzer\Debug\netstandard2.0\Microsoft.Build.Utilities.MultiThreadableTaskAnalyzer.dll" />
   </ItemGroup>
