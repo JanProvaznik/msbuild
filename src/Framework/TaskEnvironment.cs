@@ -91,10 +91,10 @@ namespace Microsoft.Build.Framework
         /// <summary>
         /// Gets or sets the project directory for resolving relative paths.
         /// </summary>
-        public virtual AbsolutePath ProjectDirectory { get; set; }
+        public virtual AbsolutePath ProjectCurrentDirectory { get; set; }
 
         /// <summary>
-        /// Resolves paths relative to ProjectDirectory, ensuring thread-safe path resolution.
+        /// Resolves paths relative to ProjectCurrentDirectory, ensuring thread-safe path resolution.
         /// </summary>
         /// <param name="path">The path to resolve (can be relative or absolute)</param>
         /// <returns>An absolute path</returns>
@@ -110,7 +110,7 @@ namespace Microsoft.Build.Framework
                 return new AbsolutePath(path, ignoreRootedCheck: true);
             }
 
-            return new AbsolutePath(path, ProjectDirectory);
+            return new AbsolutePath(path, ProjectCurrentDirectory);
         }
 
         /// <summary>
@@ -162,7 +162,7 @@ namespace Microsoft.Build.Framework
         {
             var startInfo = new ProcessStartInfo
             {
-                WorkingDirectory = ProjectDirectory.Path,
+                WorkingDirectory = ProjectCurrentDirectory.Path,
                 UseShellExecute = false
             };
 

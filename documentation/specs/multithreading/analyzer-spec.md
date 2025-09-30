@@ -37,52 +37,92 @@ A Roslyn analyzer that detects unsafe API usage in `IMultiThreadableTask` implem
 
 ### 1.1 Scope
 
-The analyzer detects two categories of problematic APIs:
+The analyzer detects four categories of problematic APIs, each with its own diagnostic code:
 
-1. **Always-Banned APIs** - Never safe in multithreaded context (e.g., `Environment.Exit`, `Process.Kill`, `Path.GetFullPath`)
-2. **Conditionally-Banned APIs** - File system APIs safe only with absolute paths (e.g., `File.Exists`, `Directory.CreateDirectory`)
+1. **MSB9999**: APIs that should cause build errors (e.g., `Environment.Exit`, `Process.Kill`)
+2. **MSB9998**: APIs requiring TaskEnvironment alternatives (e.g., `Environment.CurrentDirectory`, `Process.Start`)
+3. **MSB9997**: Conditionally unsafe with relative paths (e.g., `File.Exists`, `Directory.CreateDirectory`)
+4. **MSB9996**: APIs that should generate warnings (e.g., `Assembly.Load`, static fields)
 
-Detailed API list available in [thread-safe-tasks-api-analysis.md](thread-safe-tasks-api-analysis.md).
+Detailed API list and categorization available in [thread-safe-tasks-api-analysis.md](thread-safe-tasks-api-analysis.md).
 
 ### 1.2 Diagnostic Information
 
-- **ID**: `MSB9999`
-- **Severity**: Warning (proposal)
-- **Category**: Microsoft.Build.Tasks
-- **Activation**: Only within types implementing `IMultiThreadableTask`
+| Code | Severity | Description | Code Fixer Available |
+|------|----------|-------------|---------------------|
+| MSB9999 | Error (proposal) | Critical errors - terminates process, kills threads | No |
+| MSB9998 | Error (proposal) | Must use TaskEnvironment APIs instead | No |
+| MSB9997 | Warning | Unsafe with relative paths - wrap with GetAbsolutePath | Yes |
+| MSB9996 | Warning | Potential threading issues - review carefully | No |
+
+**Category**: Microsoft.Build.Tasks  
+**Activation**: Only within types implementing `IMultiThreadableTask`
 
 ### 1.3 Code Fixer Capability
 
-Offers automated fix: wraps path arguments with `TaskEnvironment.GetAbsolutePath()`.
+Offers automated fix **only for MSB9997** (file path warnings): wraps path arguments with `TaskEnvironment.GetAbsolutePath()`.
 
 **Example Transformation**:
 ```csharp
-// Before:
+// Before (MSB9997 warning):
 if (File.Exists(relativePath)) { ... }
 
-// After (automated fix):
+// After (automated fix applied):
 if (File.Exists(TaskEnvironment.GetAbsolutePath(relativePath))) { ... }
 ```
+
+**Not available for**: MSB9999, MSB9998, MSB9996 (these require manual code changes or architectural decisions)
 
 ---
 
 ## 2. Detection Strategy
 
-### 2.1 Always-Banned APIs
+### 2.1 Category 1: Critical Errors (MSB9999)
 
-Detected via exact symbol matching using Roslyn documentation IDs. Categories:
+**Severity**: Error  
+**Description**: APIs that are never safe in multithreaded tasks - no acceptable alternative
 
-- **Path APIs**: `Path.GetFullPath` (uses current directory implicitly)
-- **Environment APIs**: `Environment.CurrentDirectory`, `Environment.SetEnvironmentVariable`, `Environment.Exit`
-- **Process APIs**: `Process.Start`, `Process.Kill`, `ProcessStartInfo` constructors
-- **Threading APIs**: `ThreadPool.SetMinThreads`, `ThreadPool.SetMaxThreads`
-- **Culture APIs**: `CultureInfo.DefaultThreadCurrentCulture` setter
-- **Assembly Loading**: `Assembly.Load*`, `Activator.CreateInstance*`
-- **Console APIs**: `Console.Write`, `Console.ReadLine` (interferes with build output)
+Detected via exact symbol matching:
+- `Environment.Exit` - Terminates entire process
+- `Environment.FailFast` (all overloads) - Immediately terminates process
+- `Process.GetCurrentProcess().Kill()` - Terminates entire process
+- `ThreadPool.SetMinThreads`, `ThreadPool.SetMaxThreads` - Modifies process-wide thread pool settings
+- `CultureInfo.DefaultThreadCurrentCulture` (setter) - Affects all new threads in process
+- `CultureInfo.DefaultThreadCurrentUICulture` (setter) - Affects all new threads in process
 
-**Design Decision**: Explicit list ensures precision and clear error messages.
+**Code Fixer**: Not applicable (no safe alternative exists)
 
-### 2.2 Conditionally-Banned APIs (Smart Path Detection)
+**Rationale**: These APIs are never acceptable in multithreaded tasks as they affect the entire MSBuild process or all threads.
+
+### 2.2 Category 2: TaskEnvironment Required (MSB9998)
+
+**Severity**: Warning  
+**Description**: APIs that modify/access process-global state - must use TaskEnvironment instead
+
+Detected via exact symbol matching:
+- `Environment.CurrentDirectory` (getter/setter) - Use `TaskEnvironment.ProjectCurrentDirectory`
+- `Environment.GetEnvironmentVariable` - Use `TaskEnvironment.GetEnvironmentVariable`
+- `Environment.SetEnvironmentVariable(string, string)` - Use `TaskEnvironment.SetEnvironmentVariable`
+- `Environment.SetEnvironmentVariable(string, string, EnvironmentVariableTarget)` - No direct equivalent (drop target parameter)
+- `Path.GetFullPath` (all overloads) - Use `TaskEnvironment.GetAbsolutePath`
+- `Process.Start` (non-ProcessStartInfo overloads) - Use `TaskEnvironment.GetProcessStartInfo`
+- `ProcessStartInfo` constructors - Use `TaskEnvironment.GetProcessStartInfo`
+
+**Code Fixer**: Automatic fixes provided for:
+- ✅ `Environment.CurrentDirectory` → `TaskEnvironment.ProjectCurrentDirectory`
+- ✅ `Environment.GetEnvironmentVariable(name)` → `TaskEnvironment.GetEnvironmentVariable(name)`
+- ✅ `Environment.SetEnvironmentVariable(name, value)` → `TaskEnvironment.SetEnvironmentVariable(name, value)`
+- ✅ `Path.GetFullPath(path)` → `TaskEnvironment.GetAbsolutePath(path)`
+- ❌ `Environment.SetEnvironmentVariable(name, value, target)` - No code fixer (complex)
+- ❌ `Process.Start(...)` - No code fixer (requires multi-statement refactoring)
+- ❌ `ProcessStartInfo` constructors - No code fixer (requires multi-statement refactoring)
+
+**Rationale**: These APIs have TaskEnvironment alternatives. Simple property/method replacements are automated; complex transformations require manual refactoring.
+
+### 2.3 Category 3: Conditional - Require Absolute Paths (MSB9997)
+
+**Severity**: Warning  
+**Description**: File system APIs unsafe with relative paths
 
 File system types analyzed:
 - `System.IO.File`
@@ -96,8 +136,40 @@ File system types analyzed:
 **Detection Logic**:
 1. Check if invoked member belongs to one of these types
 2. Find first `string` parameter (assumed to be file path)
-3. Check if argument is wrapped with `TaskEnvironment.GetAbsolutePath()` or `.AbsolutePath` property
-4. Warn only if NOT wrapped
+3. Check if argument is wrapped with `TaskEnvironment.GetAbsolutePath()` or uses `.FullName` property
+4. Report MSB9997 only if NOT wrapped
+
+**Recognized Safe Patterns**:
+```csharp
+// ✅ Safe - wrapped
+File.Exists(TaskEnvironment.GetAbsolutePath(path))
+
+// ✅ Safe - absolute path property
+File.Exists(fileInfo.FullName)
+
+// ❌ MSB9997 - not wrapped
+File.Exists(path)
+```
+
+**Code Fixer**: Yes - wraps first string argument with `TaskEnvironment.GetAbsolutePath(...)`
+
+**Rationale**: These APIs are safe when used with absolute paths, making them fixable via automation.
+
+### 2.4 Category 4: Warnings - Potential Issues (MSB9996)
+
+**Severity**: Warning  
+**Description**: APIs that may cause threading issues but require case-by-case review
+
+Detected via exact symbol matching:
+- `Assembly.Load*`, `Assembly.LoadFrom`, `Assembly.LoadFile` - May cause version conflicts
+- `Activator.CreateInstance*` - May cause version conflicts
+- `AppDomain.Load`, `AppDomain.CreateInstance*` - May cause version conflicts
+- `Console.Write`, `Console.WriteLine`, `Console.ReadLine` - Interferes with build output
+- Static field access (future enhancement) - Shared state across threads
+
+**Code Fixer**: Not applicable (requires case-by-case analysis)
+
+**Rationale**: These APIs aren't always wrong but require careful review for thread-safety.
 
 **Recognized Safe Patterns**:
 ```csharp
@@ -126,23 +198,68 @@ File.Exists(path)
 
 ## 3. Code Fixer Design
 
-### 3.1 Transformation Rules
+### 3.1 Scope
 
-**Offers fixes for conditionally-banned APIs** (path methods):
+Code fixers provided for:
+- **MSB9997**: Wraps file path arguments with `TaskEnvironment.GetAbsolutePath(...)`
+- **MSB9998**: Simple API migrations to TaskEnvironment (property/method replacements only)
+
+### 3.2 MSB9997 Transformation Rules (File Paths)
+
+**Path wrapping fixes:**
 - Wraps first string argument with `TaskEnvironment.GetAbsolutePath(...)`
 - Preserves all other arguments unchanged
-- Adds `using` directive if needed (implementation detail)
+- Adds `using Microsoft.Build.Framework;` directive if needed
 
-**Does NOT offer fixes for**:
-- Always-banned APIs (no safe alternative via wrapping)
-- Already-wrapped paths (no warning issued)
-- Non-string parameters
+**Example:**
+```csharp
+// Before:
+File.Exists(somePath)
 
-### 3.2 User Experience
+// After:
+File.Exists(TaskEnvironment.GetAbsolutePath(somePath))
+```
 
-- Fix appears in Visual Studio Quick Actions (Ctrl+.)
-- Action title: "Wrap with TaskEnvironment.GetAbsolutePath()"
-- Available immediately when warning appears
+### 3.3 MSB9998 Transformation Rules (Simple API Migrations)
+
+**Property replacements:**
+- `Environment.CurrentDirectory` → `TaskEnvironment.ProjectCurrentDirectory`
+- Handles both getter and setter contexts
+- Adds cast to `string` when needed for `AbsolutePath` return type
+
+**Method replacements:**
+- `Environment.GetEnvironmentVariable(name)` → `TaskEnvironment.GetEnvironmentVariable(name)`
+- `Environment.SetEnvironmentVariable(name, value)` → `TaskEnvironment.SetEnvironmentVariable(name, value)`
+- `Path.GetFullPath(path)` → `TaskEnvironment.GetAbsolutePath(path)`
+
+**Not fixable (too complex):**
+- `Process.Start(...)` - Requires multi-statement refactoring to use `GetProcessStartInfo()`
+- `ProcessStartInfo` constructors - Requires multi-statement refactoring
+- `Environment.SetEnvironmentVariable(name, value, target)` - Target parameter must be manually removed
+
+**Examples:**
+```csharp
+// Before:
+string dir = Environment.CurrentDirectory;
+string value = Environment.GetEnvironmentVariable("PATH");
+string full = Path.GetFullPath("file.txt");
+
+// After:
+string dir = TaskEnvironment.ProjectCurrentDirectory;
+string value = TaskEnvironment.GetEnvironmentVariable("PATH");
+string full = TaskEnvironment.GetAbsolutePath("file.txt");
+```
+
+### 3.4 User Experience
+
+- Fixes appear in Visual Studio Quick Actions (Ctrl+.)
+- Action titles:
+  - "Wrap with TaskEnvironment.GetAbsolutePath()" (MSB9997)
+  - "Use TaskEnvironment.ProjectCurrentDirectory" (MSB9998)
+  - "Use TaskEnvironment.GetEnvironmentVariable()" (MSB9998)
+  - "Use TaskEnvironment.SetEnvironmentVariable()" (MSB9998)
+  - "Use TaskEnvironment.GetAbsolutePath()" (MSB9998 for Path.GetFullPath)
+- Available immediately when warnings appear
 
 ---
 
@@ -167,15 +284,19 @@ File.Exists(path)
 
 **Question**: Do we have consensus on shipping with Utilities.Core?
 
-### 4.2 Default Severity
+### 4.2 Default Severity Levels
 
-**Proposal**: `Warning`
+**Current Proposal**:
+- **MSB9999**: Error (no safe alternative - Environment.Exit, Process.Kill, ThreadPool settings, CultureInfo defaults)
+- **MSB9998**: Warning (has TaskEnvironment alternative - Environment.CurrentDirectory, Get/SetEnvironmentVariable, Path.GetFullPath, Process.Start)
+- **MSB9997**: Warning (conditional safety - file path methods)
+- **MSB9996**: Warning (informational - Console, Assembly.Load)
 
-**Alternatives**:
-- `Error`: Blocks compilation - may be too aggressive for initial release
-- `Info`: Easy to miss - defeats purpose
+**Rationale for MSB9999 as Error**: These APIs have no acceptable workaround and would cause serious issues in multithreaded builds (process termination, process-wide state corruption).
 
-**Question**: Should we plan to increase to Error in a future version?
+**Rationale for MSB9998 as Warning**: While these APIs need migration, they have clear TaskEnvironment alternatives and code fixers to ease transition. Warning severity allows gradual adoption.
+
+**Question**: Should MSB9998 be elevated to Error in a future release after adoption period?
 
 ### 4.3 Opt-Out Mechanism
 
@@ -205,7 +326,7 @@ File.Exists(path)
 ### 5.1 Validation
 
 A demo project demonstrates analyzer behavior:
-- **ProblematicTask**: Task with 9 unsafe API usages → expects 9 MSB9999 warnings
+- **ProblematicTask**: Task with 9 unsafe API usages → expects mixture of MSB9999/MSB9998/MSB9997/MSB9996 warnings
 - **CorrectTask**: Same logic using wrapped paths → expects 0 warnings
 
 **Location**: `src/ThreadSafeTaskAnalyzer/VisualStudioDemo/`
@@ -213,8 +334,8 @@ A demo project demonstrates analyzer behavior:
 ### 5.2 Manual Testing
 
 1. Open demo in Visual Studio
-2. Observe green squiggles on unwrapped File/Directory calls
-3. Verify Quick Action offers "Wrap with..." fix
+2. Observe diagnostics on unsafe API usages (squiggles based on severity)
+3. Verify Quick Action offers "Wrap with..." fix for MSB9997 only
 4. Apply fix and confirm warning disappears
 
 ---
