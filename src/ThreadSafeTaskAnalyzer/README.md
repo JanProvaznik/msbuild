@@ -52,6 +52,27 @@ The analyzer has **80+ banned APIs** hardcoded, organized into these categories:
 
 **MSB4260**: Symbol is banned in IMultiThreadableTask implementations
 
+## Code Fixer
+
+The analyzer includes a code fixer that can automatically wrap path arguments with `TaskEnvironment.GetAbsolutePath()` for common file system operations.
+
+### Supported Fixes
+
+The code fixer can automatically fix violations for:
+- `File.Exists(path)` → `File.Exists(TaskEnvironment.GetAbsolutePath(path))`
+- `Directory.Exists(path)` → `Directory.Exists(TaskEnvironment.GetAbsolutePath(path))`
+- `new FileInfo(path)` → `new FileInfo(TaskEnvironment.GetAbsolutePath(path))`
+- And other path-related API calls
+
+### Using the Code Fixer
+
+In Visual Studio or VS Code with C# extension:
+1. Click on the warning squiggle or place cursor on the warning
+2. Press `Ctrl+.` (Quick Actions)
+3. Select "Wrap with TaskEnvironment.GetAbsolutePath()"
+
+**Note**: The code fixer provides a quick fix for path-related issues, but you should review the changes to ensure they're appropriate for your scenario. Some APIs (like Console.WriteLine or Environment.SetEnvironmentVariable) require manual migration to the appropriate TaskEnvironment or MSBuild logging methods.
+
 ## Usage
 
 The analyzer automatically activates when analyzing projects that reference it. No additional configuration is needed - all banned APIs are hardcoded in the analyzer.
