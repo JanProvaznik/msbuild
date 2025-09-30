@@ -8,7 +8,7 @@ using Microsoft.CodeAnalysis.Diagnostics;
 namespace Microsoft.Build.Utilities.Analyzer
 {
     [DiagnosticAnalyzer(LanguageNames.CSharp)]
-    public sealed class CSharpIThreadSafeTaskBannedAnalyzer : IThreadSafeTaskBannedAnalyzer<Microsoft.CodeAnalysis.CSharp.SyntaxKind>
+    public sealed class CSharpIMultiThreadableTaskBannedAnalyzer : IMultiThreadableTaskBannedAnalyzer<Microsoft.CodeAnalysis.CSharp.SyntaxKind>
     {
         protected override SymbolDisplayFormat SymbolDisplayFormat => SymbolDisplayFormat.CSharpShortErrorMessageFormat;
 

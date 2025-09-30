@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- Include the built analyzer -->
+  <ItemGroup>
+    <Analyzer Include="..\..\..\artifacts\bin\ThreadSafeTaskAnalyzer\Debug\netstandard2.0\Microsoft.Build.Utilities.ThreadSafeTaskAnalyzer.dll" />
+  </ItemGroup>
+
+  <!-- Include the banned APIs configuration file -->
+  <ItemGroup>
+    <AdditionalFiles Include="..\IMultiThreadableTask_BannedApis.txt" />
+  </ItemGroup>
+
+</Project>
