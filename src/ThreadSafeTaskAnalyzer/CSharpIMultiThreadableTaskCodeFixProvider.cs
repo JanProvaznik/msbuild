@@ -64,13 +64,13 @@ namespace Microsoft.Build.Utilities.Analyzer
 
         private void RegisterMSB9998Fixes(CodeFixContext context, SyntaxNode node, Diagnostic diagnostic)
         {
-            // Handle Environment.CurrentDirectory
-            if (node is IdentifierNameSyntax identifier && 
-                identifier.Identifier.Text == "CurrentDirectory")
+            // Handle Environment.CurrentDirectory - diagnostic is on the member access itself
+            if (node is MemberAccessExpressionSyntax memberAccess)
             {
-                var memberAccess = identifier.Parent as MemberAccessExpressionSyntax;
-                if (memberAccess?.Expression is IdentifierNameSyntax envIdentifier && 
-                    envIdentifier.Identifier.Text == "Environment")
+                var memberName = (memberAccess.Name as IdentifierNameSyntax)?.Identifier.Text;
+                var targetType = (memberAccess.Expression as IdentifierNameSyntax)?.Identifier.Text;
+
+                if (targetType == "Environment" && memberName == "CurrentDirectory")
                 {
                     context.RegisterCodeFix(
                         CodeAction.Create(
@@ -82,13 +82,33 @@ namespace Microsoft.Build.Utilities.Analyzer
                 }
             }
 
-            // Handle Environment.GetEnvironmentVariable
+            // Also check if node is identifier within member access (when cursor is on identifier)
+            if (node is IdentifierNameSyntax identifier)
+            {
+                if (identifier.Identifier.Text == "CurrentDirectory")
+                {
+                    var parentMemberAccess = identifier.Parent as MemberAccessExpressionSyntax;
+                    if (parentMemberAccess?.Expression is IdentifierNameSyntax envIdentifier && 
+                        envIdentifier.Identifier.Text == "Environment")
+                    {
+                        context.RegisterCodeFix(
+                            CodeAction.Create(
+                                title: "Use TaskEnvironment.ProjectCurrentDirectory",
+                                createChangedDocument: c => ReplaceEnvironmentCurrentDirectoryAsync(context.Document, parentMemberAccess, c),
+                                equivalenceKey: "UseProjectCurrentDirectory"),
+                            diagnostic);
+                        return;
+                    }
+                }
+            }
+
+            // Handle Environment.GetEnvironmentVariable and SetEnvironmentVariable
             if (node is InvocationExpressionSyntax invocation)
             {
-                if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
+                if (invocation.Expression is MemberAccessExpressionSyntax invocationMemberAccess)
                 {
-                    var methodName = (memberAccess.Name as IdentifierNameSyntax)?.Identifier.Text;
-                    var targetType = (memberAccess.Expression as IdentifierNameSyntax)?.Identifier.Text;
+                    var methodName = (invocationMemberAccess.Name as IdentifierNameSyntax)?.Identifier.Text;
+                    var targetType = (invocationMemberAccess.Expression as IdentifierNameSyntax)?.Identifier.Text;
 
                     if (targetType == "Environment")
                     {
