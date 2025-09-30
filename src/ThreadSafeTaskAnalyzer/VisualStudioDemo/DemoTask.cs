@@ -10,14 +10,19 @@ using Microsoft.Build.Framework;
 namespace VisualStudioDemo
 {
     /// <summary>
-    /// Demo task showing PROBLEMATIC code that triggers analyzer warnings.
-    /// This class demonstrates unwrapped File/Directory API usage.
+    /// Demo task showing PROBLEMATIC code that triggers analyzer diagnostics across all 4 categories.
     /// 
-    /// Try the code fixer:
-    /// 1. Place cursor on any MSB9999 warning (green squiggle)
+    /// Try the code fixers:
+    /// 1. Place cursor on MSB9997 or MSB9998 warnings
     /// 2. Press Ctrl+. to open Quick Actions
-    /// 3. Select "Wrap with TaskEnvironment.GetAbsolutePath()"
+    /// 3. Apply the suggested fix
     /// 4. Watch the warning disappear!
+    /// 
+    /// Expected diagnostics:
+    /// - 2 MSB9999 errors (Environment.Exit, ThreadPool.SetMaxThreads)
+    /// - 3 MSB9998 warnings (Environment.CurrentDirectory, GetEnvironmentVariable, Path.GetFullPath) - Code fixers available!
+    /// - 7 MSB9997 warnings (File/Directory APIs) - Code fixers available!
+    /// - 1 MSB9996 warning (Console.WriteLine)
     /// </summary>
     public class ProblematicTask : IMultiThreadableTask
     {
@@ -30,36 +35,51 @@ namespace VisualStudioDemo
 
         public bool Execute()
         {
-            // ❌ MSB9999: File.Exists with unwrapped path - Code fixer available!
+            // ❌ MSB9998: Environment.CurrentDirectory - Code fixer available!
+            string currentDir = Environment.CurrentDirectory;
+
+            // ❌ MSB9998: Environment.GetEnvironmentVariable - Code fixer available!
+            string pathVar = Environment.GetEnvironmentVariable("PATH");
+
+            // ❌ MSB9997: File.Exists with unwrapped path - Code fixer available!
             if (File.Exists(InputFile))
             {
-                // ❌ MSB9999: Directory.Exists with unwrapped path
+                // ❌ MSB9997: Directory.Exists with unwrapped path
                 if (!Directory.Exists(OutputDirectory))
                 {
-                    // ❌ MSB9999: Directory.CreateDirectory with unwrapped path
+                    // ❌ MSB9997: Directory.CreateDirectory with unwrapped path
                     Directory.CreateDirectory(OutputDirectory);
                 }
 
-                // ❌ MSB9999: File.ReadAllText with unwrapped path
+                // ❌ MSB9997: File.ReadAllText with unwrapped path
                 string content = File.ReadAllText(InputFile);
 
-                // ❌ MSB9999: Path.GetFullPath - always banned (use TaskEnvironment.GetAbsolutePath instead)
+                // ❌ MSB9998: Path.GetFullPath - Code fixer available!
                 string fullPath = Path.GetFullPath(InputFile);
 
-                // ❌ MSB9999: new FileInfo with unwrapped path
+                // ❌ MSB9997: new FileInfo with unwrapped path
                 var fileInfo = new FileInfo(InputFile);
 
-                // ❌ MSB9999: new DirectoryInfo with unwrapped path
+                // ❌ MSB9997: new DirectoryInfo with unwrapped path
                 var dirInfo = new DirectoryInfo(OutputDirectory);
 
-                // ❌ MSB9999: new StreamReader with unwrapped path
+                // ❌ MSB9997: new StreamReader with unwrapped path
                 using (var reader = new StreamReader(InputFile))
                 {
                     string line = reader.ReadLine();
                 }
 
-                // ❌ MSB9999: File.WriteAllText with unwrapped path
-                File.WriteAllText(Path.Combine(OutputDirectory, "output.txt"), content);
+                // ❌ MSB9996: Console.WriteLine - warning only
+                Console.WriteLine("Processing file: " + InputFile);
+
+                // ❌ MSB9999: ThreadPool.SetMaxThreads - ERROR (no safe alternative)
+                System.Threading.ThreadPool.SetMaxThreads(10, 10);
+
+                // ❌ MSB9999: Environment.Exit - ERROR (terminates process)
+                if (content.Length == 0)
+                {
+                    Environment.Exit(1);
+                }
 
                 return true;
             }
