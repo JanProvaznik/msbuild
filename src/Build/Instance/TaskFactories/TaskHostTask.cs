@@ -193,6 +193,7 @@ namespace Microsoft.Build.BackEnd
             (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.TaskHostTaskComplete, TaskHostTaskComplete.FactoryForDeserialization, this);
             (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.NodeShutdown, NodeShutdown.FactoryForDeserialization, this);
             (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.TaskHostQueryRequest, TaskHostQueryRequest.FactoryForDeserialization, this);
+            (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.TaskHostResourceRequest, TaskHostResourceRequest.FactoryForDeserialization, this);
 
             _packetReceivedEvent = new AutoResetEvent(false);
             _receivedPackets = new ConcurrentQueue<INodePacket>();
@@ -513,6 +514,9 @@ namespace Microsoft.Build.BackEnd
                 case NodePacketType.TaskHostQueryRequest:
                     HandleTaskHostQueryRequest(packet as TaskHostQueryRequest);
                     break;
+                case NodePacketType.TaskHostResourceRequest:
+                    HandleTaskHostResourceRequest(packet as TaskHostResourceRequest);
+                    break;
                 default:
                     ErrorUtilities.ThrowInternalErrorUnreachable();
                     break;
@@ -649,6 +653,46 @@ namespace Microsoft.Build.BackEnd
                     }
 
                     break;
+            }
+        }
+
+        /// <summary>
+        /// Handle resource requests from the task host.
+        /// </summary>
+        private void HandleTaskHostResourceRequest(TaskHostResourceRequest resourceRequest)
+        {
+            int numCoresGranted = 0;
+
+            switch (resourceRequest.RequestType)
+            {
+                case TaskHostResourceRequestType.RequestCores:
+                    // Forward the request to the real build engine
+                    numCoresGranted = ((IBuildEngine9)_buildEngine).RequestCores(resourceRequest.NumCores);
+                    break;
+                case TaskHostResourceRequestType.ReleaseCores:
+                    // Forward the release to the real build engine
+                    ((IBuildEngine9)_buildEngine).ReleaseCores(resourceRequest.NumCores);
+                    numCoresGranted = 0;
+                    break;
+                default:
+                    ErrorUtilities.ThrowInternalError("Unknown resource request type: {0}", resourceRequest.RequestType);
+                    break;
+            }
+
+            // Send the response back to the task host
+            TaskHostResourceResponse response = new TaskHostResourceResponse(resourceRequest.RequestId, resourceRequest.RequestType, numCoresGranted);
+            
+            if (_connectedToTaskHost && _taskHostProvider != null)
+            {
+                try
+                {
+                    _taskHostProvider.SendData(_taskHostNodeId, response);
+                }
+                catch (Exception ex)
+                {
+                    // Log error but don't fail the build - the task host will timeout
+                    Debug.WriteLine("[TaskHostTask] Failed to send resource response: {0}", ex.Message);
+                }
             }
         }
 

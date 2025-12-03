@@ -221,6 +221,7 @@ namespace Microsoft.Build.CommandLine
             thisINodePacketFactory.RegisterPacketHandler(NodePacketType.TaskHostTaskCancelled, TaskHostTaskCancelled.FactoryForDeserialization, this);
             thisINodePacketFactory.RegisterPacketHandler(NodePacketType.NodeBuildComplete, NodeBuildComplete.FactoryForDeserialization, this);
             thisINodePacketFactory.RegisterPacketHandler(NodePacketType.TaskHostQueryResponse, TaskHostQueryResponse.FactoryForDeserialization, this);
+            thisINodePacketFactory.RegisterPacketHandler(NodePacketType.TaskHostResourceResponse, TaskHostResourceResponse.FactoryForDeserialization, this);
 
 #if !CLR2COMPATIBILITY
             EngineServices = new EngineServicesImpl(this);
@@ -536,14 +537,28 @@ namespace Microsoft.Build.CommandLine
 
         public int RequestCores(int requestedCores)
         {
-            // No resource management in OOP nodes
-            throw new NotImplementedException();
+            int requestId = GetNextRequestId();
+            TaskHostResourceRequest request = new TaskHostResourceRequest(requestId, TaskHostResourceRequestType.RequestCores, requestedCores);
+            TaskHostResourceResponse response = SendRequestAndWaitForResponse<TaskHostResourceRequest, TaskHostResourceResponse>(request);
+            
+            if (response != null)
+            {
+                return response.NumCoresGranted;
+            }
+            else
+            {
+                // Timeout or connection lost - return 0 cores granted
+                return 0;
+            }
         }
 
         public void ReleaseCores(int coresToRelease)
         {
-            // No resource management in OOP nodes
-            throw new NotImplementedException();
+            int requestId = GetNextRequestId();
+            TaskHostResourceRequest request = new TaskHostResourceRequest(requestId, TaskHostResourceRequestType.ReleaseCores, coresToRelease);
+            TaskHostResourceResponse response = SendRequestAndWaitForResponse<TaskHostResourceRequest, TaskHostResourceResponse>(request);
+            
+            // For ReleaseCores, we don't care about the response value, just that it was acknowledged
         }
 
         #endregion
@@ -756,6 +771,7 @@ namespace Microsoft.Build.CommandLine
                     HandleNodeBuildComplete(packet as NodeBuildComplete);
                     break;
                 case NodePacketType.TaskHostQueryResponse:
+                case NodePacketType.TaskHostResourceResponse:
                     HandleCallbackResponse(packet);
                     break;
             }
