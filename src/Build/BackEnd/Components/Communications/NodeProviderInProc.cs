@@ -195,6 +195,16 @@ namespace Microsoft.Build.BackEnd
         }
 
         /// <summary>
+        /// Determines whether we should acquire the operating environment semaphore.
+        /// In multithreaded mode, we skip this because environment isolation is handled
+        /// by TaskEnvironment virtualization instead of process-level save/restore.
+        /// </summary>
+        private bool ShouldAcquireOperatingEnvironmentSemaphore()
+        {
+            return _componentHost.BuildParameters.SaveOperatingEnvironment && !_componentHost.BuildParameters.MultiThreaded;
+        }
+
+        /// <summary>
         /// Requests that a node be created on the specified machine.
         /// </summary>
         /// <param name="nodeId">The id of the node to create.</param>
@@ -204,8 +214,9 @@ namespace Microsoft.Build.BackEnd
         {
             // Attempt to get the operating environment semaphore if requested.
             // In multithreaded mode, we don't need exclusive operating environment ownership because
-            // environment isolation is handled by TaskEnvironment (MultiThreadedTaskEnvironmentDriver).
-            if (_componentHost.BuildParameters.SaveOperatingEnvironment && !_componentHost.BuildParameters.MultiThreaded)
+            // environment isolation is provided per-project/per-task through TaskEnvironment virtualization
+            // (MultiThreadedTaskEnvironmentDriver), eliminating the need for a global process-level semaphore.
+            if (ShouldAcquireOperatingEnvironmentSemaphore())
             {
                 // We can only create additional in-proc nodes if we have decided not to save the operating environment.  This is the global
                 // DTAR case in Visual Studio, but other clients might enable this as well under certain special circumstances.
@@ -310,7 +321,7 @@ namespace Microsoft.Build.BackEnd
 
                 // Release the operating environment semaphore if we were holding it.
                 // In multithreaded mode, we don't acquire this semaphore.
-                if ((_componentHost.BuildParameters.SaveOperatingEnvironment && !_componentHost.BuildParameters.MultiThreaded) &&
+                if (ShouldAcquireOperatingEnvironmentSemaphore() &&
                     (InProcNodeOwningOperatingEnvironment != null))
                 {
                     InProcNodeOwningOperatingEnvironment.Release();
