@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using Microsoft.Build.BackEnd.Logging;
+using Microsoft.Build.CommandLine;
 using Microsoft.Build.Exceptions;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Internal;
@@ -191,6 +192,7 @@ namespace Microsoft.Build.BackEnd
             (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.LogMessage, LogMessagePacket.FactoryForDeserialization, this);
             (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.TaskHostTaskComplete, TaskHostTaskComplete.FactoryForDeserialization, this);
             (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.NodeShutdown, NodeShutdown.FactoryForDeserialization, this);
+            (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.TaskHostQueryRequest, TaskHostQueryRequest.FactoryForDeserialization, this);
 
             _packetReceivedEvent = new AutoResetEvent(false);
             _receivedPackets = new ConcurrentQueue<INodePacket>();
@@ -508,6 +510,9 @@ namespace Microsoft.Build.BackEnd
                 case NodePacketType.LogMessage:
                     HandleLoggedMessage(packet as LogMessagePacket);
                     break;
+                case NodePacketType.TaskHostQueryRequest:
+                    HandleTaskHostQueryRequest(packet as TaskHostQueryRequest);
+                    break;
                 default:
                     ErrorUtilities.ThrowInternalErrorUnreachable();
                     break;
@@ -644,6 +649,42 @@ namespace Microsoft.Build.BackEnd
                     }
 
                     break;
+            }
+        }
+
+        /// <summary>
+        /// Handle query requests from the task host.
+        /// </summary>
+        private void HandleTaskHostQueryRequest(TaskHostQueryRequest queryRequest)
+        {
+            bool result = false;
+
+            switch (queryRequest.QueryType)
+            {
+                case TaskHostQueryType.IsRunningMultipleNodes:
+                    // Forward the query to the real build engine
+                    result = ((IBuildEngine2)_buildEngine).IsRunningMultipleNodes;
+                    break;
+                default:
+                    ErrorUtilities.ThrowInternalError("Unknown query type: {0}", queryRequest.QueryType);
+                    break;
+            }
+
+            // Send the response back to the task host
+            TaskHostQueryResponse response = new TaskHostQueryResponse(queryRequest.RequestId, queryRequest.QueryType, result);
+            
+            // Need to get the connection and send the response
+            if (_connectedToTaskHost && _taskHostProvider != null)
+            {
+                try
+                {
+                    _taskHostProvider.SendData(_taskHostNodeId, response);
+                }
+                catch (Exception ex)
+                {
+                    // Log error but don't fail the build - the task host will timeout
+                    Debug.WriteLine("[TaskHostTask] Failed to send query response: {0}", ex.Message);
+                }
             }
         }
 

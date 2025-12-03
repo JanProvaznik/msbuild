@@ -8,6 +8,7 @@ using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Build.BackEnd;
 using Microsoft.Build.Execution;
 using Microsoft.Build.Framework;
@@ -179,6 +180,22 @@ namespace Microsoft.Build.CommandLine
 #endif
 
         /// <summary>
+        /// Counter for generating unique request IDs for callback requests.
+        /// </summary>
+        private int _nextRequestId;
+
+        /// <summary>
+        /// Pending callback requests waiting for responses from the parent node.
+        /// Maps request ID to TaskCompletionSource that will be completed when response arrives.
+        /// </summary>
+        private readonly Dictionary<int, TaskCompletionSource<INodePacket>> _pendingRequests = new();
+
+        /// <summary>
+        /// Object used to synchronize access to _pendingRequests and _nextRequestId.
+        /// </summary>
+        private readonly LockType _pendingRequestsLock = new();
+
+        /// <summary>
         /// Constructor.
         /// </summary>
         public OutOfProcTaskHostNode()
@@ -203,6 +220,7 @@ namespace Microsoft.Build.CommandLine
             thisINodePacketFactory.RegisterPacketHandler(NodePacketType.TaskHostConfiguration, TaskHostConfiguration.FactoryForDeserialization, this);
             thisINodePacketFactory.RegisterPacketHandler(NodePacketType.TaskHostTaskCancelled, TaskHostTaskCancelled.FactoryForDeserialization, this);
             thisINodePacketFactory.RegisterPacketHandler(NodePacketType.NodeBuildComplete, NodeBuildComplete.FactoryForDeserialization, this);
+            thisINodePacketFactory.RegisterPacketHandler(NodePacketType.TaskHostQueryResponse, TaskHostQueryResponse.FactoryForDeserialization, this);
 
 #if !CLR2COMPATIBILITY
             EngineServices = new EngineServicesImpl(this);
@@ -271,8 +289,20 @@ namespace Microsoft.Build.CommandLine
         {
             get
             {
-                LogErrorFromResource("BuildEngineCallbacksInTaskHostUnsupported");
-                return false;
+                int requestId = GetNextRequestId();
+                TaskHostQueryRequest request = new TaskHostQueryRequest(requestId, TaskHostQueryType.IsRunningMultipleNodes);
+                TaskHostQueryResponse response = SendRequestAndWaitForResponse<TaskHostQueryRequest, TaskHostQueryResponse>(request);
+                
+                if (response != null)
+                {
+                    return response.BoolResult;
+                }
+                else
+                {
+                    // Timeout or connection lost - fall back to false
+                    LogErrorFromResource("BuildEngineCallbacksInTaskHostUnsupported");
+                    return false;
+                }
             }
         }
 
@@ -724,6 +754,9 @@ namespace Microsoft.Build.CommandLine
                     break;
                 case NodePacketType.NodeBuildComplete:
                     HandleNodeBuildComplete(packet as NodeBuildComplete);
+                    break;
+                case NodePacketType.TaskHostQueryResponse:
+                    HandleCallbackResponse(packet);
                     break;
             }
         }
@@ -1222,6 +1255,94 @@ namespace Microsoft.Build.CommandLine
 
                 LogMessagePacketBase logMessage = new(new KeyValuePair<int, BuildEventArgs>(_currentConfiguration.NodeId, e));
                 _nodeEndpoint.SendData(logMessage);
+            }
+        }
+
+        /// <summary>
+        /// Sends a callback request to the parent node and waits for the response.
+        /// </summary>
+        /// <typeparam name="TRequest">Type of request packet.</typeparam>
+        /// <typeparam name="TResponse">Type of response packet.</typeparam>
+        /// <param name="request">The request packet to send.</param>
+        /// <param name="timeout">Timeout in milliseconds to wait for response.</param>
+        /// <returns>The response packet, or null if timeout or connection lost.</returns>
+        private TResponse SendRequestAndWaitForResponse<TRequest, TResponse>(TRequest request, int timeout = 60000)
+            where TRequest : INodePacket
+            where TResponse : INodePacket
+        {
+            // Get the request ID from the packet (requires reflection or known interface)
+            // For now, we'll use a simple approach with dynamic
+            dynamic dynamicRequest = request;
+            int requestId = dynamicRequest.RequestId;
+
+            TaskCompletionSource<INodePacket> tcs = new TaskCompletionSource<INodePacket>();
+
+            lock (_pendingRequestsLock)
+            {
+                _pendingRequests[requestId] = tcs;
+            }
+
+            try
+            {
+                // Send the request packet to the parent node
+                _nodeEndpoint.SendData(request);
+
+                // Wait for the response with timeout
+                if (tcs.Task.Wait(timeout))
+                {
+                    return (TResponse)tcs.Task.Result;
+                }
+                else
+                {
+                    // Timeout occurred
+                    return default(TResponse);
+                }
+            }
+            finally
+            {
+                // Clean up the pending request
+                lock (_pendingRequestsLock)
+                {
+                    _pendingRequests.Remove(requestId);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Handles callback responses from the parent node.
+        /// </summary>
+        /// <param name="packet">The response packet.</param>
+        private void HandleCallbackResponse(INodePacket packet)
+        {
+            // Get the request ID from the response packet
+            dynamic dynamicResponse = packet;
+            int requestId = dynamicResponse.RequestId;
+
+            TaskCompletionSource<INodePacket> tcs = null;
+            lock (_pendingRequestsLock)
+            {
+                if (_pendingRequests.TryGetValue(requestId, out tcs))
+                {
+                    _pendingRequests.Remove(requestId);
+                }
+            }
+
+            if (tcs != null)
+            {
+                // Complete the waiting task with the response
+                tcs.SetResult(packet);
+            }
+        }
+
+        /// <summary>
+        /// Generates the next unique request ID.
+        /// </summary>
+        /// <returns>A unique request ID.</returns>
+        private int GetNextRequestId()
+        {
+            lock (_pendingRequestsLock)
+            {
+                return ++_nextRequestId;
             }
         }
 

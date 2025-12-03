@@ -101,6 +101,8 @@
     <Compile Include="..\Shared\TaskHostTaskCancelled.cs" />
     <Compile Include="..\Shared\TaskHostTaskComplete.cs" />
     <Compile Include="..\Shared\OutOfProcTaskHostTaskResult.cs" />
+    <Compile Include="..\MSBuild\TaskHostQueryRequest.cs" />
+    <Compile Include="..\MSBuild\TaskHostQueryResponse.cs" />
     <Compile Include="..\Shared\TaskLoader.cs" />
     <Compile Include="..\Shared\NodeEngineShutdownReason.cs" />
     <Compile Include="..\Shared\IKeyed.cs" />
