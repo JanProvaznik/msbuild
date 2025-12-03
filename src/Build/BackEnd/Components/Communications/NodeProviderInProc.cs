@@ -203,7 +203,9 @@ namespace Microsoft.Build.BackEnd
         private bool CreateNode(int nodeId, INodePacketFactory factory, NodeConfiguration configuration)
         {
             // Attempt to get the operating environment semaphore if requested.
-            if (_componentHost.BuildParameters.SaveOperatingEnvironment)
+            // In multithreaded mode, we don't need exclusive operating environment ownership because
+            // environment isolation is handled by TaskEnvironment (MultiThreadedTaskEnvironmentDriver).
+            if (_componentHost.BuildParameters.SaveOperatingEnvironment && !_componentHost.BuildParameters.MultiThreaded)
             {
                 // We can only create additional in-proc nodes if we have decided not to save the operating environment.  This is the global
                 // DTAR case in Visual Studio, but other clients might enable this as well under certain special circumstances.
@@ -307,7 +309,8 @@ namespace Microsoft.Build.BackEnd
                 _nodeContexts.TryRemove(nodeId, out _);
 
                 // Release the operating environment semaphore if we were holding it.
-                if ((_componentHost.BuildParameters.SaveOperatingEnvironment) &&
+                // In multithreaded mode, we don't acquire this semaphore.
+                if ((_componentHost.BuildParameters.SaveOperatingEnvironment && !_componentHost.BuildParameters.MultiThreaded) &&
                     (InProcNodeOwningOperatingEnvironment != null))
                 {
                     InProcNodeOwningOperatingEnvironment.Release();
