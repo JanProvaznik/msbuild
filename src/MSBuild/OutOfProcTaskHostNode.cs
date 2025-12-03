@@ -222,6 +222,7 @@ namespace Microsoft.Build.CommandLine
             thisINodePacketFactory.RegisterPacketHandler(NodePacketType.NodeBuildComplete, NodeBuildComplete.FactoryForDeserialization, this);
             thisINodePacketFactory.RegisterPacketHandler(NodePacketType.TaskHostQueryResponse, TaskHostQueryResponse.FactoryForDeserialization, this);
             thisINodePacketFactory.RegisterPacketHandler(NodePacketType.TaskHostResourceResponse, TaskHostResourceResponse.FactoryForDeserialization, this);
+            thisINodePacketFactory.RegisterPacketHandler(NodePacketType.TaskHostYieldResponse, TaskHostYieldResponse.FactoryForDeserialization, this);
 
 #if !CLR2COMPATIBILITY
             EngineServices = new EngineServicesImpl(this);
@@ -436,21 +437,27 @@ namespace Microsoft.Build.CommandLine
         }
 
         /// <summary>
-        /// Stub implementation of IBuildEngine3.Yield.  The task host does not support yielding, so just go ahead and silently
-        /// return, letting the task continue.
+        /// Implementation of IBuildEngine3.Yield. Forwards the yield request to the parent node.
         /// </summary>
         public void Yield()
         {
-            return;
+            int requestId = GetNextRequestId();
+            TaskHostYieldRequest request = new TaskHostYieldRequest(requestId, TaskHostYieldRequestType.Yield);
+            TaskHostYieldResponse response = SendRequestAndWaitForResponse<TaskHostYieldRequest, TaskHostYieldResponse>(request);
+            
+            // Response acknowledgment - no return value needed
         }
 
         /// <summary>
-        /// Stub implementation of IBuildEngine3.Reacquire. The task host does not support yielding, so just go ahead and silently
-        /// return, letting the task continue.
+        /// Implementation of IBuildEngine3.Reacquire. Forwards the reacquire request to the parent node.
         /// </summary>
         public void Reacquire()
         {
-            return;
+            int requestId = GetNextRequestId();
+            TaskHostYieldRequest request = new TaskHostYieldRequest(requestId, TaskHostYieldRequestType.Reacquire);
+            TaskHostYieldResponse response = SendRequestAndWaitForResponse<TaskHostYieldRequest, TaskHostYieldResponse>(request);
+            
+            // Response acknowledgment - no return value needed
         }
 
         #endregion // IBuildEngine3 Implementation
@@ -772,6 +779,7 @@ namespace Microsoft.Build.CommandLine
                     break;
                 case NodePacketType.TaskHostQueryResponse:
                 case NodePacketType.TaskHostResourceResponse:
+                case NodePacketType.TaskHostYieldResponse:
                     HandleCallbackResponse(packet);
                     break;
             }

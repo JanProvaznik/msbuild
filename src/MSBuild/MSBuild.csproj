@@ -144,6 +144,8 @@
     <Compile Include="TaskHostQueryResponse.cs" />
     <Compile Include="TaskHostResourceRequest.cs" />
     <Compile Include="TaskHostResourceResponse.cs" />
+    <Compile Include="TaskHostYieldRequest.cs" />
+    <Compile Include="TaskHostYieldResponse.cs" />
     <Compile Include="OutOfProcTaskAppDomainWrapperBase.cs" />
     <Compile Include="OutOfProcTaskAppDomainWrapper.cs" />
     <Compile Include="PerformanceLogEventListener.cs" />

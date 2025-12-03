@@ -194,6 +194,7 @@ namespace Microsoft.Build.BackEnd
             (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.NodeShutdown, NodeShutdown.FactoryForDeserialization, this);
             (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.TaskHostQueryRequest, TaskHostQueryRequest.FactoryForDeserialization, this);
             (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.TaskHostResourceRequest, TaskHostResourceRequest.FactoryForDeserialization, this);
+            (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.TaskHostYieldRequest, TaskHostYieldRequest.FactoryForDeserialization, this);
 
             _packetReceivedEvent = new AutoResetEvent(false);
             _receivedPackets = new ConcurrentQueue<INodePacket>();
@@ -517,6 +518,9 @@ namespace Microsoft.Build.BackEnd
                 case NodePacketType.TaskHostResourceRequest:
                     HandleTaskHostResourceRequest(packet as TaskHostResourceRequest);
                     break;
+                case NodePacketType.TaskHostYieldRequest:
+                    HandleTaskHostYieldRequest(packet as TaskHostYieldRequest);
+                    break;
                 default:
                     ErrorUtilities.ThrowInternalErrorUnreachable();
                     break;
@@ -653,6 +657,43 @@ namespace Microsoft.Build.BackEnd
                     }
 
                     break;
+            }
+        }
+
+        /// <summary>
+        /// Handle yield requests from the task host.
+        /// </summary>
+        private void HandleTaskHostYieldRequest(TaskHostYieldRequest yieldRequest)
+        {
+            switch (yieldRequest.RequestType)
+            {
+                case TaskHostYieldRequestType.Yield:
+                    // Forward the yield to the real build engine
+                    ((IBuildEngine3)_buildEngine).Yield();
+                    break;
+                case TaskHostYieldRequestType.Reacquire:
+                    // Forward the reacquire to the real build engine
+                    ((IBuildEngine3)_buildEngine).Reacquire();
+                    break;
+                default:
+                    ErrorUtilities.ThrowInternalError("Unknown yield request type: {0}", yieldRequest.RequestType);
+                    break;
+            }
+
+            // Send the response back to the task host
+            TaskHostYieldResponse response = new TaskHostYieldResponse(yieldRequest.RequestId, yieldRequest.RequestType);
+            
+            if (_connectedToTaskHost && _taskHostProvider != null)
+            {
+                try
+                {
+                    _taskHostProvider.SendData(_taskHostNodeId, response);
+                }
+                catch (Exception ex)
+                {
+                    // Log error but don't fail the build - the task host will timeout
+                    Debug.WriteLine("[TaskHostTask] Failed to send yield response: {0}", ex.Message);
+                }
             }
         }
 
