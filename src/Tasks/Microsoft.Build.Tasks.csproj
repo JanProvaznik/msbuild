@@ -61,7 +61,6 @@
     <Compile Include="..\Shared\AssemblyFolders\AssemblyFoldersFromConfig.cs">
       <Link>AssemblyDependency\AssemblyFoldersFromConfig\AssemblyFoldersFromConfig.cs</Link>
     </Compile>
-    <!-- AssemblyFolderCollection.cs, AssemblyFolderItem.cs moved to Framework -->
     <Compile Include="..\Shared\BuildEnvironmentHelper.cs">
       <Link>BuildEnvironmentHelper.cs</Link>
     </Compile>
@@ -71,7 +70,6 @@
     <Compile Include="..\Shared\AssemblyNameReverseVersionComparer.cs">
       <Link>AssemblyDependency\AssemblyNameReverseVersionComparer.cs</Link>
     </Compile>
-    <!-- CanonicalError.cs, FileDelegates.cs moved to Framework -->
     <Compile Include="AssemblyDependency\AssemblyAttributes.cs" />
     <Compile Include="AssemblyDependency\AssemblyMetadata.cs" />
     <Compile Include="CombineTargetFrameworkInfoProperties.cs" />
@@ -127,7 +125,6 @@
     </Compile>
     <Compile Include="..\Shared\ReadOnlyCollection.cs" />
     <Compile Include="..\Shared\ReadOnlyEmptyDictionary.cs" />
-    <!-- Tracing.cs, VersionUtilities.cs moved to Framework -->
     <Compile Include="..\Shared\VisualStudioConstants.cs">
       <Link>VisualStudioConstants.cs</Link>
     </Compile>

@@ -47,12 +47,10 @@
     <Compile Include="..\Shared\AssemblyFolders\AssemblyFoldersFromConfig.cs">
       <Link>Shared\AssemblyFolders\AssemblyFoldersFromConfig.cs</Link>
     </Compile>
-    <!-- AssemblyFolderCollection.cs, AssemblyFolderItem.cs moved to Framework -->
     <Compile Include="..\GlobalUsings.cs" Link="GlobalUsings.cs" />
     <Compile Include="..\Shared\BuildEnvironmentHelper.cs">
       <Link>Shared\BuildEnvironmentHelper.cs</Link>
     </Compile>
-    <!-- CanonicalError.cs, FileDelegates.cs moved to Framework -->
     <Compile Include="..\Shared\ExtensionFoldersRegistryKey.cs">
       <Link>Shared\ExtensionFoldersRegistryKey.cs</Link>
     </Compile>
@@ -116,7 +114,6 @@
     <Compile Include="..\Shared\TempFileUtilities.cs">
       <Link>Shared\TempFileUtilities.cs</Link>
     </Compile>
-    <!-- Tracing.cs, VersionUtilities.cs moved to Framework -->
     <Compile Include="..\Shared\ToolsetElement.cs">
       <Link>Shared\ToolsetElement.cs</Link>
     </Compile>

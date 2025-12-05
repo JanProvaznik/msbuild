@@ -11,6 +11,7 @@ using System.Runtime.Versioning;
 using Microsoft.Win32;
 #endif
 
+using Microsoft.Build.Framework;
 using Microsoft.Build.Shared.FileSystem;
 
 #nullable disable

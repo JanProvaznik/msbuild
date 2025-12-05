@@ -7,7 +7,7 @@ using System.Collections.Generic;
 
 #nullable disable
 
-namespace Microsoft.Build.Shared
+namespace Microsoft.Build.Framework
 {
     /// <summary>
     /// Set of methods to deal with versions in the tasks

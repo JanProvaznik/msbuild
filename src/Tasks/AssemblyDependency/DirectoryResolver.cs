@@ -7,6 +7,7 @@ using Microsoft.Build.Shared;
 
 #nullable disable
 
+using Microsoft.Build.Framework;
 namespace Microsoft.Build.Tasks
 {
     /// <summary>
