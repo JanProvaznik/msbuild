@@ -326,8 +326,9 @@ This document provides a comprehensive analysis of performance issues in MSBuild
 **Alignment**: ✅ Lazy evaluation reduces allocations when not logging
 **Breaking Changes**: ❌ None
 **Complexity**: LOW-MEDIUM
-- Add IsEnabled checks before expensive string formatting
-- Use string interpolation handlers (C# 10+) for lazy evaluation
+- Add IsEnabled checks before expensive string formatting operations
+- Consider custom string interpolation handlers for logging (requires implementation)
+- Use lambda-based logging APIs where available (e.g., `LogMessageFromText(() => $"...")`)
 - Already done in some places, expand coverage
 - Estimated effort: 2-3 days
 
