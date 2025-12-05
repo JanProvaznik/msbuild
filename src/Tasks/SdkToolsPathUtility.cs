@@ -4,7 +4,6 @@
 // IDE0005 incorrectly flags Framework using as unnecessary for some target frameworks
 #pragma warning disable IDE0005
 using System;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Shared;
