@@ -132,59 +132,75 @@ Successfully moved 5 files with zero dependencies:
 - AssemblyFolderCollection.cs
 - AssemblyFolderItem.cs
 
-## Conclusion: Migration Blocked
+## Conclusion: Migration Mostly Feasible
 
 **Goal**: Remove all Shared file references from Utilities, Tasks, Build, MSBuild projects
 
-**Status**: BLOCKED by architectural constraints
+**Status**: MOSTLY FEASIBLE - Only 4 files blocked
 
-**Reason**: Shared files reference `TaskLoggingHelper` which is:
-1. Part of Utilities public API (`Microsoft.Build.Utilities.TaskLoggingHelper`)
-2. Cannot move to Framework without breaking changes
-3. Creates circular dependency: Framework → Utilities types → Framework
+**Key Finding**: ErrorUtilities, ResourceUtilities, FileUtilities have NO Utilities dependencies!
+- They only depend on Framework
+- Can be moved to Framework
+- This unblocks ~50+ other files
 
-**Files Affected**: At least 4 shared files directly depend on TaskLoggingHelper, many more transitively
+**TaskLoggingHelper Block**: Only affects 4 files
+1. TaskLoggingHelper.cs - references Utilities types (public API)
+2. PropertyParser.cs - uses TaskLoggingHelper
+3. PlatformNegotiation.cs - uses TaskLoggingHelper
+4. TaskLoggingHelperExtension.cs - uses TaskLoggingHelper
+5. AssemblyFoldersFromConfig.cs - uses Task from Utilities
 
-**Remaining 112 files cannot move** due to:
-- Direct or indirect Utilities dependencies (TaskLoggingHelper)
-- Complex interdependencies
-- Would require breaking API changes
+**Remaining 112 files CAN move** except these 4-5:
+- ErrorUtilities has no circular dependency
+- Move ErrorUtilities, ResourceUtilities, FileUtilities first
+- Then move all dependent files
+- Only exclude TaskLoggingHelper-dependent files
 
 ## Recommendations
 
-### Option 1: Accept Current State (Recommended)
-- Keep 5 files moved to Framework (11.1% reduction)
-- Accept that full migration is not feasible without breaking changes
-- Document the architectural constraint
+### Option 1: Large-Scale Migration (Recommended)
+**Move ~54 Category 1 files to Framework:**
+1. Move ErrorUtilities, ResourceUtilities, FileUtilities to Framework (foundational)
+2. Move all Category 1 files EXCEPT 4-5 TaskLoggingHelper-dependent ones
+3. Update all project references
+4. **Benefits**: ~46% reduction in duplication (54 of 117 files)
+5. **No breaking changes** - only internal reorganization
 
-### Option 2: Breaking Change Migration
-**If breaking changes are acceptable:**
+**Exclude from migration:**
+- TaskLoggingHelper.cs
+- PropertyParser.cs
+- PlatformNegotiation.cs
+- TaskLoggingHelperExtension.cs
+- AssemblyFoldersFromConfig.cs
+
+### Option 2: Conservative Approach
+- Keep current 5 files moved (11.1% reduction)
+- Move additional simple files (RegistryDelegates, RegistryHelper, etc.)
+- ~15-20% reduction
+- Lower risk
+
+### Option 3: Breaking Change for Complete Migration
+**If breaking changes acceptable:**
 1. Move TaskLoggingHelper to Framework as public API
 2. Update namespace from `Microsoft.Build.Utilities` to `Microsoft.Build.Framework`
-3. This allows moving PropertyParser, PlatformNegotiation, and related files
-4. Major version bump required
-5. All external tasks would need recompilation
-
-### Option 3: Refactoring
-**Long-term solution:**
-1. Refactor Shared files to not depend on TaskLoggingHelper
-2. Create abstractions/interfaces
-3. Significant engineering effort
-4. No breaking changes
+3. Move remaining 4-5 files
+4. Requires major version bump
+5. **Achieves 100% migration**
 
 ## Answer to User Questions
 
 1. **Can all shared files move to Framework?**
-   - NO - Blocked by circular dependency through TaskLoggingHelper
+   - MOSTLY YES - Only TaskLoggingHelper-dependent files are blocked (4 files)
+   - ErrorUtilities, ResourceUtilities, FileUtilities have no Utilities dependencies
+   - ~54 Category 1 files can move (excluding 4 TaskLoggingHelper-dependent ones)
 
 2. **Does Utilities contain anything referenced by Shared?**
-   - YES - TaskLoggingHelper (public API)
-   - PropertyParser, PlatformNegotiation, TaskLoggingHelperExtension use it
+   - YES - TaskLoggingHelper (public API) only
+   - Only affects: PropertyParser, PlatformNegotiation, TaskLoggingHelperExtension, AssemblyFoldersFromConfig
 
 3. **Are all shared files internal?**
-   - NO - Some have public visibility:
-     - FileMatcher.cs
-     - ReadOnlyEmptyDictionary.cs
-     - IMSBuildElementLocation.cs
-     - NodeEngineShutdownReason.cs
-     - FileSystem/WindowsNative.cs
+   - CORRECTED: Most are internal
+   - Only 2 shared files have public visibility:
+     - IMSBuildElementLocation.cs (only compiled in Framework, not truly shared)
+     - NodeEngineShutdownReason.cs (can move file, namespace stays)
+   - FileMatcher, ReadOnlyEmptyDictionary, WindowsNative are INTERNAL (previous analysis was wrong)
