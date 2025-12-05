@@ -1539,7 +1539,7 @@ namespace Microsoft.Build.BackEnd
 
             private void InjectThread()
             {
-                int threadId = Interlocked.Increment(ref _threadCount);
+                int currentThreadId = Interlocked.Increment(ref _threadCount);
                 var thread = new Thread(() =>
                 {
                     foreach (Task t in _tasks.GetConsumingEnumerable())
@@ -1549,7 +1549,7 @@ namespace Microsoft.Build.BackEnd
                     }
                 });
                 thread.IsBackground = true;
-                thread.Name = $"MSBuild RequestBuilder Task Scheduler Thread {threadId}";
+                thread.Name = $"MSBuild RequestBuilder Task Scheduler Thread {currentThreadId}";
                 thread.Start();
             }
         }
