@@ -95,7 +95,7 @@ namespace Microsoft.Build.Internal
         [Conditional("DEBUG")]
         internal static void Slot<K, V>(string tag, KeyValuePair<K, V> value)
         {
-            Slot(tag, $"{value.Key}={value.Key}");
+            Slot(tag, $"{value.Key}={value.Value}");
         }
 
         /// <summary>
