@@ -61,12 +61,7 @@
     <Compile Include="..\Shared\AssemblyFolders\AssemblyFoldersFromConfig.cs">
       <Link>AssemblyDependency\AssemblyFoldersFromConfig\AssemblyFoldersFromConfig.cs</Link>
     </Compile>
-    <Compile Include="..\Shared\AssemblyFolders\Serialization\AssemblyFolderCollection.cs">
-      <Link>AssemblyDependency\AssemblyFoldersFromConfig\Serialization\AssemblyFolderCollection.cs</Link>
-    </Compile>
-    <Compile Include="..\Shared\AssemblyFolders\Serialization\AssemblyFolderItem.cs">
-      <Link>AssemblyDependency\AssemblyFoldersFromConfig\Serialization\AssemblyFolderItem.cs</Link>
-    </Compile>
+    <!-- AssemblyFolderCollection.cs, AssemblyFolderItem.cs moved to Framework -->
     <Compile Include="..\Shared\BuildEnvironmentHelper.cs">
       <Link>BuildEnvironmentHelper.cs</Link>
     </Compile>
@@ -76,9 +71,7 @@
     <Compile Include="..\Shared\AssemblyNameReverseVersionComparer.cs">
       <Link>AssemblyDependency\AssemblyNameReverseVersionComparer.cs</Link>
     </Compile>
-    <Compile Include="..\Shared\CanonicalError.cs">
-      <Link>CanonicalError.cs</Link>
-    </Compile>
+    <!-- CanonicalError.cs, FileDelegates.cs moved to Framework -->
     <Compile Include="AssemblyDependency\AssemblyAttributes.cs" />
     <Compile Include="AssemblyDependency\AssemblyMetadata.cs" />
     <Compile Include="CombineTargetFrameworkInfoProperties.cs" />
@@ -87,9 +80,6 @@
     <Compile Include="..\Shared\CopyOnWriteDictionary.cs" />
     <Compile Include="..\Shared\ExtensionFoldersRegistryKey.cs">
       <Link>ExtensionFoldersRegistryKey.cs</Link>
-    </Compile>
-    <Compile Include="..\Shared\FileDelegates.cs">
-      <Link>FileDelegates.cs</Link>
     </Compile>
     <Compile Include="..\Shared\PropertyParser.cs">
       <Link>PropertyParser.cs</Link>
@@ -137,10 +127,7 @@
     </Compile>
     <Compile Include="..\Shared\ReadOnlyCollection.cs" />
     <Compile Include="..\Shared\ReadOnlyEmptyDictionary.cs" />
-    <Compile Include="..\Shared\Tracing.cs" />
-    <Compile Include="..\Shared\VersionUtilities.cs">
-      <Link>VersionUtilities.cs</Link>
-    </Compile>
+    <!-- Tracing.cs, VersionUtilities.cs moved to Framework -->
     <Compile Include="..\Shared\VisualStudioConstants.cs">
       <Link>VisualStudioConstants.cs</Link>
     </Compile>

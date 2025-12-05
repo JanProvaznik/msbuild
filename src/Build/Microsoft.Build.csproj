@@ -79,9 +79,7 @@
     <Compile Include="..\Shared\AssemblyNameReverseVersionComparer.cs">
       <Link>SharedUtilities\AssemblyNameReverseVersionComparer.cs</Link>
     </Compile>
-    <Compile Include="..\Shared\CanonicalError.cs">
-      <Link>BackEnd\Components\RequestBuilder\IntrinsicTasks\CanonicalError.cs</Link>
-    </Compile>
+    <!-- CanonicalError.cs moved to Framework -->
     <Compile Include="..\Shared\PropertyParser.cs">
       <Link>BackEnd\Components\RequestBuilder\IntrinsicTasks\PropertyParser.cs</Link>
     </Compile>
@@ -623,17 +621,12 @@
     <Compile Include="..\Shared\ConversionUtilities.cs">
       <Link>SharedUtilities\ConversionUtilities.cs</Link>
     </Compile>
-    <Compile Include="..\Shared\FileDelegates.cs">
-      <Link>SharedUtilities\FileDelegates.cs</Link>
-    </Compile>
+    <!-- FileDelegates.cs, VersionUtilities.cs moved to Framework -->
     <Compile Include="..\Shared\ErrorUtilities.cs">
       <Link>Errors\ErrorUtilities.cs</Link>
     </Compile>
     <Compile Include="..\Shared\EscapingUtilities.cs">
       <Link>SharedUtilities\EscapingUtilities.cs</Link>
-    </Compile>
-    <Compile Include="..\Shared\VersionUtilities.cs">
-      <Link>SharedUtilities\VersionUtilities.cs</Link>
     </Compile>
     <Compile Include="..\Shared\EventArgsFormatting.cs">
       <Link>SharedUtilities\EventArgsFormatting.cs</Link>
@@ -679,7 +672,7 @@
     <Compile Include="..\Shared\ResourceUtilities.cs">
       <Link>SharedUtilities\ResourceUtilities.cs</Link>
     </Compile>
-    <Compile Include="..\Shared\Tracing.cs" />
+    <!-- Tracing.cs moved to Framework -->
     <Compile Include="..\Shared\CoreCLRAssemblyLoader.cs" Condition="'$(TargetFrameworkIdentifier)'!='.NETFramework'" />
     <Compile Include="..\Shared\TypeLoader.cs">
       <Link>SharedUtilities\TypeLoader.cs</Link>
