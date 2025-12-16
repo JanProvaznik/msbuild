@@ -222,7 +222,48 @@ namespace Microsoft.Build.BackEnd
         /// </summary>
         RarNodeExecuteResponse, // 0x15
 
-        // Reserve space for future core packet types (0x16-0x3B available for expansion)
+        // TaskHost callback packets (0x20-0x27)
+        /// <summary>
+        /// Request from TaskHost to parent node to build a project file.
+        /// </summary>
+        TaskHostBuildRequest = 0x20,
+
+        /// <summary>
+        /// Response from parent node to TaskHost with build results.
+        /// </summary>
+        TaskHostBuildResponse = 0x21,
+
+        /// <summary>
+        /// Request from TaskHost to parent node for core resources.
+        /// </summary>
+        TaskHostResourceRequest = 0x22,
+
+        /// <summary>
+        /// Response from parent node to TaskHost with granted cores.
+        /// </summary>
+        TaskHostResourceResponse = 0x23,
+
+        /// <summary>
+        /// Query request from TaskHost to parent node (e.g., IsRunningMultipleNodes).
+        /// </summary>
+        TaskHostQueryRequest = 0x24,
+
+        /// <summary>
+        /// Response from parent node to TaskHost with query result.
+        /// </summary>
+        TaskHostQueryResponse = 0x25,
+
+        /// <summary>
+        /// Request from TaskHost to parent node to yield/reacquire.
+        /// </summary>
+        TaskHostYieldRequest = 0x26,
+
+        /// <summary>
+        /// Response from parent node to TaskHost acknowledging yield/reacquire.
+        /// </summary>
+        TaskHostYieldResponse = 0x27,
+
+        // Reserve space for future core packet types (0x28-0x3B available for expansion)
 
         // Server command packets placed at end of safe range to maintain separation from core packets
         #region ServerNode enums 
