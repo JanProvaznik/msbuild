@@ -158,6 +158,11 @@ namespace Microsoft.Build.Shared
             private readonly ConcurrentQueue<Task> _queuedTasks = new ConcurrentQueue<Task>();
 
             /// <summary>
+            /// Counter for generating unique thread IDs.
+            /// </summary>
+            private int _threadCount = 0;
+
+            /// <summary>
             /// Returns the list of queued tasks.
             /// </summary>
             protected override System.Collections.Generic.IEnumerable<Task> GetScheduledTasks()
@@ -172,6 +177,7 @@ namespace Microsoft.Build.Shared
             {
                 _queuedTasks.Enqueue(task);
 
+                int currentThreadId = Interlocked.Increment(ref _threadCount);
                 ParameterizedThreadStart threadStart = new ParameterizedThreadStart((_) =>
                 {
                     Task t;
@@ -182,6 +188,7 @@ namespace Microsoft.Build.Shared
                 });
 
                 Thread thread = new Thread(threadStart);
+                thread.Name = $"MSBuild STA Task Scheduler Thread {currentThreadId}";
 #if FEATURE_APARTMENT_STATE
                 thread.SetApartmentState(ApartmentState.STA);
 #endif
