@@ -3,7 +3,7 @@
 
 using Shouldly;
 using Xunit;
-using CanonicalError = Microsoft.Build.Shared.CanonicalError;
+using CanonicalError = Microsoft.Build.Framework.CanonicalError;
 
 #nullable disable
 

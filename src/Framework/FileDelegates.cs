@@ -5,7 +5,7 @@ using System.IO;
 
 #nullable disable
 
-namespace Microsoft.Build.Shared
+namespace Microsoft.Build.Framework
 {
     /// <summary>
     /// delegate for System.IO.Directory.GetFiles, used for testing

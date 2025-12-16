@@ -47,24 +47,9 @@
     <Compile Include="..\Shared\AssemblyFolders\AssemblyFoldersFromConfig.cs">
       <Link>Shared\AssemblyFolders\AssemblyFoldersFromConfig.cs</Link>
     </Compile>
-    <Compile Include="..\Shared\AssemblyFolders\Serialization\AssemblyFolderCollection.cs">
-      <Link>Shared\AssemblyFolders\Serialization\AssemblyFolderCollection.cs</Link>
-    </Compile>
-    <Compile Include="..\Shared\AssemblyFolders\Serialization\AssemblyFolderItem.cs">
-      <Link>Shared\AssemblyFolders\Serialization\AssemblyFolderItem.cs</Link>
-    </Compile>
     <Compile Include="..\GlobalUsings.cs" Link="GlobalUsings.cs" />
     <Compile Include="..\Shared\BuildEnvironmentHelper.cs">
       <Link>Shared\BuildEnvironmentHelper.cs</Link>
-    </Compile>
-    <Compile Include="..\Shared\CanonicalError.cs">
-      <Link>Shared\CanonicalError.cs</Link>
-    </Compile>
-    <Compile Include="..\Shared\ExtensionFoldersRegistryKey.cs">
-      <Link>Shared\ExtensionFoldersRegistryKey.cs</Link>
-    </Compile>
-    <Compile Include="..\Shared\FileDelegates.cs">
-      <Link>Shared\FileDelegates.cs</Link>
     </Compile>
     <Compile Include="..\Shared\CopyOnWriteDictionary.cs">
       <Link>Shared\CopyOnWriteDictionary.cs</Link>
@@ -111,6 +96,9 @@
     <Compile Include="..\Shared\ReadOnlyEmptyDictionary.cs">
       <Link>Shared\Collections\ReadOnlyEmptyDictionary.cs</Link>
     </Compile>
+    <Compile Include="..\Shared\ExtensionFoldersRegistryKey.cs">
+      <Link>Shared\ExtensionFoldersRegistryKey.cs</Link>
+    </Compile>
     <Compile Include="..\Shared\RegistryDelegates.cs">
       <Link>Shared\RegistryDelegates.cs</Link>
     </Compile>
@@ -125,12 +113,6 @@
     </Compile>
     <Compile Include="..\Shared\TempFileUtilities.cs">
       <Link>Shared\TempFileUtilities.cs</Link>
-    </Compile>
-    <Compile Include="..\Shared\Tracing.cs">
-      <Link>Shared\Tracing.cs</Link>
-    </Compile>
-    <Compile Include="..\Shared\VersionUtilities.cs">
-      <Link>Shared\VersionUtilities.cs</Link>
     </Compile>
     <Compile Include="..\Shared\ToolsetElement.cs">
       <Link>Shared\ToolsetElement.cs</Link>

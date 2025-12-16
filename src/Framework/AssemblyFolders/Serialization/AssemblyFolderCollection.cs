@@ -9,7 +9,7 @@ using System.Xml;
 
 #nullable disable
 
-namespace Microsoft.Build.Shared.AssemblyFoldersFromConfig
+namespace Microsoft.Build.Framework
 {
     [DataContract(Name = "AssemblyFoldersConfig", Namespace = "")]
     internal class AssemblyFolderCollection
