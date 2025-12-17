@@ -508,6 +508,12 @@ namespace Microsoft.Build.BackEnd
                 case NodePacketType.LogMessage:
                     HandleLoggedMessage(packet as LogMessagePacket);
                     break;
+                case NodePacketType.TaskHostYield:
+                    HandleTaskHostYield(packet as TaskHostYield);
+                    break;
+                case NodePacketType.TaskHostReacquire:
+                    HandleTaskHostReacquire(packet as TaskHostReacquire);
+                    break;
                 default:
                     ErrorUtilities.ThrowInternalErrorUnreachable();
                     break;
@@ -645,6 +651,28 @@ namespace Microsoft.Build.BackEnd
 
                     break;
             }
+        }
+
+        /// <summary>
+        /// Handle yield notification from the task host.
+        /// The task host is indicating it's about to perform long-running operations
+        /// and the node can do other work. We acknowledge receipt immediately.
+        /// </summary>
+        private void HandleTaskHostYield(TaskHostYield yieldPacket)
+        {
+            // Send acknowledgment back to task host
+            _taskHostProvider.SendData(_taskHostNodeId, new TaskHostYield());
+        }
+
+        /// <summary>
+        /// Handle reacquire notification from the task host.
+        /// The task host wants to regain control after previously yielding.
+        /// We acknowledge receipt immediately.
+        /// </summary>
+        private void HandleTaskHostReacquire(TaskHostReacquire reacquirePacket)
+        {
+            // Send acknowledgment back to task host
+            _taskHostProvider.SendData(_taskHostNodeId, new TaskHostReacquire());
         }
 
         /// <summary>
