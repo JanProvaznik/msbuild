@@ -208,7 +208,6 @@ namespace Microsoft.Build.BackEnd
         /// </summary>
         ProcessReport, // 0x13
 
-
         /// Notifies the RAR node to set a configuration for a particular build.
         RarNodeEndpointConfiguration,
 
@@ -221,6 +220,26 @@ namespace Microsoft.Build.BackEnd
         /// A request contains the outputs and log events of a completed RAR task.
         /// </summary>
         RarNodeExecuteResponse, // 0x15
+
+        /// <summary>
+        /// Message sent from the task host to the parent node when a task
+        /// calls IBuildEngine3.Yield() to indicate it is yielding control
+        /// and the node can do other work.
+        ///
+        /// Contents:
+        /// (nothing)
+        /// </summary>
+        TaskHostYield, // 0x16
+
+        /// <summary>
+        /// Message sent from the task host to the parent node when a task
+        /// calls IBuildEngine3.Reacquire() to indicate it wants to regain
+        /// control after yielding.
+        ///
+        /// Contents:
+        /// (nothing)
+        /// </summary>
+        TaskHostReacquire, // 0x17
 
         // Reserve space for future core packet types (0x16-0x3B available for expansion)
 
