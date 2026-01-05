@@ -26,8 +26,8 @@ namespace Microsoft.Build.UnitTests.ResolveAssemblyReference_Tests
     public class ResolveAssemblyReferenceTestFixture : IDisposable
     {
         // Create the mocks.
-        internal static Microsoft.Build.Shared.FileExists fileExists = new Microsoft.Build.Shared.FileExists(FileExists);
-        internal static Microsoft.Build.Shared.DirectoryExists directoryExists = new Microsoft.Build.Shared.DirectoryExists(DirectoryExists);
+        internal static Microsoft.Build.Framework.FileExists fileExists = new Microsoft.Build.Framework.FileExists(FileExists);
+        internal static Microsoft.Build.Framework.DirectoryExists directoryExists = new Microsoft.Build.Framework.DirectoryExists(DirectoryExists);
         internal static Microsoft.Build.Tasks.GetDirectories getDirectories = new Microsoft.Build.Tasks.GetDirectories(GetDirectories);
         internal static Microsoft.Build.Tasks.GetAssemblyName getAssemblyName = new Microsoft.Build.Tasks.GetAssemblyName(GetAssemblyName);
         internal static Microsoft.Build.Tasks.GetAssemblyMetadata getAssemblyMetadata = new Microsoft.Build.Tasks.GetAssemblyMetadata(GetAssemblyMetadata);

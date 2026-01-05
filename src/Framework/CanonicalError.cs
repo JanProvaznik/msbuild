@@ -7,10 +7,11 @@ using System.Buffers;
 #endif
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Microsoft.Build.Shared;
 
 #nullable disable
 
-namespace Microsoft.Build.Shared
+namespace Microsoft.Build.Framework
 {
     /// <summary>
     /// Functions for dealing with the specially formatted errors returned by

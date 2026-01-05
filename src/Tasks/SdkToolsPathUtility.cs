@@ -1,11 +1,14 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+// IDE0005 incorrectly flags Framework using as unnecessary for some target frameworks
+#pragma warning disable IDE0005
 using System;
 using System.IO;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Shared;
 using Microsoft.Build.Utilities;
+#pragma warning restore IDE0005
 
 #nullable disable
 

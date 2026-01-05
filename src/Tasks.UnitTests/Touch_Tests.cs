@@ -16,8 +16,8 @@ namespace Microsoft.Build.UnitTests
 {
     public sealed class Touch_Tests
     {
-        internal static Microsoft.Build.Shared.FileExists fileExists = new Microsoft.Build.Shared.FileExists(FileExists);
-        internal static Microsoft.Build.Shared.FileCreate fileCreate = new Microsoft.Build.Shared.FileCreate(FileCreate);
+        internal static Microsoft.Build.Framework.FileExists fileExists = new Microsoft.Build.Framework.FileExists(FileExists);
+        internal static Microsoft.Build.Framework.FileCreate fileCreate = new Microsoft.Build.Framework.FileCreate(FileCreate);
         internal static Microsoft.Build.Tasks.GetAttributes fileGetAttributes = new Microsoft.Build.Tasks.GetAttributes(GetAttributes);
         internal static Microsoft.Build.Tasks.SetAttributes fileSetAttributes = new Microsoft.Build.Tasks.SetAttributes(SetAttributes);
         internal static Microsoft.Build.Tasks.SetLastAccessTime setLastAccessTime = new Microsoft.Build.Tasks.SetLastAccessTime(SetLastAccessTime);

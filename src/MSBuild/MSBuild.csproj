@@ -69,9 +69,6 @@
       <Link>AssemblyNameComparer.cs</Link>
     </Compile>
     <Compile Include="..\Shared\CollectionHelpers.cs" />
-    <Compile Include="..\Shared\FileDelegates.cs">
-      <Link>FileDelegates.cs</Link>
-    </Compile>
     <Compile Include="..\Shared\FileUtilities.cs">
       <Link>FileUtilities.cs</Link>
     </Compile>

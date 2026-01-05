@@ -6,7 +6,7 @@ using System.Runtime.Serialization;
 
 #nullable disable
 
-namespace Microsoft.Build.Shared.AssemblyFoldersFromConfig
+namespace Microsoft.Build.Framework
 {
     [DataContract(Name = "AssemblyFolder", Namespace = "")]
     [DebuggerDisplay("{Name}: FrameworkVersion = {FrameworkVersion}, Platform = {Platform}, Path= {Path}")]
