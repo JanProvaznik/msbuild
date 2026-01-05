@@ -100,6 +100,8 @@
     <Compile Include="..\Shared\TaskHostConfiguration.cs" />
     <Compile Include="..\Shared\TaskHostTaskCancelled.cs" />
     <Compile Include="..\Shared\TaskHostTaskComplete.cs" />
+    <Compile Include="..\Shared\TaskHostYield.cs" />
+    <Compile Include="..\Shared\TaskHostReacquire.cs" />
     <Compile Include="..\Shared\OutOfProcTaskHostTaskResult.cs" />
     <Compile Include="..\Shared\TaskLoader.cs" />
     <Compile Include="..\Shared\NodeEngineShutdownReason.cs" />

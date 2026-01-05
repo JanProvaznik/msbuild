@@ -131,6 +131,16 @@ namespace Microsoft.Build.CommandLine
         private ManualResetEvent _taskCancelledEvent;
 
         /// <summary>
+        /// The event which is set when the parent node acknowledges a yield request.
+        /// </summary>
+        private AutoResetEvent _yieldAcknowledgedEvent;
+
+        /// <summary>
+        /// The event which is set when the parent node acknowledges a reacquire request.
+        /// </summary>
+        private AutoResetEvent _reacquireAcknowledgedEvent;
+
+        /// <summary>
         /// The thread currently executing user task in the TaskRunner
         /// </summary>
         private Thread _taskRunnerThread;
@@ -195,6 +205,8 @@ namespace Microsoft.Build.CommandLine
             _shutdownEvent = new ManualResetEvent(false);
             _taskCompleteEvent = new AutoResetEvent(false);
             _taskCancelledEvent = new ManualResetEvent(false);
+            _yieldAcknowledgedEvent = new AutoResetEvent(false);
+            _reacquireAcknowledgedEvent = new AutoResetEvent(false);
 
             _packetFactory = new NodePacketFactory();
 
@@ -203,6 +215,8 @@ namespace Microsoft.Build.CommandLine
             thisINodePacketFactory.RegisterPacketHandler(NodePacketType.TaskHostConfiguration, TaskHostConfiguration.FactoryForDeserialization, this);
             thisINodePacketFactory.RegisterPacketHandler(NodePacketType.TaskHostTaskCancelled, TaskHostTaskCancelled.FactoryForDeserialization, this);
             thisINodePacketFactory.RegisterPacketHandler(NodePacketType.NodeBuildComplete, NodeBuildComplete.FactoryForDeserialization, this);
+            thisINodePacketFactory.RegisterPacketHandler(NodePacketType.TaskHostYield, TaskHostYield.FactoryForDeserialization, this);
+            thisINodePacketFactory.RegisterPacketHandler(NodePacketType.TaskHostReacquire, TaskHostReacquire.FactoryForDeserialization, this);
 
 #if !CLR2COMPATIBILITY
             EngineServices = new EngineServicesImpl(this);
@@ -405,21 +419,36 @@ namespace Microsoft.Build.CommandLine
         }
 
         /// <summary>
-        /// Stub implementation of IBuildEngine3.Yield.  The task host does not support yielding, so just go ahead and silently
-        /// return, letting the task continue.
+        /// Implementation of IBuildEngine3.Yield. Sends a yield packet to the parent node
+        /// indicating that the task host is yielding control and the node can do other work
+        /// while the task performs long-running out-of-process operations.
         /// </summary>
         public void Yield()
         {
-            return;
+            if (_nodeEndpoint?.LinkStatus == LinkStatus.Active)
+            {
+                TaskHostYield yieldPacket = new TaskHostYield();
+                _nodeEndpoint.SendData(yieldPacket);
+                
+                // Wait for the parent node to acknowledge the yield
+                _yieldAcknowledgedEvent.WaitOne();
+            }
         }
 
         /// <summary>
-        /// Stub implementation of IBuildEngine3.Reacquire. The task host does not support yielding, so just go ahead and silently
-        /// return, letting the task continue.
+        /// Implementation of IBuildEngine3.Reacquire. Sends a reacquire packet to the parent node
+        /// indicating that the task host wants to regain control after previously yielding.
         /// </summary>
         public void Reacquire()
         {
-            return;
+            if (_nodeEndpoint?.LinkStatus == LinkStatus.Active)
+            {
+                TaskHostReacquire reacquirePacket = new TaskHostReacquire();
+                _nodeEndpoint.SendData(reacquirePacket);
+                
+                // Wait for the parent node to acknowledge the reacquire
+                _reacquireAcknowledgedEvent.WaitOne();
+            }
         }
 
         #endregion // IBuildEngine3 Implementation
@@ -725,6 +754,14 @@ namespace Microsoft.Build.CommandLine
                 case NodePacketType.NodeBuildComplete:
                     HandleNodeBuildComplete(packet as NodeBuildComplete);
                     break;
+                case NodePacketType.TaskHostYield:
+                    // Acknowledgment from parent node
+                    _yieldAcknowledgedEvent.Set();
+                    break;
+                case NodePacketType.TaskHostReacquire:
+                    // Acknowledgment from parent node
+                    _reacquireAcknowledgedEvent.Set();
+                    break;
             }
         }
 
@@ -875,11 +912,15 @@ namespace Microsoft.Build.CommandLine
             _shutdownEvent.Close();
             _taskCompleteEvent.Close();
             _taskCancelledEvent.Close();
+            _yieldAcknowledgedEvent.Close();
+            _reacquireAcknowledgedEvent.Close();
 #else
             _packetReceivedEvent.Dispose();
             _shutdownEvent.Dispose();
             _taskCompleteEvent.Dispose();
             _taskCancelledEvent.Dispose();
+            _yieldAcknowledgedEvent.Dispose();
+            _reacquireAcknowledgedEvent.Dispose();
 #endif
 
             return _shutdownReason;
