@@ -17,7 +17,8 @@ namespace Microsoft.Build.Tasks
     /// <summary>
     /// This class defines the touch task.
     /// </summary>
-    public class Touch : TaskExtension, IIncrementalTask
+    [MSBuildMultiThreadableTask]
+    public class Touch : TaskExtension, IIncrementalTask, IMultiThreadableTask
     {
         private MessageImportance messageImportance;
 
@@ -47,6 +48,11 @@ namespace Microsoft.Build.Tasks
         /// </summary>
         [Output]
         public ITaskItem[] TouchedFiles { get; set; }
+
+        /// <summary>
+        /// The task environment for thread-safe operations.
+        /// </summary>
+        public TaskEnvironment TaskEnvironment { get; set; }
 
         /// <summary>
         /// Importance: high, normal, low (default normal)
@@ -91,7 +97,12 @@ namespace Microsoft.Build.Tasks
 
             foreach (ITaskItem file in Files)
             {
-                string path = FileUtilities.FixFilePath(file.ItemSpec);
+                if (!TryGetAbsolutePath(file.ItemSpec, out AbsolutePath path))
+                {
+                    retVal = false;
+                    continue;
+                }
+
                 // For speed, eliminate duplicates caused by poor targets authoring
                 if (touchedFilesSet.Contains(path))
                 {
@@ -158,13 +169,34 @@ namespace Microsoft.Build.Tasks
         }
 
         /// <summary>
+        /// Attempts to resolve a path to an absolute path, logging an error if it fails.
+        /// </summary>
+        /// <param name="path">The path to resolve.</param>
+        /// <param name="absolutePath">The resolved absolute path, if successful.</param>
+        /// <returns>True if the path was resolved successfully; false if an error occurred.</returns>
+        private bool TryGetAbsolutePath(string path, out AbsolutePath absolutePath)
+        {
+            try
+            {
+                absolutePath = new AbsolutePath(FileUtilities.FixFilePath(TaskEnvironment.GetAbsolutePath(path)));
+                return true;
+            }
+            catch (Exception e) when (ExceptionHandling.IsIoRelatedException(e))
+            {
+                Log.LogErrorWithCodeFromResources("Touch.CannotTouch", path, e.Message, string.Empty);
+                absolutePath = default;
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Helper method creates a file.
         /// </summary>
         /// <param name="file"></param>
         /// <param name="fileCreate"></param>
         /// <returns>"true" if the file was created.</returns>
         private bool CreateFile(
-            string file,
+            AbsolutePath file,
             FileCreate fileCreate)
         {
             try
@@ -175,7 +207,7 @@ namespace Microsoft.Build.Tasks
             }
             catch (Exception e) when (ExceptionHandling.IsIoRelatedException(e))
             {
-                Log.LogErrorWithCodeFromResources("Touch.CannotCreateFile", file, e.Message);
+                Log.LogErrorWithCodeFromResources("Touch.CannotCreateFile", file.OriginalValue, e.Message);
                 return false;
             }
 
@@ -187,7 +219,7 @@ namespace Microsoft.Build.Tasks
         /// </summary>
         /// <returns>"True" if the file was touched.</returns>
         private bool TouchFile(
-            string file,
+            AbsolutePath file,
             DateTime dt,
             FileExists fileExists,
             FileCreate fileCreate,
@@ -203,11 +235,11 @@ namespace Microsoft.Build.Tasks
                 {
                     if (FailIfNotIncremental)
                     {
-                        Log.LogWarningFromResources("Touch.CreatingFile", file, "AlwaysCreate");
+                        Log.LogWarningFromResources("Touch.CreatingFile", file.OriginalValue, "AlwaysCreate");
                     }
                     else
                     {
-                        Log.LogMessageFromResources(messageImportance, "Touch.CreatingFile", file, "AlwaysCreate");
+                        Log.LogMessageFromResources(messageImportance, "Touch.CreatingFile", file.OriginalValue, "AlwaysCreate");
                     }
 
                     if (!CreateFile(file, fileCreate))
@@ -217,18 +249,18 @@ namespace Microsoft.Build.Tasks
                 }
                 else
                 {
-                    Log.LogErrorWithCodeFromResources("Touch.FileDoesNotExist", file);
+                    Log.LogErrorWithCodeFromResources("Touch.FileDoesNotExist", file.OriginalValue);
                     return false;
                 }
             }
 
             if (FailIfNotIncremental)
             {
-                Log.LogWarningFromResources("Touch.Touching", file);
+                Log.LogWarningFromResources("Touch.Touching", file.OriginalValue);
             }
             else
             {
-                Log.LogMessageFromResources(messageImportance, "Touch.Touching", file);
+                Log.LogMessageFromResources(messageImportance, "Touch.Touching", file.OriginalValue);
             }
 
             // If the file is read only then we must either issue an error, or, if the user so
@@ -247,8 +279,8 @@ namespace Microsoft.Build.Tasks
                     }
                     catch (Exception e) when (ExceptionHandling.IsIoRelatedException(e))
                     {
-                        string lockedFileMessage = LockCheck.GetLockedFileMessage(file);
-                        Log.LogErrorWithCodeFromResources("Touch.CannotMakeFileWritable", file, e.Message, lockedFileMessage);
+                        string lockedFileMessage = LockCheck.GetLockedFileMessage(file.OriginalValue);
+                        Log.LogErrorWithCodeFromResources("Touch.CannotMakeFileWritable", file.OriginalValue, e.Message, lockedFileMessage);
                         return false;
                     }
                 }
@@ -263,8 +295,8 @@ namespace Microsoft.Build.Tasks
             }
             catch (Exception e) when (ExceptionHandling.IsIoRelatedException(e))
             {
-                string lockedFileMessage = LockCheck.GetLockedFileMessage(file);
-                Log.LogErrorWithCodeFromResources("Touch.CannotTouch", file, e.Message, lockedFileMessage);
+                string lockedFileMessage = LockCheck.GetLockedFileMessage(file.OriginalValue);
+                Log.LogErrorWithCodeFromResources("Touch.CannotTouch", file.OriginalValue, e.Message, lockedFileMessage);
                 return false;
             }
             finally
@@ -279,7 +311,7 @@ namespace Microsoft.Build.Tasks
                     }
                     catch (Exception e) when (ExceptionHandling.IsIoRelatedException(e))
                     {
-                        Log.LogErrorWithCodeFromResources("Touch.CannotRestoreAttributes", file, e.Message);
+                        Log.LogErrorWithCodeFromResources("Touch.CannotRestoreAttributes", file.OriginalValue, e.Message);
                         retVal = false;
                     }
                 }
