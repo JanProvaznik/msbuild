@@ -4,6 +4,7 @@
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
+using Microsoft.Build.Framework;
 using Microsoft.Build.Shared;
 
 #nullable disable
@@ -227,14 +228,9 @@ namespace Microsoft.Build.Tasks
         }
 
         /// <summary>
-        /// The name of the file.
+        /// The path of the file.
         /// </summary>
-        private readonly string _filename;
-
-        /// <summary>
-        /// Holds the full path equivalent of _filename
-        /// </summary>
-        public string FileNameFullPath;
+        private readonly AbsolutePath _path;
 
         /// <summary>
         /// Actual file or directory information
@@ -245,11 +241,12 @@ namespace Microsoft.Build.Tasks
         /// Constructor.
         /// Only stores file name: does not grab the file state until first request.
         /// </summary>
-        internal FileState(string filename)
+        /// <param name="path">The normalized (absolute) path to the file.</param>
+        internal FileState(AbsolutePath path)
         {
-            ErrorUtilities.VerifyThrowArgumentLength(filename);
-            _filename = filename;
-            _data = new Lazy<FileDirInfo>(() => new FileDirInfo(_filename));
+            ErrorUtilities.VerifyThrowArgumentLength(path);
+            _path = path;
+            _data = new Lazy<FileDirInfo>(() => new FileDirInfo(_path));
         }
 
         /// <summary>
@@ -309,10 +306,9 @@ namespace Microsoft.Build.Tasks
         }
 
         /// <summary>
-        /// Name of the file as it was passed in.
-        /// Not normalized.
+        /// Path of the file.
         /// </summary>
-        internal string Name => _filename;
+        internal AbsolutePath Path => _path;
 
         /// <summary>
         /// Whether this is a directory.
@@ -333,7 +329,7 @@ namespace Microsoft.Build.Tasks
         /// </summary>
         internal void Reset()
         {
-            _data = new Lazy<FileDirInfo>(() => new FileDirInfo(_filename));
+            _data = new Lazy<FileDirInfo>(() => new FileDirInfo(_path));
         }
     }
 }
