@@ -197,8 +197,13 @@ Differences.txt
 Tools/
 Samples/MultiprocessBuild/PortableTask.dll
 
-# Visual Studio Code
-.vscode/
+# Visual Studio Code - ignore everything except mcp.json
+.vscode/*
+!.vscode/mcp.json
+
+# Copilot CLI - keep MCP config, ignore runtime files
+.copilot/*
+!.copilot/mcp.json
 
 # Rider
 .idea/

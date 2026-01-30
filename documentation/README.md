@@ -76,6 +76,7 @@ The folder contains collection of docs and references for MSBuild, detailed info
 ### Logging
 
 * [Binary log](wiki/Binary-Log.md)
+* [Binlog MCP tool for AI assistants](Binlog-MCP-Tool.md)
 * [Terminal logger: how to opt in](terminallogger/Opt-In-Mechanism.md)
 
 ## Archived Designs

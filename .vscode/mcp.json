@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "binlog-mcp": {
+      "type": "stdio",
+      "command": "binlog.mcp"
+    }
+  }
+}
