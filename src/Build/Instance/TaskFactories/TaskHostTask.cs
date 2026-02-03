@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using Microsoft.Build.BackEnd.Logging;
+using Microsoft.Build.CommandLine;
 using Microsoft.Build.Exceptions;
 using Microsoft.Build.Execution;
 using Microsoft.Build.Framework;
@@ -203,6 +204,9 @@ namespace Microsoft.Build.BackEnd
             (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.LogMessage, LogMessagePacket.FactoryForDeserialization, this);
             (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.TaskHostTaskComplete, TaskHostTaskComplete.FactoryForDeserialization, this);
             (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.NodeShutdown, NodeShutdown.FactoryForDeserialization, this);
+            (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.TaskHostQueryRequest, TaskHostQueryRequest.FactoryForDeserialization, this);
+            (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.TaskHostResourceRequest, TaskHostResourceRequest.FactoryForDeserialization, this);
+            (this as INodePacketFactory).RegisterPacketHandler(NodePacketType.TaskHostYieldRequest, TaskHostYieldRequest.FactoryForDeserialization, this);
 
             _packetReceivedEvent = new AutoResetEvent(false);
             _receivedPackets = new ConcurrentQueue<INodePacket>();
@@ -509,6 +513,15 @@ namespace Microsoft.Build.BackEnd
                 case NodePacketType.LogMessage:
                     HandleLoggedMessage(packet as LogMessagePacket);
                     break;
+                case NodePacketType.TaskHostQueryRequest:
+                    HandleTaskHostQueryRequest(packet as TaskHostQueryRequest);
+                    break;
+                case NodePacketType.TaskHostResourceRequest:
+                    HandleTaskHostResourceRequest(packet as TaskHostResourceRequest);
+                    break;
+                case NodePacketType.TaskHostYieldRequest:
+                    HandleTaskHostYieldRequest(packet as TaskHostYieldRequest);
+                    break;
                 default:
                     ErrorUtilities.ThrowInternalErrorUnreachable();
                     break;
@@ -645,6 +658,119 @@ namespace Microsoft.Build.BackEnd
                     }
 
                     break;
+            }
+        }
+
+        /// <summary>
+        /// Handle yield requests from the task host.
+        /// </summary>
+        private void HandleTaskHostYieldRequest(TaskHostYieldRequest yieldRequest)
+        {
+            switch (yieldRequest.RequestType)
+            {
+                case TaskHostYieldRequestType.Yield:
+                    // Forward the yield to the real build engine
+                    ((IBuildEngine3)_buildEngine).Yield();
+                    break;
+                case TaskHostYieldRequestType.Reacquire:
+                    // Forward the reacquire to the real build engine
+                    ((IBuildEngine3)_buildEngine).Reacquire();
+                    break;
+                default:
+                    ErrorUtilities.ThrowInternalError("Unknown yield request type: {0}", yieldRequest.RequestType);
+                    break;
+            }
+
+            // Send the response back to the task host
+            TaskHostYieldResponse response = new TaskHostYieldResponse(yieldRequest.RequestId, yieldRequest.RequestType);
+            
+            if (_connectedToTaskHost && _taskHostProvider != null)
+            {
+                try
+                {
+                    _taskHostProvider.SendData(_taskHostNodeId, response);
+                }
+                catch (Exception ex)
+                {
+                    // Log error but don't fail the build - the task host will timeout
+                    Debug.WriteLine("[TaskHostTask] Failed to send yield response: {0}", ex.Message);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Handle resource requests from the task host.
+        /// </summary>
+        private void HandleTaskHostResourceRequest(TaskHostResourceRequest resourceRequest)
+        {
+            int numCoresGranted = 0;
+
+            switch (resourceRequest.RequestType)
+            {
+                case TaskHostResourceRequestType.RequestCores:
+                    // Forward the request to the real build engine
+                    numCoresGranted = ((IBuildEngine9)_buildEngine).RequestCores(resourceRequest.NumCores);
+                    break;
+                case TaskHostResourceRequestType.ReleaseCores:
+                    // Forward the release to the real build engine
+                    ((IBuildEngine9)_buildEngine).ReleaseCores(resourceRequest.NumCores);
+                    numCoresGranted = 0;
+                    break;
+                default:
+                    ErrorUtilities.ThrowInternalError("Unknown resource request type: {0}", resourceRequest.RequestType);
+                    break;
+            }
+
+            // Send the response back to the task host
+            TaskHostResourceResponse response = new TaskHostResourceResponse(resourceRequest.RequestId, resourceRequest.RequestType, numCoresGranted);
+            
+            if (_connectedToTaskHost && _taskHostProvider != null)
+            {
+                try
+                {
+                    _taskHostProvider.SendData(_taskHostNodeId, response);
+                }
+                catch (Exception ex)
+                {
+                    // Log error but don't fail the build - the task host will timeout
+                    Debug.WriteLine("[TaskHostTask] Failed to send resource response: {0}", ex.Message);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Handle query requests from the task host.
+        /// </summary>
+        private void HandleTaskHostQueryRequest(TaskHostQueryRequest queryRequest)
+        {
+            bool result = false;
+
+            switch (queryRequest.QueryType)
+            {
+                case TaskHostQueryType.IsRunningMultipleNodes:
+                    // Forward the query to the real build engine
+                    result = ((IBuildEngine2)_buildEngine).IsRunningMultipleNodes;
+                    break;
+                default:
+                    ErrorUtilities.ThrowInternalError("Unknown query type: {0}", queryRequest.QueryType);
+                    break;
+            }
+
+            // Send the response back to the task host
+            TaskHostQueryResponse response = new TaskHostQueryResponse(queryRequest.RequestId, queryRequest.QueryType, result);
+            
+            // Need to get the connection and send the response
+            if (_connectedToTaskHost && _taskHostProvider != null)
+            {
+                try
+                {
+                    _taskHostProvider.SendData(_taskHostNodeId, response);
+                }
+                catch (Exception ex)
+                {
+                    // Log error but don't fail the build - the task host will timeout
+                    Debug.WriteLine("[TaskHostTask] Failed to send query response: {0}", ex.Message);
+                }
             }
         }
 
