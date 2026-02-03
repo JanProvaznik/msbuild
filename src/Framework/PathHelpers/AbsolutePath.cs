@@ -127,6 +127,123 @@ namespace Microsoft.Build.Framework
         public static implicit operator string(AbsolutePath path) => path.Value;
 
         /// <summary>
+        /// Returns the canonical form of this path.
+        /// </summary>
+        /// <returns>
+        /// An <see cref="AbsolutePath"/> representing the canonical form of the path.
+        /// </returns>
+        /// <remarks>
+        /// <para>
+        /// The canonical form of a path is exactly what <see cref="Path.GetFullPath(string)"/> would produce,
+        /// with the following properties:
+        /// <list type="bullet">
+        ///   <item>All relative path segments ("." and "..") are resolved.</item>
+        ///   <item>Directory separators are normalized to the platform convention (backslash on Windows).</item>
+        /// </list>
+        /// </para>
+        /// <para>
+        /// If the path is already in canonical form, returns the current instance to avoid unnecessary allocations.
+        /// Preserves the OriginalValue of the current instance.
+        /// </para>
+        /// </remarks>
+        internal AbsolutePath GetCanonicalForm()
+        {
+            if (string.IsNullOrEmpty(Value))
+            {
+                return this;
+            }
+
+            bool needsNormalization = HasRelativeSegmentOrConsecutiveSeparators(Value.AsSpan(), out bool hasAltSeparator);
+
+            // Check if directory separator normalization is required (only on Windows: "/" to "\").
+            // On Unix "\" is not a valid path separator, but is a part of the file/directory name, so no normalization is needed.
+            if (!needsNormalization && NativeMethods.IsWindows && hasAltSeparator)
+            {
+                needsNormalization = true;
+            }
+
+            if (!needsNormalization)
+            {
+                return this;
+            }
+
+            // Use Path.GetFullPath to resolve relative segments and normalize separators.
+            // Skip validation since Path.GetFullPath already ensures the result is absolute.
+            return new AbsolutePath(Path.GetFullPath(Value), OriginalValue, ignoreRootedCheck: true);
+        }
+
+        /// <summary>
+        /// Scans for path segments that are exactly "." or ".." (relative segments),
+        /// or consecutive directory separators.
+        /// Handles all separator combinations on Windows (/, \, and mixed).
+        /// </summary>
+        /// <param name="path">The path to scan.</param>
+        /// <param name="hasAltSeparator">Set to true if an alternate separator (/) is found on Windows.</param>
+        /// <returns>True if the path needs normalization.</returns>
+        private static bool HasRelativeSegmentOrConsecutiveSeparators(ReadOnlySpan<char> path, out bool hasAltSeparator)
+        {
+            hasAltSeparator = false;
+            bool previousWasSeparator = false;
+
+            for (int i = 0; i < path.Length; i++)
+            {
+                char c = path[i];
+                bool isSeparator = IsSeparator(c);
+
+                if (isSeparator)
+                {
+                    // Track if we've seen an alternate separator (for Windows normalization)
+                    if (c == Path.AltDirectorySeparatorChar)
+                    {
+                        hasAltSeparator = true;
+                    }
+
+                    // Check for consecutive separators (but skip UNC path prefix \\server)
+                    if (previousWasSeparator && i > 1)
+                    {
+                        return true;
+                    }
+
+                    // Check for "/." or "/..": separator followed by one or two dots, then separator or end.
+                    int nextPos = i + 1;
+                    if (nextPos < path.Length && path[nextPos] == '.')
+                    {
+                        int afterDots = nextPos + 1;
+
+                        // Check for "/." (single dot segment)
+                        if (afterDots == path.Length || IsSeparator(path[afterDots]))
+                        {
+                            return true;
+                        }
+
+                        // Check for "/.." (double dot segment)
+                        if (path[afterDots] == '.')
+                        {
+                            int afterTwoDots = afterDots + 1;
+                            if (afterTwoDots == path.Length || IsSeparator(path[afterTwoDots]))
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                previousWasSeparator = isSeparator;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Checks if a character is a directory separator.
+        /// On Windows, both '/' and '\' are separators. On Unix, only '/' is a separator.
+        /// </summary>
+        private static bool IsSeparator(char c)
+        {
+            return c == Path.DirectorySeparatorChar || c == Path.AltDirectorySeparatorChar;
+        }
+
+        /// <summary>
         /// Determines whether two <see cref="AbsolutePath"/> instances are equal.
         /// </summary>
         /// <param name="left">The first path to compare.</param>

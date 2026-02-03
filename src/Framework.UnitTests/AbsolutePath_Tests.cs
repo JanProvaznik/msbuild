@@ -213,5 +213,201 @@ namespace Microsoft.Build.UnitTests
         {
             ValidatePathAcceptance(path, shouldBeAccepted);
         }
+
+        #region GetCanonicalForm Tests
+
+        [Fact]
+        public void GetCanonicalForm_DefaultInstance_ShouldReturnSameInstance()
+        {
+            var absolutePath = default(AbsolutePath);
+            var result = absolutePath.GetCanonicalForm();
+
+            result.ShouldBe(absolutePath);
+        }
+
+        [Fact]
+        public void GetCanonicalForm_EmptyPath_ShouldReturnSameInstance()
+        {
+            var absolutePath = new AbsolutePath(string.Empty, ignoreRootedCheck: true);
+            var result = absolutePath.GetCanonicalForm();
+
+            result.ShouldBe(absolutePath);
+        }
+
+        [WindowsOnlyTheory]
+        // Current directory segments with pure separators
+        [InlineData("C:\\foo\\.\\bar")]                    // Backslash: current directory
+        [InlineData("C:/foo/./bar")]                       // Forward slash: current directory
+        // Parent directory segments with pure separators
+        [InlineData("C:\\foo\\..\\bar")]                   // Backslash: parent directory
+        [InlineData("C:/foo/../bar")]                      // Forward slash: parent directory
+        // Mixed separators with relative segments
+        [InlineData("C:\\foo\\./bar")]                     // Backslash then forward: current
+        [InlineData("C:/foo/.\\bar")]                      // Forward then backslash: current
+        [InlineData("C:\\foo\\../bar")]                    // Backslash then forward: parent
+        [InlineData("C:/foo/..\\bar")]                     // Forward then backslash: parent
+        // Trailing relative segments
+        [InlineData("C:\\foo\\bar\\.")]                    // Trailing current directory
+        [InlineData("C:\\foo\\bar\\..")]                   // Trailing parent directory
+        [InlineData("C:/foo/bar/.")]                       // Trailing current (forward slash)
+        [InlineData("C:/foo/bar/..")]                      // Trailing parent (forward slash)
+        // Root-level relative segments
+        [InlineData("C:\\.")]                              // Current dir at root
+        [InlineData("C:\\..")]                             // Parent dir at root
+        [InlineData("C:/.")]                               // Current dir at root (forward slash)
+        [InlineData("C:/..")]                              // Parent dir at root (forward slash)
+        // Separator normalization only (no relative segments)
+        [InlineData("C:/foo/bar")]                         // Forward slashes need normalization
+        public void GetCanonicalForm_WindowsPathNormalization_ShouldMatchPathGetFullPath(string inputPath)
+        {
+            ValidateGetCanonicalFormMatchesSystem(inputPath);
+        }
+
+        [WindowsOnlyTheory]
+        // Hidden files/folders - should NOT trigger normalization (false positive prevention)
+        [InlineData("C:\\.hidden")]                        // Hidden file at root
+        [InlineData("C:\\foo\\.hidden")]                   // Hidden file in folder
+        [InlineData("C:\\foo\\.hidden\\bar")]              // Hidden folder
+        [InlineData("C:\\.nuget\\packages")]               // .nuget folder
+        [InlineData("C:\\.config\\settings")]              // .config folder
+        [InlineData("C:\\foo\\.git\\config")]              // .git folder
+        [InlineData("C:\\foo\\.vs\\settings")]             // .vs folder
+        // Files starting with dots but not relative segments
+        [InlineData("C:\\foo\\.gitignore")]                // .gitignore file
+        [InlineData("C:\\foo\\.editorconfig")]             // .editorconfig file
+        [InlineData("C:\\foo\\...")]                       // Triple dot (not relative)
+        [InlineData("C:\\foo\\....")]                      // Quad dot (not relative)
+        [InlineData("C:\\foo\\.hidden.txt")]               // Hidden file with extension
+        public void GetCanonicalForm_WindowsHiddenFiles_ShouldReturnSameInstance(string inputPath)
+        {
+            var absolutePath = new AbsolutePath(inputPath, ignoreRootedCheck: true);
+            var result = absolutePath.GetCanonicalForm();
+
+            // Should return the exact same instance (no normalization needed)
+            ReferenceEquals(result.Value, absolutePath.Value).ShouldBeTrue(
+                $"Path '{inputPath}' should not trigger normalization but GetCanonicalForm returned a different instance");
+            result.Value.ShouldBe(inputPath);
+        }
+
+        [WindowsOnlyTheory]
+        // Simple paths already in canonical form
+        [InlineData("C:\\foo\\bar")]                       // Standard Windows path
+        [InlineData("C:\\")]                               // Root only
+        [InlineData("D:\\folder\\subfolder\\file.txt")]    // Deep path
+        public void GetCanonicalForm_WindowsAlreadyCanonical_ShouldReturnSameInstance(string inputPath)
+        {
+            var absolutePath = new AbsolutePath(inputPath, ignoreRootedCheck: true);
+            var result = absolutePath.GetCanonicalForm();
+
+            ReferenceEquals(result.Value, absolutePath.Value).ShouldBeTrue(
+                $"Path '{inputPath}' is already canonical but GetCanonicalForm returned a different instance");
+        }
+
+        [UnixOnlyTheory]
+        // Current directory segments
+        [InlineData("/foo/./bar")]                         // Current directory reference
+        // Parent directory segments
+        [InlineData("/foo/../bar")]                        // Parent directory reference
+        // Trailing relative segments
+        [InlineData("/foo/bar/.")]                         // Trailing current directory
+        [InlineData("/foo/bar/..")]                        // Trailing parent directory
+        // Root-level relative segments
+        [InlineData("/.")]                                 // Current dir at root
+        [InlineData("/..")]                                // Parent dir at root
+        // Multiple relative segments
+        [InlineData("/foo/./bar/../baz")]                  // Mixed current and parent
+        public void GetCanonicalForm_UnixPathNormalization_ShouldMatchPathGetFullPath(string inputPath)
+        {
+            ValidateGetCanonicalFormMatchesSystem(inputPath);
+        }
+
+        [UnixOnlyTheory]
+        // Hidden files/folders - should NOT trigger normalization
+        [InlineData("/.hidden")]                           // Hidden file at root
+        [InlineData("/foo/.hidden")]                       // Hidden file in folder
+        [InlineData("/foo/.hidden/bar")]                   // Hidden folder
+        [InlineData("/.nuget/packages")]                   // .nuget folder
+        [InlineData("/.config/settings")]                  // .config folder
+        [InlineData("/foo/.git/config")]                   // .git folder
+        [InlineData("/foo/.local/share")]                  // .local folder
+        // Files starting with dots but not relative segments
+        [InlineData("/foo/.gitignore")]                    // .gitignore file
+        [InlineData("/foo/.bashrc")]                       // .bashrc file
+        [InlineData("/foo/...")]                           // Triple dot (not relative)
+        [InlineData("/foo/....")]                          // Quad dot (not relative)
+        [InlineData("/foo/.hidden.txt")]                   // Hidden file with extension
+        // Backslash in Unix paths (part of filename, not separator)
+        [InlineData("/foo/bar\\baz")]                      // Backslash is part of name
+        [InlineData("/foo/.\\hidden")]                     // Backslash after dot (not a separator on Unix)
+        public void GetCanonicalForm_UnixHiddenFiles_ShouldReturnSameInstance(string inputPath)
+        {
+            var absolutePath = new AbsolutePath(inputPath, ignoreRootedCheck: true);
+            var result = absolutePath.GetCanonicalForm();
+
+            ReferenceEquals(result.Value, absolutePath.Value).ShouldBeTrue(
+                $"Path '{inputPath}' should not trigger normalization but GetCanonicalForm returned a different instance");
+            result.Value.ShouldBe(inputPath);
+        }
+
+        [UnixOnlyTheory]
+        // Simple paths already in canonical form
+        [InlineData("/foo/bar")]                           // Standard Unix path
+        [InlineData("/")]                                  // Root only
+        [InlineData("/home/user/documents/file.txt")]      // Deep path
+        public void GetCanonicalForm_UnixAlreadyCanonical_ShouldReturnSameInstance(string inputPath)
+        {
+            var absolutePath = new AbsolutePath(inputPath, ignoreRootedCheck: true);
+            var result = absolutePath.GetCanonicalForm();
+
+            ReferenceEquals(result.Value, absolutePath.Value).ShouldBeTrue(
+                $"Path '{inputPath}' is already canonical but GetCanonicalForm returned a different instance");
+        }
+
+        [Fact]
+        public void GetCanonicalForm_ShouldPreserveOriginalValue()
+        {
+            string originalValue = "original/relative/path";
+            string absoluteValue = NativeMethods.IsWindows ? "C:\\foo\\.\\bar" : "/foo/./bar";
+
+            var absolutePath = new AbsolutePath(absoluteValue, originalValue, ignoreRootedCheck: true);
+            var result = absolutePath.GetCanonicalForm();
+
+            // Original value should be preserved even after canonicalization
+            result.OriginalValue.ShouldBe(originalValue);
+        }
+
+        [WindowsOnlyTheory]
+        // UNC paths
+        [InlineData("\\\\server\\share\\path")]            // Basic UNC path
+        [InlineData("\\\\server\\share\\.\\path")]         // UNC with current dir segment
+        [InlineData("\\\\server\\share\\..\\path")]        // UNC with parent dir segment
+        public void GetCanonicalForm_WindowsUNCPaths_ShouldMatchPathGetFullPath(string inputPath)
+        {
+            ValidateGetCanonicalFormMatchesSystem(inputPath);
+        }
+
+        [WindowsOnlyTheory]
+        // Multiple consecutive separators
+        [InlineData("C:\\foo\\\\bar")]                     // Double backslash
+        [InlineData("C://foo//bar")]                       // Double forward slash
+        public void GetCanonicalForm_MultipleConsecutiveSeparators_ShouldMatchPathGetFullPath(string inputPath)
+        {
+            ValidateGetCanonicalFormMatchesSystem(inputPath);
+        }
+
+        private static void ValidateGetCanonicalFormMatchesSystem(string inputPath)
+        {
+            var absolutePath = new AbsolutePath(inputPath, ignoreRootedCheck: true);
+            var result = absolutePath.GetCanonicalForm();
+            var systemResult = Path.GetFullPath(inputPath);
+
+            // Should match Path.GetFullPath behavior exactly
+            result.Value.ShouldBe(systemResult);
+
+            // Should preserve original value
+            result.OriginalValue.ShouldBe(absolutePath.OriginalValue);
+        }
+
+        #endregion
     }
 }
