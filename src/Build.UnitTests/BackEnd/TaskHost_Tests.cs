@@ -546,6 +546,18 @@ namespace Microsoft.Build.UnitTests.BackEnd
             Assert.True(_taskHost.IsRunningMultipleNodes); // "Expect IsRunningMultipleNodes to be true with 4 nodes"
         }
 
+        /// <summary>
+        /// Test that Yield and Reacquire can be called without throwing exceptions.
+        /// The mock request callback should handle these calls appropriately.
+        /// </summary>
+        [Fact]
+        public void TestYieldAndReacquire()
+        {
+            // Should not throw exceptions when called
+            _taskHost.Yield();
+            _taskHost.Reacquire();
+        }
+
 #if FEATURE_CODETASKFACTORY
         /// <summary>
         /// Task logging after it's done should not crash us.
