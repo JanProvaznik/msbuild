@@ -1201,11 +1201,18 @@ namespace Microsoft.Build.BackEnd
                     await BlockOnTargetInProgress(Microsoft.Build.BackEnd.BuildRequest.InvalidGlobalRequestId, null);
 
                     // All of the results should now be on this node.
-                    ErrorUtilities.VerifyThrow(
-                        _requestEntry.RequestConfiguration.ResultsNodeId == _componentHost.BuildParameters.NodeId,
-                        "Results for configuration {0} were not retrieved from node {1}",
-                        _requestEntry.RequestConfiguration.ConfigurationId,
-                        _requestEntry.RequestConfiguration.ResultsNodeId);
+                    // In MT mode, skip this check because ResultsNodeId is shared state that can be modified by
+                    // other nodes receiving the same results. In MT mode, the results cache is shared, so once
+                    // we're unblocked, the results are available regardless of what ResultsNodeId says.
+                    // See: https://github.com/dotnet/msbuild/issues/13188
+                    if (!_componentHost.BuildParameters.MultiThreaded)
+                    {
+                        ErrorUtilities.VerifyThrow(
+                            _requestEntry.RequestConfiguration.ResultsNodeId == _componentHost.BuildParameters.NodeId,
+                            "Results for configuration {0} were not retrieved from node {1}",
+                            _requestEntry.RequestConfiguration.ConfigurationId,
+                            _requestEntry.RequestConfiguration.ResultsNodeId);
+                    }
                 }
 
                 // Build the targets

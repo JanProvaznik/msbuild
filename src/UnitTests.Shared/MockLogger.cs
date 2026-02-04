@@ -74,6 +74,12 @@ namespace Microsoft.Build.UnitTests
         public bool AllowTaskCrashes { get; set; }
 
         /// <summary>
+        /// When set to true, allows engine crashes (InternalErrorException) to be logged without causing an assert.
+        /// Used for tests that intentionally trigger race conditions to verify fixes.
+        /// </summary>
+        public bool AllowEngineCrashes { get; set; }
+
+        /// <summary>
         /// List of ExternalProjectStarted events
         /// </summary>
         public List<ExternalProjectStartedEventArgs> ExternalProjectStartedEvents { get; } = new List<ExternalProjectStartedEventArgs>();
