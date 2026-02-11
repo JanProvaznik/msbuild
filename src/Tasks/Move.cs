@@ -246,7 +246,7 @@ namespace Microsoft.Build.Tasks
             if (!string.IsNullOrEmpty(destinationFolder) && !FileSystems.Default.DirectoryExists(destinationFolder))
             {
                 Log.LogMessageFromResources(MessageImportance.Normal, "Move.CreatesDirectory", destinationFolder);
-                Directory.CreateDirectory(destinationFolder);
+                Directory.CreateDirectory(TaskEnvironment.GetAbsolutePath(destinationFolder));
             }
 
             // Do not log a fake command line as well, as it's superfluous, and also potentially expensive

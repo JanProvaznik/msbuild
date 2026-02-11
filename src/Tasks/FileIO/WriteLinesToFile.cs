@@ -101,7 +101,7 @@ namespace Microsoft.Build.Tasks
                 }
             }
 
-            string directoryPath = Path.GetDirectoryName(filePath);
+            AbsolutePath directoryPath = TaskEnvironment.GetAbsolutePath(Path.GetDirectoryName(filePath));
             Directory.CreateDirectory(directoryPath);
 
             // Handle WriteOnlyWhenDifferent check for Overwrite mode before executing
@@ -189,10 +189,10 @@ namespace Microsoft.Build.Tasks
             string temporaryFilePath = null;
             try
             {
-                string directoryPath = Path.GetDirectoryName(filePath);
+                AbsolutePath directoryPath = TaskEnvironment.GetAbsolutePath(Path.GetDirectoryName(filePath));
 
                 // Create temporary file with ~ suffix (hides from GIT)
-                temporaryFilePath = Path.Combine(directoryPath, Path.GetRandomFileName() + "~");
+                temporaryFilePath = TaskEnvironment.GetAbsolutePath(Path.Combine(directoryPath, Path.GetRandomFileName() + "~"));
 
                 // Write content to temporary file
                 System.IO.File.WriteAllText(temporaryFilePath, contentsAsString, encoding);

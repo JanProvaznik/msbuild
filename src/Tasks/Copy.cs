@@ -115,7 +115,7 @@ namespace Microsoft.Build.Tasks
         /// normally there's no point, but occasionally things get into a bad state temporarily, and retrying does actually
         /// succeed.  So keeping around a secret environment variable to allow forcing that behavior if necessary.
         /// </summary>
-        private static bool s_alwaysRetryCopy = Environment.GetEnvironmentVariable(AlwaysRetryEnvVar) != null;
+        private bool _alwaysRetryCopy;
 
         /// <summary>
         /// Global flag to force on UseSymboliclinksIfPossible since Microsoft.Common.targets doesn't expose the functionality.
@@ -238,7 +238,7 @@ namespace Microsoft.Build.Tasks
         /// </summary>
         internal static void RefreshInternalEnvironmentValues()
         {
-            s_alwaysRetryCopy = Environment.GetEnvironmentVariable(AlwaysRetryEnvVar) != null;
+            // No-op: _alwaysRetryCopy is now read per-instance from TaskEnvironment in Execute().
         }
 
         /// <summary>
@@ -247,7 +247,7 @@ namespace Microsoft.Build.Tasks
         /// </summary>
         private void LogAlwaysRetryDiagnosticFromResources(string messageResourceName, params object[] messageArgs)
         {
-            if (s_alwaysRetryCopy)
+            if (_alwaysRetryCopy)
             {
                 Log.LogWarningWithCodeFromResources(messageResourceName, messageArgs);
             }
@@ -299,7 +299,7 @@ namespace Microsoft.Build.Tasks
                     else
                     {
                         Log.LogMessage(MessageImportance.Normal, CreatesDirectory, originalDestinationFolder);
-                        Directory.CreateDirectory(destinationFolder);
+                        Directory.CreateDirectory(TaskEnvironment.GetAbsolutePath(destinationFolder));
                     }
                 }
 
@@ -455,6 +455,8 @@ namespace Microsoft.Build.Tasks
             {
                 OverwriteReadOnlyFiles = true;
             }
+
+            _alwaysRetryCopy = TaskEnvironment.GetEnvironmentVariable(AlwaysRetryEnvVar) != null;
 
             // Track successfully copied subset.
             List<ITaskItem> destinationFilesSuccessfullyCopied;
@@ -1033,7 +1035,7 @@ namespace Microsoft.Build.Tasks
                                 // to a failure to reset the readonly bit properly, in which case retrying will succeed.  This seems to be
                                 // a pretty edge scenario, but since some of our internal builds appear to be hitting it, provide a secret
                                 // environment variable to allow overriding the default behavior and forcing retries in this circumstance as well.
-                                if (!s_alwaysRetryCopy)
+                                if (!_alwaysRetryCopy)
                                 {
                                     throw;
                                 }

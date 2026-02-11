@@ -182,7 +182,7 @@ namespace Microsoft.Build.Tasks
                     AbsolutePath destinationFolderPath = TaskEnvironment.GetAbsolutePath(DestinationFolder.ItemSpec);
                     DirectoryInfo destinationDirectory = Directory.CreateDirectory(destinationFolderPath);
 
-                    var destinationFile = new FileInfo(Path.Combine(destinationDirectory.FullName, filename));
+                    var destinationFile = new FileInfo(TaskEnvironment.GetAbsolutePath(Path.Combine(destinationDirectory.FullName, filename)));
 
                     // The file is considered up-to-date if its the same length.  This could be inaccurate, we can consider alternatives in the future
                     if (ShouldSkip(response, destinationFile))
