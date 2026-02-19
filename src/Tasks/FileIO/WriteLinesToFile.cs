@@ -192,17 +192,18 @@ namespace Microsoft.Build.Tasks
                 string directoryPath = Path.GetDirectoryName(filePath);
 
                 // Create temporary file with ~ suffix (hides from GIT)
-                temporaryFilePath = Path.Combine(directoryPath, Path.GetRandomFileName() + "~");
+                AbsolutePath tempPath = new AbsolutePath(Path.Combine(directoryPath, Path.GetRandomFileName() + "~"));
+                temporaryFilePath = tempPath;
 
                 // Write content to temporary file
-                System.IO.File.WriteAllText(temporaryFilePath, contentsAsString, encoding);
+                System.IO.File.WriteAllText(tempPath, contentsAsString, encoding);
 
                 // Attempt to atomically replace target file with temporary file
                 try
                 {
                     // Replace the contents of filePath with the contents of the temporary using File.Replace
                     // to preserve the various attributes of the original file.
-                    System.IO.File.Replace(temporaryFilePath, filePath, null, true);
+                    System.IO.File.Replace(tempPath, filePath, null, true);
                     temporaryFilePath = null; // Mark as successfully replaced
                     return !Log.HasLoggedErrors;
                 }
@@ -211,7 +212,7 @@ namespace Microsoft.Build.Tasks
                     // The target file doesn't exist, which is fine. Move the temp file to target.
                     try
                     {
-                        System.IO.File.Move(temporaryFilePath, filePath);
+                        System.IO.File.Move(tempPath, filePath);
                         temporaryFilePath = null; // Mark as successfully moved
                         return !Log.HasLoggedErrors;
                     }
@@ -231,7 +232,7 @@ namespace Microsoft.Build.Tasks
                         try
                         {
                             System.Threading.Thread.Sleep(10);
-                            System.IO.File.Replace(temporaryFilePath, filePath, null, true);
+                            System.IO.File.Replace(tempPath, filePath, null, true);
                             temporaryFilePath = null; // Mark as successfully replaced
                             return !Log.HasLoggedErrors;
                         }

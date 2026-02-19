@@ -121,7 +121,7 @@ namespace Microsoft.Build.Tasks
         /// <returns>The FileStream</returns>
         private static Stream CreateFileStreamOverNewFileStream(string path, FileMode mode, FileAccess access)
         {
-            return new FileStream(path, mode, access);
+            return new FileStream(new AbsolutePath(path), mode, access);
         }
 
         #region ITask Members

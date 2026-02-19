@@ -115,12 +115,12 @@ namespace Microsoft.Build.Tasks
         /// normally there's no point, but occasionally things get into a bad state temporarily, and retrying does actually
         /// succeed.  So keeping around a secret environment variable to allow forcing that behavior if necessary.
         /// </summary>
-        private static bool s_alwaysRetryCopy = Environment.GetEnvironmentVariable(AlwaysRetryEnvVar) != null;
+        private bool _alwaysRetryCopy;
 
         /// <summary>
         /// Global flag to force on UseSymboliclinksIfPossible since Microsoft.Common.targets doesn't expose the functionality.
         /// </summary>
-        private static readonly bool s_forceSymlinks = Environment.GetEnvironmentVariable("MSBuildUseSymboliclinksIfPossible") != null;
+        private bool _forceSymlinks;
 
         private static readonly bool s_copyInParallel = GetParallelismFromEnvironment();
 
@@ -157,7 +157,7 @@ namespace Microsoft.Build.Tasks
         /// Gets or sets a value that indicates whether to create symbolic links for the copied files
         /// rather than copy the files, if it's possible to do so.
         /// </summary>
-        public bool UseSymboliclinksIfPossible { get; set; } = s_forceSymlinks;
+        public bool UseSymboliclinksIfPossible { get; set; }
 
         /// <summary>
         /// Fail if unable to create a symbolic or hard link instead of falling back to copy
@@ -236,9 +236,12 @@ namespace Microsoft.Build.Tasks
         /// reasonably change, but we need some way of refreshing their values so that we can modify them for
         /// unit testing purposes.
         /// </summary>
+        /// <summary>
+        /// No-op. Environment values are now read per-instance in Execute().
+        /// Kept for test compatibility.
+        /// </summary>
         internal static void RefreshInternalEnvironmentValues()
         {
-            s_alwaysRetryCopy = Environment.GetEnvironmentVariable(AlwaysRetryEnvVar) != null;
         }
 
         /// <summary>
@@ -247,7 +250,7 @@ namespace Microsoft.Build.Tasks
         /// </summary>
         private void LogAlwaysRetryDiagnosticFromResources(string messageResourceName, params object[] messageArgs)
         {
-            if (s_alwaysRetryCopy)
+            if (_alwaysRetryCopy)
             {
                 Log.LogWarningWithCodeFromResources(messageResourceName, messageArgs);
             }
@@ -1033,7 +1036,7 @@ namespace Microsoft.Build.Tasks
                                 // to a failure to reset the readonly bit properly, in which case retrying will succeed.  This seems to be
                                 // a pretty edge scenario, but since some of our internal builds appear to be hitting it, provide a secret
                                 // environment variable to allow overriding the default behavior and forcing retries in this circumstance as well.
-                                if (!s_alwaysRetryCopy)
+                                if (!_alwaysRetryCopy)
                                 {
                                     throw;
                                 }
@@ -1123,6 +1126,13 @@ namespace Microsoft.Build.Tasks
         /// <returns></returns>
         public override bool Execute()
         {
+            _alwaysRetryCopy = TaskEnvironment.GetEnvironmentVariable(AlwaysRetryEnvVar) != null;
+            _forceSymlinks = TaskEnvironment.GetEnvironmentVariable("MSBuildUseSymboliclinksIfPossible") != null;
+            if (_forceSymlinks)
+            {
+                UseSymboliclinksIfPossible = true;
+            }
+
             return Execute(CopyFileWithLogging, s_copyInParallel);
         }
 
