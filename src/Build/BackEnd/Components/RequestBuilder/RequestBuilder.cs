@@ -1517,6 +1517,7 @@ namespace Microsoft.Build.BackEnd
         {
             private readonly BlockingCollection<Task> _tasks = new BlockingCollection<Task>();
             private int _availableThreads = 0;
+            private int _threadCount = 0;
 
             protected override void QueueTask(Task task)
             {
@@ -1552,6 +1553,7 @@ namespace Microsoft.Build.BackEnd
 
             private void InjectThread()
             {
+                int currentThreadId = Interlocked.Increment(ref _threadCount);
                 var thread = new Thread(() =>
                 {
                     foreach (Task t in _tasks.GetConsumingEnumerable())
@@ -1561,6 +1563,7 @@ namespace Microsoft.Build.BackEnd
                     }
                 });
                 thread.IsBackground = true;
+                thread.Name = $"MSBuild RequestBuilder Task Scheduler Thread {currentThreadId}";
                 thread.Start();
             }
         }
