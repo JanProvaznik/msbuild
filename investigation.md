@@ -1246,3 +1246,337 @@ After PRs 1+5+6 (msbuild) + PR 1 (sdk) + PRs 7+8 (vmr) land:
 2. Run the project-type test matrix (Wave 2 — Project-type test matrix) against a server-on SDK build to surface any not-yet-discovered task statics.
 3. Enable server in dotnet/msbuild's PR CI (lowest-risk first dogfood).
 4. Roll forward through dotnet/aspnetcore (validates Razor file-lock hypothesis from #5391) → dotnet/sdk → dotnet/runtime (per #13604 dogfood plan).
+
+## Task Author Compatibility Guide (draft)
+
+This is the seed contract for dotnet/msbuild#12246: task code must be correct when the MSBuild process is reused across builds and when multiple projects execute in parallel in one process.
+
+### 1. Background: why MSBuild server changes the rules
+
+Classic command-line builds made many task bugs invisible because `MSBuild.exe` or `dotnet build` exited after one invocation. MSBuild server changes that assumption: one long-lived process can service many independent builds, possibly from different repositories or different environment snapshots. `/mt` adds another stressor: multiple task instances can execute concurrently on worker nodes inside the same build.
+
+If a task stores mutable state in the process, that state can be observed by a later build or by a different project executing on another worker. The investigation found this pattern in NuGet restore, SDK container publishing, SDK resolution, wasm tooling, Razor's `rzc server`, legacy Xamarin tasks, and SourceLink resolver code. Most immediate blockers can be mitigated by process isolation using the `TaskRouter.IsKnownProblematicTask` allow-list pattern from PR #13660, but task authors should treat that as a bridge to a real fix.
+
+### 2. Contract for task authors
+
+**Task instance lifetime:** MSBuild creates a task instance for one task execution. Instance fields on the task object do not survive disposal and are the right default place for per-invocation state.
+
+```csharp
+public sealed class PackageManifestTask : Task
+{
+    private readonly Dictionary<string, string> _files = new(StringComparer.OrdinalIgnoreCase);
+
+    public override bool Execute()
+    {
+        _files.Clear();
+        // Populate from this invocation's inputs only.
+        return !Log.HasLoggedErrors;
+    }
+}
+```
+
+**Process lifetime:** all mutable process-global state survives task instance disposal and may survive many builds:
+
+- `static` mutable fields and properties, including singleton services.
+- `Lazy<T>` and `ConcurrentDictionary<TKey, TValue>` even when the field itself is `readonly`.
+- AppDomain-lifetime objects and event handlers (`AppDomain.AssemblyResolve`, `AssemblyLoadContext.Resolving`, `ProcessExit`, etc.).
+- `Environment.SetEnvironmentVariable` calls; they change the whole process and are visible to other tasks/threads.
+- Console state such as `Console.OutputEncoding`, `Console.Error`, `Console.ForegroundColor`, and ANSI/color mode.
+- AppContext switches, global `ServicePointManager`/HTTP settings, static random seeds, and thread-pool settings.
+- Native handles: file handles, sockets, named pipes, mutexes, native library handles, credential-provider plugin processes.
+
+**Native and OS resources:** close them deterministically with `using`, `Dispose`, or an owning object registered for build-scope disposal. Do not rely on process exit to release file locks, temp directories, credential helper processes, or native libraries.
+
+**Allowed statics:** immutable constants and frozen data are usually safe: `const`, `static readonly string`, `ImmutableArray<T>`, `FrozenDictionary<TKey,TValue>`, generated `ResourceManager`, or pure helper methods. If the contents can change after type initialization, assume it is unsafe until proven otherwise.
+
+### 3. Detection: am I affected?
+
+Start with static analysis. A cheap first pass is:
+
+```powershell
+rg -n "private\s+static\s+[^_]*[gs]et" --glob "*.cs"
+rg -n "static\s+.*=" --glob "*.cs"
+rg -n "Environment\.SetEnvironmentVariable|Console\.|AssemblyResolve|AssemblyLoadContext|ConcurrentDictionary|Lazy<" --glob "*.cs"
+```
+
+Exclude `readonly` fields only after checking the referenced object is actually immutable. `static readonly Lazy<T>` and `static readonly ConcurrentDictionary<,>` are mutable process state. A `static readonly` object whose `Dispose` is never called is also process state.
+
+Runtime test the task in one process:
+
+1. Invoke the same task twice with different inputs, output directories, environment variables, credentials, SDK paths, and current directory.
+2. Assert the second invocation does not see the first invocation's cached data, event handlers, env vars, handles, temp paths, or credentials.
+3. Repeat with two projects in one graph build under `/mt` and assert parallel invocations cannot corrupt each other.
+
+CLI smoke pattern:
+
+```powershell
+$env:MSBUILDUSESERVER = '1'
+dotnet build .\proj1\proj1.csproj
+dotnet build .\proj2\proj2.csproj
+```
+
+Also run the equivalent same-process harness if available. The key assertion is not merely "both builds pass"; verify logs, outputs, selected SDK/tool paths, credentials, file locks, and warnings are identical to fresh-process builds.
+
+### 4. Mitigation patterns, ordered by preference
+
+#### Best: refactor to per-instance state
+
+Move state into the task instance or into short-lived helper objects constructed during `Execute()`. This is correct for both server reuse and `/mt`.
+
+```csharp
+// Before: process-lifetime cache.
+private static readonly Dictionary<string, PackageSpec> s_specs = new(StringComparer.OrdinalIgnoreCase);
+
+public override bool Execute()
+{
+    PackageSpec spec = GetOrAddSpec(ProjectPath);
+    return WriteOutputs(spec);
+}
+
+// After: invocation-lifetime cache.
+public override bool Execute()
+{
+    var specs = new Dictionary<string, PackageSpec>(StringComparer.OrdinalIgnoreCase);
+    PackageSpec spec = GetOrAddSpec(specs, ProjectPath);
+    return WriteOutputs(spec);
+}
+```
+
+If the cache is large, first measure. A correct but slightly slower task is preferable to a stale or credential-leaking task under server reuse.
+
+#### Next: per-build state with `IBuildEngine4.RegisterTaskObject`
+
+Use build-scoped task objects for expensive data that is valid only for the current build. This is the gold-standard pattern used by SourceLink-style repository caches and by MSBuild tasks that need cleanup when nodes outlive a build.
+
+```csharp
+private const string RepositoryCacheKey = "Contoso.Tasks.RepositoryCache";
+
+public override bool Execute()
+{
+    if (BuildEngine is not IBuildEngine4 buildEngine4)
+    {
+        Log.LogError("This task requires IBuildEngine4 for build-scoped state.");
+        return false;
+    }
+
+    var cache = buildEngine4.GetRegisteredTaskObject(
+        RepositoryCacheKey,
+        RegisteredTaskObjectLifetime.Build) as RepositoryCache;
+
+    if (cache is null)
+    {
+        cache = new RepositoryCache(Log);
+        buildEngine4.RegisterTaskObject(
+            RepositoryCacheKey,
+            cache,
+            RegisteredTaskObjectLifetime.Build,
+            allowEarlyCollection: true);
+    }
+
+    return cache.Process(ProjectDirectory, Sources);
+}
+```
+
+Rules for build-scoped objects:
+
+- Use `RegisteredTaskObjectLifetime.Build`, not `AppDomain`, for data derived from project inputs, environment variables, SDK paths, credentials, filesystem state, or tool discovery.
+- Implement `IDisposable` when the object owns handles, temp directories, plugin processes, or event handlers. MSBuild calls `Dispose` before discarding registered objects.
+- Treat the object as shared by parallel task invocations in the same build; synchronize mutable state or key by project/global properties.
+- Set `allowEarlyCollection: true` for large regenerable caches; use `false` only for cleanup/disposer sentinels that must run at build end.
+
+#### Last resort: isolate the task in a transient TaskHost
+
+If the owning repo cannot safely refactor before MSBuild server rollout, isolate the task process so statics die with the TaskHost. This is appropriate for credential managers, plugin managers, native libraries that cannot unload, or legacy tasks with unknown global state.
+
+Explicit task-host XML shape:
+
+```xml
+<UsingTask TaskName="Contoso.Build.RestoreTask"
+           AssemblyFile="$(ContosoBuildTasksAssembly)"
+           TaskFactory="TaskHostFactory"
+           Runtime="NET"
+           Architecture="CurrentArchitecture" />
+```
+
+Important: `Runtime`/`Architecture` without an explicit `TaskHostFactory` can select a reused sidecar in some cases. Use `TaskHostFactory` or ask MSBuild to force transient routing when process-lifetime cleanup is required.
+
+MSBuild-side allow-list request shape:
+
+```yaml
+task: Contoso.Build.RestoreTask
+assembly: Contoso.Build.Tasks.dll
+owner: dotnet/contoso
+reason: static plugin manager and environment-derived credential cache survive server reuse
+requested-msbuild-mitigation: add to TaskRouter.s_knownProblematicTaskNames
+isolation: transient TaskHost when MSBuild server or /mt is active
+exit-criteria: task refactored to per-instance or build-scoped state
+```
+
+The PR #13660 pattern routes known problematic tasks to a non-reused TaskHost only in server or `/mt` modes, preserving normal builds while unblocking rollout.
+
+### 5. What MSBuild promises
+
+For each server request, MSBuild currently resets or overwrites:
+
+- Current working directory for the build request.
+- Process environment variables from the client-provided snapshot.
+- Current culture and UI culture.
+- Build parameters such as startup directory and console redirection for the request.
+
+MSBuild does **not** promise to reset arbitrary process state between requests:
+
+- Task `static` fields, singleton services, `Lazy<T>` values, or static dictionaries.
+- Console encoding/color/global writer state changed by tasks.
+- AppContext switches, `ServicePointManager`, thread-pool settings, native loader state, or global event handlers.
+- Assemblies loaded into the default ALC/AppDomain, or non-collectible `AssemblyLoadContext` instances.
+- External processes, native handles, file locks, mutexes, or temp directories left open by tasks.
+
+Environment reset is not a synchronization primitive. During a build, `Environment.SetEnvironmentVariable` is visible to all tasks in that process; in `/mt`, another task may observe the temporary value before MSBuild overwrites the environment for a later request.
+
+### 6. Detection helpers proposed for future MSBuild releases
+
+Future public APIs should let task authors branch or fail fast without reading private environment variables:
+
+- `Traits.Instance.IsServerMode` (proposed): tells engine code and possibly task-facing helpers that the current process was launched as an MSBuild server.
+- `Traits.Instance.IsMultiThreaded` (proposed): tells engine code that `/mt` or equivalent multi-threaded scheduling is active.
+- `IBuildEngine.WasLaunchedInMSBuildServerMode` or a new numbered `IBuildEngine` property (proposed): task-facing contract built on the PR #13660 sidecar env-var pattern, because `MSBUILDUSESERVER` itself is stripped from child nodes to avoid recursive server launch.
+
+These helpers are diagnostics and compatibility aids, not a substitute for removing unsafe process-global state.
+
+### 7. Concrete refactor examples
+
+#### A. PluginManager singleton → build-scoped object
+
+```csharp
+// Before.
+private static PluginManager? s_pluginManager;
+
+public override bool Execute()
+{
+    s_pluginManager ??= PluginManager.Create(SettingsDirectory);
+    return s_pluginManager.Restore(ProjectPath);
+}
+
+// After.
+private const string PluginManagerKeyPrefix = "NuGet.RestoreTask.PluginManager";
+
+private PluginManager GetPluginManager()
+{
+    var buildEngine4 = (IBuildEngine4)BuildEngine;
+    string key = $"{PluginManagerKeyPrefix}:{SettingsDirectory}";
+    var manager = buildEngine4.GetRegisteredTaskObject(
+        key,
+        RegisteredTaskObjectLifetime.Build) as PluginManager;
+
+    if (manager is null)
+    {
+        manager = PluginManager.Create(SettingsDirectory);
+        buildEngine4.RegisterTaskObject(
+            key,
+            manager,
+            RegisteredTaskObjectLifetime.Build,
+            allowEarlyCollection: false);
+    }
+
+    return manager;
+}
+```
+
+The manager is reused only within one build, disposed at build end if it implements `IDisposable`, and recreated for the next server request.
+
+#### B. Static environment variables for credentials → build-engine host object
+
+```csharp
+// Before: process-global credentials can leak to unrelated tasks.
+Environment.SetEnvironmentVariable("REGISTRY_USER", UserName);
+Environment.SetEnvironmentVariable("REGISTRY_PASSWORD", Password);
+return PushImage(ImageName);
+
+// After: typed build-scoped credentials plus per-child-process environment.
+private const string RegistryCredentialsKey = "Contoso.Containers.RegistryCredentials";
+
+private sealed record RegistryCredentials(string UserName, string Password);
+
+public override bool Execute()
+{
+    if (BuildEngine is not IBuildEngine4 buildEngine4)
+    {
+        Log.LogError("This task requires IBuildEngine4 for credential isolation.");
+        return false;
+    }
+
+    string credentialKey = $"{RegistryCredentialsKey}:{RegistryServer}";
+    var credentials = buildEngine4.GetRegisteredTaskObject(
+        credentialKey,
+        RegisteredTaskObjectLifetime.Build) as RegistryCredentials;
+
+    if (credentials is null)
+    {
+        credentials = new RegistryCredentials(UserName, Password);
+        buildEngine4.RegisterTaskObject(
+            credentialKey,
+            credentials,
+            RegisteredTaskObjectLifetime.Build,
+            allowEarlyCollection: false);
+    }
+
+    var startInfo = new ProcessStartInfo("docker", $"push {ImageName}")
+    {
+        UseShellExecute = false,
+    };
+
+    startInfo.Environment["REGISTRY_USER"] = credentials.UserName;
+    startInfo.Environment["REGISTRY_PASSWORD"] = credentials.Password;
+
+    using Process process = Process.Start(startInfo)!;
+    process.WaitForExit();
+    return process.ExitCode == 0;
+}
+```
+
+Prefer passing credentials through typed objects, task parameters, or child-process environment blocks. Never set process-wide credential env vars as a temporary communication channel.
+
+#### C. Static `Lazy<T>` for environment-derived path → per-build `Lazy<T>`
+
+```csharp
+// Before: first build's environment wins for the server lifetime.
+private static readonly Lazy<string> s_emscriptenPath = new(() =>
+    Environment.GetEnvironmentVariable("EMSDK") ?? FindEmscripten());
+
+public override bool Execute() => RunTool(s_emscriptenPath.Value);
+
+// After: the lazy value is scoped to one build request.
+private const string ToolPathsKey = "Contoso.Wasm.ToolPaths";
+
+private sealed class ToolPaths
+{
+    public ToolPaths(string? emsdk)
+    {
+        EmscriptenPath = new Lazy<string>(() => emsdk ?? FindEmscripten());
+    }
+
+    public Lazy<string> EmscriptenPath { get; }
+}
+
+public override bool Execute()
+{
+    var buildEngine4 = (IBuildEngine4)BuildEngine;
+    var paths = buildEngine4.GetRegisteredTaskObject(
+        ToolPathsKey,
+        RegisteredTaskObjectLifetime.Build) as ToolPaths;
+
+    if (paths is null)
+    {
+        paths = new ToolPaths(Environment.GetEnvironmentVariable("EMSDK"));
+        buildEngine4.RegisterTaskObject(
+            ToolPathsKey,
+            paths,
+            RegisteredTaskObjectLifetime.Build,
+            allowEarlyCollection: true);
+    }
+
+    return RunTool(paths.EmscriptenPath.Value);
+}
+```
+
+For multithreaded tasks, prefer `TaskEnvironment.GetEnvironmentVariable` over `Environment.GetEnvironmentVariable` when the task implements `IMultiThreadableTask`; it respects MSBuild's isolated task environment instead of process-global state.
