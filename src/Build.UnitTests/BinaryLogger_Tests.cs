@@ -967,6 +967,85 @@ namespace Microsoft.Build.UnitTests
 
         #endregion
 
+        /// <summary>
+        /// Regression test for LOG-1 (investigation.md Wave 3 logging audit).
+        ///
+        /// BinaryLogger.Initialize() subscribes to IEventSource.AnyEventRaised. Before the LOG-1
+        /// fix, BinaryLogger.Shutdown() did not unsubscribe — so re-using the same logger across
+        /// multiple Initialize/Shutdown cycles (common when MSBuild server hosts back-to-back
+        /// builds and consumers re-register the same logger instance) caused handlers to
+        /// accumulate. By cycle N every event would be written N times.
+        ///
+        /// This test exercises Initialize → Shutdown → Initialize → Shutdown on a single logger
+        /// instance and asserts that the event-count reported by a probe IEventSource grows
+        /// linearly with the number of events raised in the *current* cycle, not multiplicatively.
+        /// </summary>
+        [Fact]
+        public void Shutdown_UnsubscribesAnyEventRaised_NoHandlerLeakAcrossCycles()
+        {
+            var logger = new BinaryLogger { Parameters = _logFile };
+            var probe = new ProbeEventSource();
+
+            // Cycle 1
+            logger.Initialize(probe);
+            probe.RaiseAnyEvent(new BuildMessageEventArgs("cycle-1-msg-1", null, "test", MessageImportance.Normal));
+            int handlersAfterFirstInit = probe.GetAnyEventRaisedHandlerCount();
+            logger.Shutdown();
+            int handlersAfterFirstShutdown = probe.GetAnyEventRaisedHandlerCount();
+
+            // Cycle 2 — re-initialize same instance with a fresh log file
+            File.Delete(_logFile);
+            logger.Initialize(probe);
+            int handlersAfterSecondInit = probe.GetAnyEventRaisedHandlerCount();
+            logger.Shutdown();
+            int handlersAfterSecondShutdown = probe.GetAnyEventRaisedHandlerCount();
+
+            handlersAfterFirstInit.ShouldBe(1, "Initialize should subscribe exactly one handler.");
+            handlersAfterFirstShutdown.ShouldBe(0, "Shutdown must unsubscribe the AnyEventRaised handler (LOG-1). Without this fix, a handler leaks per cycle and events fire 2x, 3x, ... N times by request N on a reused MSBuild server.");
+            handlersAfterSecondInit.ShouldBe(1, "Re-initialize should re-subscribe exactly one handler, not stack up to 2.");
+            handlersAfterSecondShutdown.ShouldBe(0, "Second Shutdown must also unsubscribe.");
+
+            // Create the expected log file to satisfy test environment expectations of the IDisposable cleanup.
+            File.Create(_logFile).Dispose();
+        }
+
+        /// <summary>
+        /// Minimal IEventSource probe that exposes its handler-count for the LOG-1 regression test.
+        /// </summary>
+        private sealed class ProbeEventSource : IEventSource
+        {
+            public event BuildMessageEventHandler MessageRaised;
+            public event BuildErrorEventHandler ErrorRaised;
+            public event BuildWarningEventHandler WarningRaised;
+            public event BuildStartedEventHandler BuildStarted;
+            public event BuildFinishedEventHandler BuildFinished;
+            public event ProjectStartedEventHandler ProjectStarted;
+            public event ProjectFinishedEventHandler ProjectFinished;
+            public event TargetStartedEventHandler TargetStarted;
+            public event TargetFinishedEventHandler TargetFinished;
+            public event TaskStartedEventHandler TaskStarted;
+            public event TaskFinishedEventHandler TaskFinished;
+            public event CustomBuildEventHandler CustomEventRaised;
+            public event BuildStatusEventHandler StatusEventRaised;
+            public event AnyEventHandler AnyEventRaised;
+
+            public int GetAnyEventRaisedHandlerCount() => AnyEventRaised?.GetInvocationList().Length ?? 0;
+
+            public void RaiseAnyEvent(BuildEventArgs args) => AnyEventRaised?.Invoke(this, args);
+
+            // Reference unused events to silence the compiler warning for events that are
+            // never raised in this probe (BinaryLogger only uses AnyEventRaised).
+#pragma warning disable IDE0051 // Private member is unused — used by reflection of the event accessors.
+            private void DummyReferences()
+            {
+                _ = MessageRaised; _ = ErrorRaised; _ = WarningRaised;
+                _ = BuildStarted; _ = BuildFinished; _ = ProjectStarted; _ = ProjectFinished;
+                _ = TargetStarted; _ = TargetFinished; _ = TaskStarted; _ = TaskFinished;
+                _ = CustomEventRaised; _ = StatusEventRaised;
+            }
+#pragma warning restore IDE0051
+        }
+
         public void Dispose()
         {
             _env.Dispose();
