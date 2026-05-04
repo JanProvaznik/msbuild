@@ -1151,3 +1151,98 @@ After all prototype changes (M1+M2+M3+TEL-1+rubber-duck fixes; CIO-1 and TEL-6 r
 
 
 
+
+## Final consolidated upstream PR roadmap
+
+The following PRs are ready (or near-ready) to file based on this investigation. They are ordered by priority and dependency.
+
+### dotnet/msbuild PRs (ready from prototype branch)
+
+#### PR 1: `Catch TimeoutException in TryConnectToPipeStream + extend hot-server connect timeout`
+
+- **Files:** `src/Build/BackEnd/Components/Communications/NodeProviderOutOfProcBase.cs`, `src/Build/BackEnd/Client/MSBuildClient.cs`, `src/Build.UnitTests/BackEnd/NodeProviderOutOfProc_Tests.cs`
+- **Branch commit:** `45ea20523b`
+- **Mitigations:** M1 + M3
+- **Linked issues:** dotnet/msbuild#13604 (VMR validation), dotnet/dotnet (the run 20260428.5 fsharp timeout)
+- **Body summary:** Wraps `nodeStream.Connect(timeout)` in try/catch for `TimeoutException`, returning `HandshakeStatus.Timeout` instead of throwing. Bumps hot-server connect timeout from 1s → 5s and adds env-var overrides `MSBUILDSERVERHOTCONNECTTIMEOUT` / `MSBUILDSERVERCOLDCONNECTTIMEOUT`. New regression test `TryConnectToPipeStream_WhenPipeUnavailable_ReturnsTimeoutInsteadOfThrowing`. **Required to unblock VMR default-on validation.**
+
+#### PR 2: `Defense-in-depth fallback in MSBuildClientApp.Execute`
+
+- **Files:** `src/MSBuild/MSBuildClientApp.cs`, `src/Build/BackEnd/Client/MSBuildClient.cs` (TryShutdownServer hardcoded timeout fix from rubber-duck pass)
+- **Branch commits:** `71625c55e7`, `43d5e0097b`
+- **Mitigations:** M2 + rubber-duck non-blocking fixes (1, 2, 3)
+- **Body summary:** Wraps `MSBuildClient.Execute` in top-level `try/catch (Exception ex) when (ex is not OperationCanceledException && !ExceptionHandling.IsCriticalException(ex))` falling back to in-proc; clamps env-var connect timeouts to `Math.Max(1, ...)`; uses hot timeout for `TryShutdownServer` connect. **Excludes `OperationCanceledException` so cancellation is preserved.**
+
+#### PR 3: `IsServerModeEnabled telemetry field`
+
+- **Files:** `src/Framework/Telemetry/BuildTelemetry.cs`, `src/MSBuild/XMake.cs`
+- **Branch commit:** `e8d682d138`
+- **Mitigations:** TEL-1
+- **Body summary:** Adds `IsServerModeEnabled: bool?` to BuildTelemetry, set when `MSBUILDUSESERVER=1` is detected (regardless of fallback). Lets dashboards compute true server adoption rate. Required for default-on monitoring readiness.
+
+#### PR 4: `BinaryLogger.Shutdown unsubscribes AnyEventRaised`
+
+- **Files:** `src/Build/Logging/BinaryLogger/BinaryLogger.cs`
+- **Branch commit:** `7e2ac76cb6`
+- **Mitigations:** LOG-1
+- **Body summary:** Tracks the subscribed `IEventSource` so `Shutdown()` can detach the `AnyEventRaised` handler. Without this, re-using a logger across MSBuild server requests accumulates handlers (events fire 2x, 3x, ... N times). Independent of server work but high value once server is default-on.
+
+#### PR 5 (already open): dotnet/msbuild#13651 `TMPDIR in handshake salt`
+
+- **Status:** Open draft, reviewer @rainersigwald.
+- **Mitigations:** M4
+- **Action:** Push for review/merge. Eliminates the structural cross-environment server-sharing problem.
+
+#### PR 6 (already open): dotnet/msbuild#13660 `Route NuGet RestoreTask to transient TaskHost`
+
+- **Status:** Open, blocked on minor review (use `FrozenDictionary`/`const string`).
+- **Mitigations:** Thread C
+- **Action:** Address review comment, merge. Unblocks NuGet auth blocker (#13315).
+
+### dotnet/dotnet (VMR) PRs (ready from Wave 5 diffs)
+
+#### PR 7 (VMR): `Per-repo MSBUILDNODEHANDSHAKESALT in Directory.Build.targets`
+
+- **Files:** `repo-projects/Directory.Build.targets` (RepoBuild target)
+- **Mitigation:** VMR-M3
+- **Body summary:** Inject `MSBUILDNODEHANDSHAKESALT=$(RepositoryName)` into each repo's `<Exec>` `EnvironmentVariables` so each repo gets its own MSBuild server pipe. **Highest leverage VMR-side fix for the fsharp timeout** — works today without any MSBuild code change.
+
+#### PR 8 (VMR): `Add MSBUILDNODEHANDSHAKESALT=Agent.JobName to vmr-build.yml`
+
+- **Files:** `eng/pipelines/templates/jobs/vmr-build.yml`
+- **Mitigation:** VMR-M1
+- **Body summary:** Defensive baseline salt per vertical. Pair with PR 7.
+
+#### PR 9 (VMR): `Add --msbuild to CleanupRepo build-server shutdown`
+
+- **Files:** `repo-projects/Directory.Build.targets` (CleanupRepo target)
+- **Mitigation:** VMR-M2
+- **Dependency:** Requires SDK PR 1 (below) before it has any effect.
+- **Body summary:** Currently `dotnet build-server shutdown --msbuild` is silently a no-op (sdk implementation only reaches local in-proc nodes). Merge anyway so the correct behavior auto-activates when SDK PR 1 lands.
+
+### dotnet/sdk PR
+
+#### SDK PR 1: `MSBuildServer.Shutdown should call MSBuildClient.ShutdownServer over the named pipe`
+
+- **Files:** `src/Cli/dotnet/BuildServer/MSBuildServer.cs`
+- **Mitigation:** SDK-1
+- **Body summary:** Replace `BuildManager.DefaultBuildManager.ShutdownAllNodes()` with a call to `Microsoft.Build.Experimental.MSBuildClient.ShutdownServer(CancellationToken.None)`. The current implementation only reaches worker nodes owned by the local in-proc `BuildManager`; the long-running out-of-proc MSBuild server process is unreachable, making `dotnet build-server shutdown --msbuild` a silent no-op. **Required for VMR PR 9 to be effective.**
+
+### Outstanding items (do NOT file as PRs without further design)
+
+These were investigated but are NOT ready to file as code PRs yet — they need design discussion or further validation first:
+
+- **CIO-1 (rejected):** "disable server when -interactive" broke the explicit `ServerShouldStartWhenBuildIsInteractive` test. The intended improvement is now an OOT extension to PR #13660's allow-list for credential-provider tasks (per-task isolation, not server-wide gating).
+- **TEL-6 (rejected):** "fall back on MSBuildClientExitType.Unexpected" causes destructive re-execution because the build was already in progress. The revised intent is "set ServerFallbackReason for telemetry visibility but do not fall back" — design needed for the right error-classification.
+- **TEL-2..5:** additional telemetry fields and dashboard work — design discussion needed.
+- **LOG-2:** `Console.ForegroundColor` reset per request — needs interaction analysis with `BaseConsoleLogger` design.
+- **Static-state fixes in third-party tasks** (Thread D-OOT, Wave 4, Wave 5): each needs a separate per-task assessment in its owning repo (NuGet, dotnet/sdk, dotnet/aspnetcore, dotnet/maui, dotnet/runtime).
+
+### Validation plan (Phase 2 — VMR dogfood)
+
+After PRs 1+5+6 (msbuild) + PR 1 (sdk) + PRs 7+8 (vmr) land:
+
+1. Re-run dotnet-unified-build with server on (#13604 phase 1) and verify the fsharp timeout no longer reproduces.
+2. Run the project-type test matrix (Wave 2 — Project-type test matrix) against a server-on SDK build to surface any not-yet-discovered task statics.
+3. Enable server in dotnet/msbuild's PR CI (lowest-risk first dogfood).
+4. Roll forward through dotnet/aspnetcore (validates Razor file-lock hypothesis from #5391) → dotnet/sdk → dotnet/runtime (per #13604 dogfood plan).
