@@ -1045,6 +1045,25 @@ The `ShadowCopyManager.AddAssembly()` copies source DLLs to a per-session temp d
 
 ---
 
+### Wave 5 — Lesson learned: rejected mitigation TEL-6 (`Unexpected` should NOT trigger fallback)
+
+**The wave-4 telemetry sub-agent's TEL-6 recommendation ("map `MSBuildClientExitType.Unexpected` to a fallback so it appears in telemetry") was prototyped, broke the existing test `MSBuildServer_Tests.MSBuildServerTest` (`src/MSBuild.UnitTests/MSBuildServer_Tests.cs:90-138`), and was reverted.**
+
+Failure mode discovered by the test:
+1. Test starts a build that triggers a long-running task on the server.
+2. Test kills the server process mid-build via the FileSystemWatcher.
+3. Pre-TEL-6 behavior: client returns `MSBuildClientExitType.Unexpected` → `MSBuildClientApp.Execute` returns `MSBuildClientFailure` (non-zero exit). Test's next `ExecMSBuild` call then starts a fresh build which uses a new server.
+4. With TEL-6 applied: client returns `Unexpected` → `MSBuildClientApp.Execute` falls back to `MSBuildApp.Execute(commandLineArgs)` in-proc → that **re-runs the same build**, including the 100-second sleep task → test hangs and exceeds the 30-second xunit timeout.
+
+**Root insight:** `MSBuildClientExitType.Unexpected` means *the build was already in progress on the server and the connection dropped*. Falling back in that case is **destructive** because it would re-execute a build that may have already partially completed (build-time side effects: file writes, deployments, registry changes). The `Unexpected` exit type is correctly handled today by surfacing as `MSBuildClientFailure` so the user learns the build did not complete and can decide whether to retry.
+
+**Revised guidance:** `Unexpected` deserves better *telemetry* (it currently disappears from the `ServerFallbackReason` field), but **NOT** a fallback. The right fix is to set `ServerFallbackReason = "ConnectionLostMidBuild"` (or similar) in the `Unexpected` path while still returning `MSBuildClientFailure`.
+
+| ID | Mitigation (revised) | Where | Priority |
+|---|---|---|---|
+| **TEL-6 (revised)** | When `MSBuildClientExitType.Unexpected` is returned, set `ServerFallbackReason = "ConnectionLostMidBuild"` for telemetry visibility BUT **do not** fall back to in-proc — let the failure surface to the user. | `src/MSBuild/MSBuildClientApp.cs` (after the existing fallback if-block) | **P2** |
+
+This is the **second rubber-duck-style lesson** in this investigation (CIO-1 was the first). Both demonstrate that "make server fall back more aggressively" can introduce silent re-execution bugs — the fallback set must be carefully scoped to states that guarantee the build *has not yet started* on the server.
 ## Recommended Mitigations
 
 ### Tiered roadmap to safe default-on MSBuild server

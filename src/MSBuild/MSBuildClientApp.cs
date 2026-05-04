@@ -96,7 +96,11 @@ namespace Microsoft.Build.CommandLine
                     KnownTelemetry.PartialBuildTelemetry.ServerFallbackReason = exitResult.MSBuildClientExitType.ToString();
                 }
 
-                // Server is busy, fallback to old behavior.
+                // Server is busy / unreachable, fall back to in-proc.
+                // Note: MSBuildClientExitType.Unexpected is INTENTIONALLY excluded from fallback —
+                // it means the build was already in progress on the server and the connection
+                // dropped (e.g., server was killed). Falling back in that case would re-execute
+                // the build in-proc, which can be destructive if a partial build already happened.
                 return MSBuildApp.Execute(commandLineArgs);
             }
 
