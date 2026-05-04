@@ -635,6 +635,78 @@ Survey of the 10 highest-risk out-of-tree task assemblies bundled with the .NET 
 
 > **Legend:** Rows are roughly priority-ordered within each section. "❌ Not enabled" means `MSBUILDUSESERVER` / `DOTNET_CLI_USE_MSBUILD_SERVER` is not set in published CI pipelines as of investigation date (2026-04). Dogfood should proceed in order: `dotnet/msbuild` → `dotnet/fsharp` (once fixed) → `dotnet/aspnetcore` → `dotnet/sdk` → `dotnet/runtime` → `dotnet/roslyn` → `dotnet/efcore` → `dotnet/maui`.
 
+## Wave 3 Findings
+
+### Wave 3 — `dotnet build-server shutdown --msbuild` capability deep-dive
+
+**Verdict: BROKEN in dotnet/sdk.**
+
+`dotnet/sdk/src/Cli/dotnet/BuildServer/MSBuildServer.cs` implements `Shutdown()` as:
+
+```csharp
+public void Shutdown() => BuildManager.DefaultBuildManager.ShutdownAllNodes();
+```
+
+This only shuts down **nodes owned by the local in-proc `BuildManager`** in the `dotnet` CLI process. It **does NOT** send a shutdown request to the separate, long-running MSBuild server process. The MSBuild server is a distinct process listening on its own named pipe (`MSBuildServer-{handshake.ComputeHash()}`); it is not a worker node managed by the local `BuildManager.DefaultBuildManager`.
+
+**Correct API exists in dotnet/msbuild but is not called by SDK:**
+`src/Build/BackEnd/Client/MSBuildClient.cs:ShutdownServer(CancellationToken)` connects over the named pipe and sends an explicit `NodeBuildComplete(false)` shutdown command — this is the path used (correctly) by `MSBuildServer_Tests.CanShutdownServerProcess` test variant `byBuildManager=false`.
+
+**Impact:**
+- `dotnet build-server shutdown --msbuild` returns `0` (success) but the MSBuild server keeps running. Users have no way to cleanly shut down a runaway MSBuild server short of killing the process.
+- Compounds VMR cleanup: even if the orchestrator added `--msbuild` to `CleanupRepo` (VMR-M2 below), it would silently no-op.
+- Compounds the Razor file-lock race (#5391): server-process file handles cannot be freed via the documented CLI command.
+
+**Recommended fix:**
+Change `MSBuildServer.Shutdown()` in dotnet/sdk to delegate to `Microsoft.Build.Experimental.MSBuildClient.ShutdownServer(CancellationToken.None)` via the public API. File a `dotnet/sdk` issue + PR. **Until this lands, VMR-M2 (add `--msbuild` to CleanupRepo) is a no-op** — that mitigation must be paired with this fix.
+
+| Mitigation | Where | Priority | Notes |
+|---|---|---|---|
+| **SDK-1** | Replace `BuildManager.DefaultBuildManager.ShutdownAllNodes()` with pipe-based `MSBuildClient.ShutdownServer()` in `dotnet/sdk/src/Cli/dotnet/BuildServer/MSBuildServer.cs` | **P1** | Without this, `dotnet build-server shutdown --msbuild` is effectively a no-op for the long-running server process. Required before VMR-M2. |
+
+### Wave 3 — Prototype branch regression test results
+
+After the initial regression run noted "Zero tests" for `MSBuildServer_Tests`, that turned out to be a test-project-naming issue (the file lives in `src/MSBuild.UnitTests/MSBuildServer_Tests.cs` which compiles to `Microsoft.Build.CommandLine.UnitTests.dll`, not `Microsoft.Build.Engine.UnitTests.dll`). Re-run against the correct executable:
+
+| Test class | Project | Total | Passed | Failed | Skipped | Duration |
+|---|---|---:|---:|---:|---:|---|
+| `Microsoft.Build.Engine.UnitTests.MSBuildServer_Tests` | `Microsoft.Build.CommandLine.UnitTests` | 9 | **9** | 0 | 0 | 14.2s |
+| `Microsoft.Build.UnitTests.BackEnd.NodeProviderOutOfProc_Tests` | `Microsoft.Build.Engine.UnitTests` | 8 | **8** | 0 | 0 | 3.1s |
+
+**Result:** All 17 server-related tests pass on the `prototype/msbuild-server-default-on-mitigations` branch with M1+M2+M3 applied. New regression test `TryConnectToPipeStream_WhenPipeUnavailable_ReturnsTimeoutInsteadOfThrowing` passes. **No regressions detected.**
+
+### Wave 3 — FSharp.Build module-level state audit
+
+Validates Thread D-OOT's claim that `FSharp.Build` has no module-level mutable state (which would otherwise be the most likely application-side trigger for fsharp's deterministic VMR timeout).
+
+| File | Concerning module-level mutable/static state |
+|---|---|
+| `src/FSharp.Build/Fsi.fs:20-67` | None; all `let mutable` are inside `type Fsi()` instance body, plus one `do` instance initializer at line 67. |
+| `src/FSharp.Build/Fsc.fs:19-80` | None; all `let mutable` are inside `type Fsc()` instance body, plus one `do` instance initializer. |
+| `src/FSharp.Build/FSharpEmbedResourceText.fs:14-20` | None; instance-body only. |
+| `src/FSharp.Build/WriteCodeFragment.fs:15-29` | None; mutable fields are instance-scoped, `static let escapeString` is immutable. |
+| `src/FSharp.Build/SubstituteText.fs:10-14` | None; instance-scoped. |
+| `src/FSharp.Build/MapSourceRoots.fs:20-80` | No mutable state; only `static let` constants/functions. |
+| `src/FSharp.Build/CreateFSharpManifestResourceName.fs` | No module-level mutable found. |
+| `src/FSharp.Build/CallerFile.fs` | Not present in dotnet/fsharp `src/FSharp.Build/`. |
+
+**Verdict: SAFE for server reuse.** No module-level `mutable` or `static do` initializers found. The state in `Fsi.fs`/`Fsc.fs` is instance-local; each task invocation gets fresh state. `FSharp.Build.fsproj` references standard MSBuild packages only; no shared task-lib bridge introducing hidden module-level state.
+
+**Implication for the VMR fsharp timeout:** This *confirms* Thread E's conclusion — the fsharp build timeout is **not** caused by FSharp.Build statics. The root cause is purely in MSBuild server infrastructure (uncaught `TimeoutException` + pipe-recycling race + missing TMPDIR in handshake salt). FSharp's symptom-frequency simply reflects its build pattern (many short consecutive `dotnet build` invocations within a single VMR vertical), not any static-state misuse on its end.
+
+### Wave 3 — Logging behavior under server reuse
+
+- **Binary logger (`-bl`)**: CLI-gated off via `CanRunServerBasedOnCommandLineSwitches`, but a programmatic `BinaryLogger` can still be registered; it's initialized per build and `Shutdown()` closes the stream/zip at `src/Build/Logging/BinaryLogger/BinaryLogger.cs:335-460, 487-537`. **Verdict: Safe via build teardown; not server-gated when injected programmatically.**
+- **File loggers (`-flp`)**: created per request in `src/MSBuild/XMake.cs:3446-3497`, and `EndBuild()` shuts down logging via `ShutdownLoggingService()` before completion at `src/Build/BackEnd/BuildManager/BuildManager.cs:1016-1155, 319`. **Verdict: Safe.**
+- **Central forwarding logger re-registration**: `InitializeNodeLoggers()` re-creates forwarding loggers each request at `src/Build/BackEnd/Components/Logging/LoggingService.cs:1184-1224`. **Verdict: Safe.**
+- **`Console.ForegroundColor` leak**: `BaseConsoleLogger` sets `Console.ForegroundColor` in `SetColor()` and only restores via `ResetColor()` in some paths, not globally per request (`src/Build/Logging/BaseConsoleLogger.cs:304-329, 220-227`). **Verdict: LEAKS** (process-global state can persist across requests).
+- **`BuildEventArgsReader` / `BuildEventSource` listener leakage**: `BinaryLogger.Initialize()` subscribes to `eventSource.AnyEventRaised` at `src/Build/Logging/BinaryLogger/BinaryLogger.cs:447-460`, but `Shutdown()` only removes the project-imports callback and disposes the stream at `src/Build/Logging/BinaryLogger/BinaryLogger.cs:496-537`; **it does NOT unsubscribe `AnyEventRaised`**. **Verdict: LEAKS** (re-registering the same logger on a reused server attaches a new handler each time without detaching the old one — handler list grows unbounded; events double/triple-fire).
+
+| Mitigation | Where | Priority | Notes |
+|---|---|---|---|
+| **LOG-1** | `BinaryLogger.Shutdown()` must unsubscribe `eventSource.AnyEventRaised` (and other handlers) added in `Initialize()` | `src/Build/Logging/BinaryLogger/BinaryLogger.cs:496-537` | **P1** | Without this, programmatically registered binlogs leak handlers across server requests; long-running server accumulates handlers and double-writes events. |
+| **LOG-2** | Reset `Console.ForegroundColor` at the end of each server request (or avoid touching it under server mode) | `src/Build/BackEnd/Node/OutOfProcServerNode.cs` (per-request reset) or `src/Build/Logging/BaseConsoleLogger.cs` (always restore on dispose) | **P2** | Cosmetic but visible: a build that errored leaves the console in red until the next color-aware operation. Surprising for interactive `dotnet build` users. |
+
 ## Recommended Mitigations
 
 ### Tiered roadmap to safe default-on MSBuild server
@@ -662,7 +734,7 @@ Survey of the 10 highest-risk out-of-tree task assemblies bundled with the .NET 
 
 | ID | Mitigation | Where | Notes |
 |---|---|---|---|
-| **M2** | Top-level catch-all in `MSBuildClientApp.Execute` falls back to in-proc on any unexpected exception | `src/MSBuild/MSBuildClientApp.cs:60-86` | Already half-done: existing fallback handles `UnableToConnect`/`ServerBusy`/`UnknownServerState`/`LaunchError`. Defense-in-depth: wrap the entire `MSBuildClient.Execute()` call in `try { ... } catch (Exception) { return MSBuildApp.Execute(commandLineArgs); }`. Cheap insurance against future undiscovered exception classes. |
+| **M2** | Top-level catch-all in `MSBuildClientApp.Execute` falls back to in-proc on any unexpected exception | `src/MSBuild/MSBuildClientApp.cs:60-86` | ✅ **prototyped** | Wraps `MSBuildClient.Execute()` in `try { ... } catch (Exception ex) when (!ExceptionHandling.IsCriticalException(ex)) { CommunicationsUtilities.Trace(...); return MSBuildApp.Execute(commandLineArgs); }`. Telemetry records `ServerFallbackReason = "ClientUnhandledException:" + ex.GetType().Name`. Defense-in-depth against future undiscovered exception classes. |
 | **M5** | Retry on `TimeoutException` with backoff (200-500ms × 3) before giving up | `src/Build/BackEnd/Client/MSBuildClient.cs:599-634` | Currently the retry loop excludes `Timeout` status (line 616). Allowing limited retry would absorb the pipe-recycling gap without falling back to in-proc. |
 | **OOT-3** | Add per-build invalidation hook for `Microsoft.DotNet.SdkResolver` static caches | dotnet/sdk `src/Resolvers/Microsoft.DotNet.SdkResolver/NETCoreSdkResolver.cs:16-21` | New SDK installs invisible to running server; user-visible "stale SDK" symptom. |
 | **G1** | Snapshot/restore env + culture around each request in `OutOfProcServerNode` | `src/Build/BackEnd/Node/OutOfProcServerNode.cs:380-387` | Per Thread G: env vars and culture set per-request but never reverted; leaks influence subsequent request defaults. |

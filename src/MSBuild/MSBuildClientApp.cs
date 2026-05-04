@@ -3,8 +3,11 @@
 
 using System;
 using System.Threading;
+using Microsoft.Build.BackEnd;
 using Microsoft.Build.Experimental;
+using Microsoft.Build.Framework;
 using Microsoft.Build.Framework.Telemetry;
+using Microsoft.Build.Internal;
 using Microsoft.Build.Shared;
 
 #if RUNTIME_TYPE_NETCORE
@@ -57,8 +60,28 @@ namespace Microsoft.Build.CommandLine
         /// or the manner in which it failed.</returns>
         public static MSBuildApp.ExitType Execute(string[] commandLineArgs, string msbuildLocation, CancellationToken cancellationToken)
         {
-            MSBuildClient msbuildClient = new MSBuildClient(commandLineArgs, msbuildLocation);
-            MSBuildClientExitResult exitResult = msbuildClient.Execute(cancellationToken);
+            MSBuildClientExitResult exitResult;
+            try
+            {
+                MSBuildClient msbuildClient = new MSBuildClient(commandLineArgs, msbuildLocation);
+                exitResult = msbuildClient.Execute(cancellationToken);
+            }
+            catch (Exception ex) when (!ExceptionHandling.IsCriticalException(ex))
+            {
+                // Defense-in-depth fallback: any unexpected exception from the client path
+                // (pipe errors, handshake errors, environment problems, etc.) must NOT crash
+                // the build. Log it and fall back to in-proc MSBuild. The most common case
+                // historically was an uncaught TimeoutException from NamedPipeClientStream.Connect
+                // (see investigation.md Thread E) but other exception classes can surface as
+                // server mode evolves; this catch keeps the server an opportunistic optimization
+                // rather than a hard dependency.
+                if (KnownTelemetry.PartialBuildTelemetry != null)
+                {
+                    KnownTelemetry.PartialBuildTelemetry.ServerFallbackReason = "ClientUnhandledException:" + ex.GetType().Name;
+                }
+                CommunicationsUtilities.Trace($"MSBuild server client threw an unexpected exception; falling back to in-proc build: {ex}");
+                return MSBuildApp.Execute(commandLineArgs);
+            }
 
             if (exitResult.MSBuildClientExitType == MSBuildClientExitType.ServerBusy ||
                 exitResult.MSBuildClientExitType == MSBuildClientExitType.UnableToConnect ||
