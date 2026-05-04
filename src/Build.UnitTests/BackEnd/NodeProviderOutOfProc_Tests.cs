@@ -2,7 +2,9 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
+using System.IO.Pipes;
 using Microsoft.Build.BackEnd;
+using Microsoft.Build.Internal;
 using Microsoft.Build.Shared;
 using Shouldly;
 using Xunit;
@@ -145,6 +147,53 @@ namespace Microsoft.Build.UnitTests.BackEnd
             
             result.Length.ShouldBe(1);
             result[0].ShouldBeFalse();
+        }
+
+        /// <summary>
+        /// Regression test for the VMR fsharp build TimeoutException crash (investigation.md Thread E).
+        ///
+        /// Before the fix, TryConnectToPipeStream would let TimeoutException propagate from
+        /// NamedPipeClientStream.Connect when the pipe was unavailable (e.g., server in the
+        /// recycling gap between BuildCompleteReuse cycles). The exception bypassed the
+        /// fallback path in MSBuildClientApp.Execute and crashed the build process.
+        ///
+        /// After the fix, the timeout is caught and reported as HandshakeStatus.Timeout, which
+        /// allows MSBuildClient.TryConnectToServer to set MSBuildClientExitType.UnableToConnect,
+        /// triggering the in-proc fallback in MSBuildClientApp.Execute.
+        /// </summary>
+        [Fact]
+        public void TryConnectToPipeStream_WhenPipeUnavailable_ReturnsTimeoutInsteadOfThrowing()
+        {
+            // Use a pipe name that is virtually guaranteed not to exist.
+            string pipeName = "MSBuild_NonexistentPipe_" + Guid.NewGuid().ToString("N");
+
+            using NamedPipeClientStream nodeStream = new NamedPipeClientStream(
+                ".",
+                pipeName,
+                PipeDirection.InOut,
+#if FEATURE_PIPEOPTIONS_CURRENTUSERONLY
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+#else
+                PipeOptions.Asynchronous);
+#endif
+
+            Handshake handshake = new Handshake(HandshakeOptions.None);
+
+            // Use a tiny timeout to keep the test fast. The exact value doesn't matter; the
+            // pipe will never exist. Pre-fix this call would throw TimeoutException.
+            bool connected = NodeProviderOutOfProcBase.TryConnectToPipeStream(
+                nodeStream,
+                pipeName,
+                handshake,
+                timeout: 100,
+                out HandshakeResult result);
+
+            connected.ShouldBeFalse("Connecting to a nonexistent pipe must not succeed.");
+            result.ShouldNotBeNull();
+            result.Status.ShouldBe(
+                HandshakeStatus.Timeout,
+                "TryConnectToPipeStream must convert NamedPipeClientStream.Connect timeout into HandshakeStatus.Timeout instead of throwing. " +
+                "If this assertion fails, the M1 fix in NodeProviderOutOfProcBase.TryConnectToPipeStream has regressed and the VMR fsharp TimeoutException crash will reappear under MSBuild server load.");
         }
     }
 }

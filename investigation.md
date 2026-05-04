@@ -321,15 +321,390 @@ For reliable repro of the recycling race, add a `Thread.Sleep(2000)` in `OutOfPr
 
 ## Findings
 
-(filled in by sub-agents)
+### Verify W2-1 — PR #13651 / salt-with-temp-path
+
+#### PR #13651 — "Include effective temp directory in node-reuse handshake salt (fixes #13594)"
+
+| Field | Value |
+|---|---|
+| State | **OPEN — DRAFT** (not merged, `mergeable_state: blocked`) |
+| Author | @JanProvaznik |
+| Created | 2026-04-29 |
+| Updated | 2026-05-04 |
+| Reviewer | @rainersigwald |
+| Branch | `JanProvaznik/msbuild:fix/13594-tempdir-handshake-salt` → `dotnet/msbuild:main` |
+| Changed files | **2**: `src/Framework/BackEnd/Handshake.cs` (+28 / -3), `src/Build.UnitTests/BackEnd/HandshakeTempDir_Tests.cs` (new, +161) |
+| Commits | 1 |
+
+**PR diff for `Handshake.cs` (key hunk):**
+```diff
+-        string handshakeSalt = Environment.GetEnvironmentVariable("MSBUILDNODEHANDSHAKESALT") ?? "";
+-        int salt = CommunicationsUtilities.GetHashCode($"{handshakeSalt}{toolsDirectory}");
++        string handshakeSalt = Environment.GetEnvironmentVariable("MSBUILDNODEHANDSHAKESALT") ?? "";
++        bool isTaskHost = IsHandshakeOptionEnabled(nodeType, HandshakeOptions.TaskHost);
++        string tempDirectory = isTaskHost ? string.Empty : Path.GetTempPath();
++        int salt = CommunicationsUtilities.GetHashCode($"{handshakeSalt}{toolsDirectory}{tempDirectory}");
+```
+
+Fix strategy: for **non-TaskHost** handshakes (worker nodes and `ServerNodeHandshake`), mix `Path.GetTempPath()` into the salt. TaskHost paths are intentionally exempted (NET TaskHost uses `NetTaskHostHandshakeVersion=99` to absorb version skew across VS+SDK release trains; CLR2 TaskHost has `NodeReuse` disabled by design).
+
+**New tests** (pinning the contract): `HandshakeTempDir_Tests.cs` — four cases:
+- `Handshake_DifferentTempDirectory_ProducesDifferentKey` — regression test for #13594
+- `Handshake_SameTempDirectory_ProducesSameKey` — sanity, legitimate reuse not broken
+- `ServerNodeHandshake_DifferentTempDirectory_ProducesDifferentHash` — server pipe name isolated per TMPDIR
+- `Handshake_NetTaskHost_DifferentTempDirectory_ProducesSameKey` — pins the TaskHost exemption
+
+#### Issue #13594 — "Nodes are reused between builds with different temp directories"
+
+| Field | Value |
+|---|---|
+| State | **OPEN** |
+| Type | Bug |
+| Filed | 2026-04-22 by @mdiluz |
+| Assignee | @JanProvaznik |
+| Labels | `triaged` |
+
+Two MSBuild invocations with distinct `TMP`/`TEMP`/`TMPDIR` environments bind to each other's reusable worker nodes because the handshake salt is derived only from `MSBUILDNODEHANDSHAKESALT` and `toolsDirectory` — no temp path. Build A finishes and cleans its per-build temp folder; the still-running Build B fails with `MSB5018` or `"The system cannot find the path specified"` because its inherited node still points to A's now-deleted directory. Workarounds: `MSBUILDDISABLENODEREUSE=1` or set `MSBUILDNODEHANDSHAKESALT` differently per build.
+
+#### Conclusion: server-mode handshake protection today
+
+**Neither worker-node nor server-node handshakes are protected against TMPDIR collision today.**
+
+- **Worker-node** (`Handshake.cs:81-83`): salt = `hash(MSBUILDNODEHANDSHAKESALT + toolsDirectory)` — no temp path. Cross-TMPDIR reuse possible (#13594 baseline).
+- **Server-node** (`ServerNodeHandshake` via `Handshake` base): same formula (`toolsDirectory: null` → `MSBuildToolsDirectoryRoot`). Pipe name `MSBuildServer-{ComputeHash()}` therefore identical for any two builds sharing one MSBuild installation regardless of TMPDIR. **This is the structural root cause identified in Thread E** for the VMR fsharp timeout.
+- **Fix status:** PR #13651 (open draft) addresses both. Not yet merged.
+- **TaskHost** paths deliberately unprotected by design (CLR2 TaskHost has NodeReuse off; NET TaskHost cross-build reuse requires `MSBUILDREUSETASKHOSTNODES=1`).
+
+**Memory reconciliation:** The previously stored fact about temp-path being in the worker handshake salt was **stale/prospective** — it described PR #13651's AFTER state, not the merged code. Updated to reflect this.
+
+
+
+### Wave 2 — VMR pipeline & build-server lifecycle
+
+#### 1. How `MSBUILDUSESERVER` reaches VMR builds
+
+`MSBUILDUSESERVER` is **not** set in the top-level VMR pipeline (`eng/pipelines/official.yml`, `unofficial.yml`, or `vmr-build.yml` stage template). It surfaces only inside **Roslyn's per-vertical diagnostic variables file**:
+
+```yaml
+# dotnet/dotnet:src/roslyn/eng/pipelines/variables-build.yml
+- name: DOTNET_CLI_USE_MSBUILD_SERVER
+  value: 1
+- name: MSBUILDUSESERVER
+  value: 1
+```
+
+Those variables are imported by Roslyn's inner pipeline. Any `dotnet build` invocation reads `DOTNET_CLI_USE_MSBUILD_SERVER` from `MSBuildForwardingAppWithoutLogging.cs` (VMR mirror: `src/sdk/src/Cli/Microsoft.DotNet.Cli.Utils/MSBuildForwardingAppWithoutLogging.cs`) and translates it to `MSBUILDUSESERVER=1` for each MSBuild invocation. So when fsharp's build script calls `dotnet build`, server mode is engaged.
+
+#### 2. VMR vertical structure and isolation
+
+**Official full build** (`eng/pipelines/templates/stages/vmr-verticals.yml`): all verticals live in a **single stage** (`VMR_Vertical_Build`) with `dependsOn: []`, all start in parallel. **~30+ distinct vertical jobs** (Windows x64/x86/arm64, Linux x64/arm/arm64, Alpine x64/arm/arm64, macOS x64/arm64, Android arm/arm64/x64/x86, Browser WASM ×2, Wasi, iOS, tvOS, …). Each is a separate Azure Pipelines job (separate agent VM or container).
+
+```
+Stage: VMR_Vertical_Build  (dependsOn: [])
+  Job: Windows_x64          ← separate agent, separate filesystem, separate TMPDIR
+  Job: Windows_x86
+  Job: Linux_x64             ← inside an azurelinuxX64CrossContainer
+  Job: Linux_arm64
+  … ~30 jobs total, all in parallel
+```
+
+Within each vertical job, the VMR MSBuild orchestrator (`repo-projects/Directory.Build.targets`) builds **all repos sequentially** by calling each repo's `build.sh`/`build.cmd` via `<Exec>`, with `BuildInParallel=true` for graph-independent dependencies. **All those `<Exec>` invocations run inside the same agent process / TMPDIR.**
+
+| Boundary | Isolated? | How |
+|---|---|---|
+| Vertical A vs Vertical B | **YES** | Separate Azure Pipelines job / agent VM or container |
+| Repo N vs Repo N+1 within one vertical | **NO** | Same agent, same TMPDIR, same `.dotnet` SDK dir |
+
+**Important correction to Thread E:** The "cross-vertical sharing" hypothesis Thread E raised is actually **within-vertical sharing** — repos sequentially built on one agent share the same MSBuild server. The structural mechanism (identical handshake hash → same pipe name → server reuse) is the same; the scope is one vertical.
+
+#### 3. TMPDIR / TMP per-vertical: NOT set
+
+Searched all of `eng/pipelines/` and `repo-projects/Directory.Build.targets` for `TMPDIR`/`TMP` assignments: **none found**. TMPDIR is whatever the container image / agent provides (typically `/tmp` on Linux). No per-repo or per-vertical override.
+
+`MSBUILDNODEHANDSHAKESALT` is also **not set anywhere** in the VMR pipeline (`grep` of `eng/pipelines/` and `repo-projects/` returns zero matches). The MSBuild server handshake salt reduces to:
+
+```csharp
+// dotnet/dotnet:src/msbuild/src/Framework/BackEnd/Handshake.cs:83
+string handshakeSalt = Environment.GetEnvironmentVariable("MSBUILDNODEHANDSHAKESALT") ?? "";
+int salt = CommunicationsUtilities.GetHashCode($"{handshakeSalt}{toolsDirectory}");
+// → salt = GetHashCode("{toolsDirectory}")
+```
+
+All repos within a vertical share `$(sourcesPath)/.dotnet`, so `toolsDirectory` is identical for every `dotnet build` → identical handshake hash → identical pipe name → **repo N's MSBuild server is visible to repo N+1**. This is exactly the structural root-cause from Thread E, scoped to one vertical.
+
+#### 4. `dotnet build-server shutdown` between repo builds: only `--vbcscompiler`, never `--msbuild`
+
+The VMR orchestrator's `CleanupRepo` target (active when `CleanWhileBuilding=true`, enabled for non-internal builds via `cleanArgument`) calls:
+
+```xml
+<!-- dotnet/dotnet:repo-projects/Directory.Build.targets (~line 476) -->
+<Exec Command="&quot;$(DotNetTool)&quot; build-server shutdown --vbcscompiler"
+      Condition="'$(DotNetBuildSourceOnly)' != 'true'"
+      EnvironmentVariables="NUGET_PACKAGES=$(RepoArtifactsPackageCache)"
+      IgnoreStandardErrorWarningFormat="true"
+      IgnoreExitCode="true" />
+```
+
+This shuts down only the **VB/C# compiler server**; the **MSBuild server is never explicitly shut down between repo builds**. `--msbuild` was intentionally omitted (presumably to preserve warm server state). Note: `DotNetBuildSourceOnly` is `true` for source-build legs, so the shutdown is **completely skipped** for source-build verticals.
+
+#### 5. `dotnet build-server shutdown --msbuild` capability: YES (partial)
+
+The CLI command exists (per `dotnet/dotnet:src/sdk/documentation/manpages/sdk/dotnet-build-server.1`):
+
+```text
+dotnet build-server shutdown [--msbuild] [--razor] [--vbcscompiler]
+  --msbuild  Shuts down the MSBuild build server.
+```
+
+Implementation:
+```
+BuildServerShutdownCommand.Execute()           (src/sdk/…/BuildServer/Shutdown/BuildServerShutdownCommand.cs)
+  → BuildServerProvider.EnumerateBuildServers(MSBuild)   (src/sdk/…/BuildServer/BuildServerProvider.cs:28-31)
+  → MSBuildServer.Shutdown()                  (src/sdk/…/BuildServer/MSBuildServer.cs:17)
+  → BuildManager.DefaultBuildManager.ShutdownAllNodes()
+```
+
+`MSBuildServer.cs`:
+```csharp
+public void Shutdown() => BuildManager.DefaultBuildManager.ShutdownAllNodes();
+```
+
+This sends a `NodeShutdown` packet to all connected worker nodes managed by the local `DefaultBuildManager`. **It does not directly kill the out-of-proc server process itself**; the server exits naturally after `ShutdownAllNodes` drains its queue.
+
+**Gap:** `ProcessId` is hardcoded to 0 in `MSBuildServer` (TODO comment refs `dotnet/cli#9113`), so cross-invocation server shutdown is best-effort. If the server was launched by a prior `dotnet` invocation with a different `BuildManager`, `ShutdownAllNodes()` may be a no-op for that orphan server.
+
+#### 6. Issue #1015 (dotnet/dotnet) — confirmed
+
+@ViktorHofer (closed/duplicate 2025-06-09): *"When enabling parallel build in the VMR the `build-server shutdown` execs could cause issues, hopefully just perf and not stability."* … *"dotnet build-server shutdown will only shutdown the compiler server from its own install"* (toolset-package compiler scenarios). Matches the mechanism above.
+
+#### 7. Issue #5391 (dotnet/dotnet) — separate failure mode, same root
+
+@steveisok (open 2026-03-11): `Ubuntu2404_Ubuntu_BuildTests_x64`: Razor build fails with file-lock race (~47% of PR failures): *"`System.IO.IOException: The process cannot access the file '…src/razor/artifacts/obj/…Microsoft.CodeAnalysis.Razor.Workspaces.dll' because it is being used by another process.`"* Mitigations explicitly include: *"Check if `node_reuse=false` is consistently set (stale MSBuild server processes could hold locks)"*. Live evidence that persistent server processes hold file handles across repo build boundaries within a VMR vertical — same root as the fsharp timeout.
+
+The two failures are distinct symptoms (file-lock vs pipe-connect timeout) but share the underlying cause: **no explicit MSBuild server shutdown between repo builds within a vertical**.
+
+#### 8. Run 20260428.5 — Azure DevOps, not directly accessible
+
+`20260428.5` is an Azure DevOps pipeline run ID (`dotnet-unified-build`, definition 1330, internal project). GitHub's API has no access. The stack trace already in the Background section (`System.TimeoutException` at `NamedPipeClientStream.ConnectInternal → TryConnectToPipeStream`) is the definitive artifact.
+
+#### 9. Recommended VMR-side mitigations
+
+| Mitigation | Location | Priority | Notes |
+|---|---|---|---|
+| **VMR-M1: Set `MSBUILDNODEHANDSHAKESALT=$(Agent.JobName)` per vertical** | `eng/pipelines/templates/jobs/vmr-build.yml` (variables block) or `eng/pipelines/templates/stages/vmr-verticals.yml` | **P0** | Each vertical already has a unique `Agent.JobName` (e.g., `Windows_x64`, `Linux_x64`). Injecting it as `MSBUILDNODEHANDSHAKESALT` gives each vertical a unique handshake hash → unique pipe name. Zero code change; works today. (Note: this isolates verticals from each other when running on a shared agent — but per §2 they're already isolated. The bigger value is **also** setting it per-repo within a vertical: see VMR-M3.) |
+| **VMR-M2: Add `--msbuild` to CleanupRepo shutdown** | `repo-projects/Directory.Build.targets` (`CleanupRepo` target, ~line 476) | **P1** | `build-server shutdown --vbcscompiler` → `build-server shutdown --vbcscompiler --msbuild`. Tears down MSBuild server between repo builds. Add `Condition` guard: only when `MSBUILDUSESERVER=1`. |
+| **VMR-M3: Set per-repo `MSBUILDNODEHANDSHAKESALT`** | `repo-projects/Directory.Build.targets` (`RepoBuild` target `EnvironmentVariables`) | **P0** | `MSBUILDNODEHANDSHAKESALT=$(RepositoryName)` per `<Exec>` invocation. Each repo gets its own server instance — no within-vertical sharing. **This is the most direct fix for the fsharp timeout** because each repo's restore/build/etc invocations remain isolated from prior repos' servers. |
+| **VMR-M4: Set per-repo TMPDIR (after PR #13651 merges)** | `repo-projects/Directory.Build.targets` (`RepoBuild` target `EnvironmentVariables`) | **P2** | Once PR #13651 is merged, `TMPDIR=$(Agent.TempDirectory)/$(RepositoryName)` automatically isolates servers via the salt change. More principled than VMR-M3 but requires the upstream MSBuild change first. |
+| **VMR-M5: Catch `TimeoutException` in `TryConnectToPipeStream`** | dotnet/msbuild `src/Build/BackEnd/Components/Communications/NodeProviderOutOfProcBase.cs:804` | **P0** | Thread E M1 — the actual crash fix. Not VMR-specific but must ship before broad VMR enablement. **Already prototyped on `prototype/msbuild-server-default-on-mitigations` branch.** |
+
+#### Summary
+
+The VMR's `VMR_Vertical_Build` stage runs ~30 parallel jobs (one per target OS/arch), each fully isolated at the agent/container level. Within each vertical, ~25 repos are built sequentially by the MSBuild orchestrator on the same agent. `MSBUILDNODEHANDSHAKESALT` is never set → all repos within a vertical share the same MSBuild server pipe name. The `CleanupRepo` target calls `dotnet build-server shutdown --vbcscompiler` but **not** `--msbuild`. The capability to shut it down exists but server PID discovery is broken (hardcoded `ProcessId = 0`). **The highest-leverage immediate VMR fix is setting `MSBUILDNODEHANDSHAKESALT=$(RepositoryName)` per repo `<Exec>` invocation in `Directory.Build.targets`** — zero MSBuild code change, isolates each repo's server.
+
+
+### Wave 2 — Out-of-tree task statics audit
+
+Survey of the 10 highest-risk out-of-tree task assemblies bundled with the .NET SDK. Thread D previously covered only `src/Tasks/**` and `src/Shared/**` in dotnet/msbuild; this wave extends to NuGet, dotnet/sdk containers, Roslyn, FSharp.Build, sourcelink, vstest, and the SDK resolver.
+
+#### Evidence table
+
+| Task assembly | Task class | Repo | Static state evidence | Risk for server reuse | Risk for `/mt` | TaskHost today? | Mitigation |
+|---|---|---|---|---|---|---|---|
+| `NuGet.Build.Tasks` | `GetRestoreSettingsTask` | [NuGet/NuGet.Client `GetRestoreSettingsTask.cs:133`](https://github.com/NuGet/NuGet.Client/blob/681b9f2e887c91492eb1510ed027d7be93443441/src/NuGet.Core/NuGet.Build.Tasks/GetRestoreSettingsTask.cs#L133) | `private static Lazy<IMachineWideSettings> _machineWideSettings` — non-`readonly` static, materialized on first call, never reset between builds | **HIGH** — stale machine-wide NuGet.config (new sources, credential changes invisible after first restore) | **MED** — shared instance; stale reads if two restores race on same server process | No TaskHost; in-proc | Replace `static Lazy` with per-invocation construction, or add to `s_knownProblematicTaskNames` allow-list in PR #13660 |
+| `NuGet.Build.Tasks` | `RestoreTask` | Thread C / [PR #13660](https://github.com/dotnet/msbuild/pull/13660) | `PluginManager` singleton (NuGet.Protocol) + `NuGet.Common.Migrations.MigrationRunner.Run()` static state — see Thread C for full detail | **HIGH** — already tracked in #13315 | **HIGH** — `PluginManager` races across parallel restores | Sidecar TaskHost today; PR #13660 routes to transient TaskHost | Merge PR #13660 |
+| `Microsoft.NET.Build.Containers.Tasks` | `CreateNewImage` | [dotnet/sdk `CreateNewImage.cs:48-60`](https://github.com/dotnet/sdk/blob/0b462a74c4be9cd621da9ad5f38f301d2bee5286/src/Containers/Microsoft.NET.Build.Containers/Tasks/CreateNewImage.cs#L48) | `Environment.SetEnvironmentVariable(HostObjectUser/HostObjectPass)` — process-wide env mutation to pass VS HostObject credentials; cleared in `finally` but not thread-isolated | **MED** — creds survive into next build if `finally` is skipped by crash | **CRITICAL** — two concurrent `CreateNewImage` tasks in a solution can read/overwrite each other's credentials; no per-thread env isolation | No TaskHost; in-proc async | Use thread-local or parameter-passed credential context instead of env vars; or force transient TaskHost |
+| `Microsoft.NET.Build.Containers` | `DefaultRegistryAPI` | [dotnet/sdk `DefaultRegistryAPI.cs:28`](https://github.com/dotnet/sdk/blob/0b462a74c4be9cd621da9ad5f38f301d2bee5286/src/Containers/Microsoft.NET.Build.Containers/Registry/DefaultRegistryAPI.cs#L28) | `private static TimeSpan LongRequestTimeout = TimeSpan.FromMinutes(30)` — non-`readonly` static mutable field | **LOW** — value unlikely to be externally mutated in practice | **LOW** — non-`readonly`; torn write possible on 32-bit if mutated concurrently | No TaskHost | Add `readonly`; no functional change |
+| `Microsoft.DotNet.SdkResolver` | `NETCoreSdkResolver` | [dotnet/sdk `NETCoreSdkResolver.cs:16-21`](https://github.com/dotnet/sdk/blob/0b462a74c4be9cd621da9ad5f38f301d2bee5286/src/Resolvers/Microsoft.DotNet.SdkResolver/NETCoreSdkResolver.cs#L16) | `private static readonly ConcurrentDictionary<string, Version> s_minimumMSBuildVersions` + `s_compatibleSdks` — explicitly designed for IDE multi-evaluation reuse; persists SDK resolution result across builds | **HIGH** — new .NET SDK installed while server is running won't be discovered; stale SDK selection until server restart | **MED** — `ConcurrentDictionary` is thread-safe; but stale values returned under concurrent lookups | SDK resolver, not a task; loaded once per MSBuild process | Add TTL/FS-watcher invalidation, or clear on `BeginBuild`; register with `OutOfProcServerNode` reset sequence |
+| `Microsoft.Build.Tasks.Git` | `RepositoryTask` (sourcelink) | [dotnet/sourcelink `RepositoryTask.cs:84-114`](https://github.com/dotnet/sourcelink/blob/82c6767d2da34db2f64eb14d9062e7b2be4c6018/src/Microsoft.Build.Tasks.Git/RepositoryTask.cs#L84) | `BuildEngine4.RegisterTaskObject(…, RegisteredTaskObjectLifetime.Build)` — correctly lifetime-managed per-build git repo cache | **SAFE** — cache auto-evicted by MSBuild at `EndBuild` | **SAFE** — `Build` lifetime is correct isolation scope | No TaskHost; in-proc | No action needed — gold-standard pattern |
+| `Microsoft.Build.Tasks.Git` | `AssemblyResolver` (NET461) | [dotnet/sourcelink `AssemblyResolver.cs:13-17`](https://github.com/dotnet/sourcelink/blob/82c6767d2da34db2f64eb14d9062e7b2be4c6018/src/Microsoft.Build.Tasks.Git/AssemblyResolver.cs#L13) | `static readonly List<string> s_loaderLog` unbounded growth; `AppDomain.AssemblyResolve += AssemblyResolve` called from static ctor — duplicate handlers accumulate under server reuse with NET461 | **MED (NET461 only)** — memory growth; duplicate handlers fire per resolve event | **MED** — log writes take a lock; no data corruption but noisy | No TaskHost; NET461 path only | Guard `Initialize()` with `Interlocked.CompareExchange` flag; clear log at `BuildCompleteReuse` boundary |
+| `Microsoft.CodeAnalysis.BuildTasks` | `ManagedCompiler` (`Csc`/`Vbc`) | [dotnet/roslyn `CanonicalError.cs:41-80`](https://github.com/dotnet/roslyn/blob/404bc8cca45ed023d02a2d8b1620e9af2616431b/src/Compilers/Core/MSBuildTask/CanonicalError.cs#L41) | 6 `private static readonly Regex` fields; task body delegates to out-of-proc `VBCSCompiler.exe` | **LOW** — `Regex` is immutable and thread-safe; compilation is out-of-proc | **LOW** — no shared mutable state; VBCSCompiler is independent of MSBuild server | Routes to `VBCSCompiler.exe` (separate process) | No action needed; verify `VBCSCompiler` lifecycle independent of MSBuild server |
+| `FSharp.Build` | `Fsc` / `Fsi` | [dotnet/fsharp `Fsc.fs`](https://github.com/dotnet/fsharp/blob/c91ff9c0f7008ef351fae731ad718143d6ef9374/src/FSharp.Build/Fsc.fs#L18) | All state is F# `let mutable` inside class body (instance fields, not module-level statics); no module-level `mutable` found | **LOW** — no static mutable state | **LOW** — each task instance has its own state; compilation via external `fsc.exe` process | `ToolTask` spawns external `fsc.exe`/`fsi.exe` | No action needed; validate `FSharpEnvironment` module has no `let mutable` |
+| `Microsoft.NET.Build.Tasks` | `ProcessFrameworkReferences` | [dotnet/sdk `ProcessFrameworkReferences.cs`](https://github.com/dotnet/sdk/blob/0b462a74c4be9cd621da9ad5f38f301d2bee5286/src/Tasks/Microsoft.NET.Build.Tasks/ProcessFrameworkReferences.cs) | No class-level static mutable fields in visible code; ConcurrentDictionary usage is method-local; `[MSBuildMultiThreadableTask]` annotation present | **LOW** — no persistent static state in task class | **LOW** — implements `IMultiThreadableTask`; method-local dicts only | No TaskHost; in-proc | No action needed |
+
+#### Top 5 next blockers (ranked by likelihood of breakage at default-on time)
+
+1. **`CreateNewImage` credential env-var race (`/mt` mode)** — `Environment.SetEnvironmentVariable(HostObjectUser/HostObjectPass)` is a process-wide, non-thread-safe credential injection. Any solution containing container-publish projects will silently leak or corrupt credentials under `/mt`. This is the **only security-class bug** in this wave — data from one project's build is observable by another. Must fix before `/mt` is default-on for any workflow with container publishing. Action: replace env-var credential passing with a thread-local or task-parameter-based mechanism, or route `CreateNewImage` through a transient TaskHost (same pattern as PR #13660). **Evidence:** [`CreateNewImage.cs:48-60`](https://github.com/dotnet/sdk/blob/0b462a74c4be9cd621da9ad5f38f301d2bee5286/src/Containers/Microsoft.NET.Build.Containers/Tasks/CreateNewImage.cs#L48).
+
+2. **`GetRestoreSettingsTask._machineWideSettings` static `Lazy` (server reuse)** — `XPlatMachineWideSetting` reads global `nuget.config` once and never re-reads it. Machine-wide config changes (new package source, credential rotation, proxy change) are invisible to all subsequent builds in the same server session. Affects every `PackageReference`-style project. Action: make `_machineWideSettings` non-static and construct per invocation, or add `GetRestoreSettingsTask` to the PR #13660 allow-list. **Evidence:** [`GetRestoreSettingsTask.cs:133`](https://github.com/NuGet/NuGet.Client/blob/681b9f2e887c91492eb1510ed027d7be93443441/src/NuGet.Core/NuGet.Build.Tasks/GetRestoreSettingsTask.cs#L133).
+
+3. **`NETCoreSdkResolver` SDK-resolution caches (server reuse)** — `s_compatibleSdks` and `s_minimumMSBuildVersions` are explicitly designed for IDE performance ("static to benefit multiple IDE evaluations") and never invalidated. A user who installs a new .NET SDK patch without restarting the MSBuild server silently continues building against the old SDK. The symptom is "new SDK ignored" — hard to diagnose. Action: add a file-system-change observer on the .NET install directory, or hook into `OutOfProcServerNode`'s `BeginBuild` to clear these caches. **Evidence:** [`NETCoreSdkResolver.cs:16-21`](https://github.com/dotnet/sdk/blob/0b462a74c4be9cd621da9ad5f38f301d2bee5286/src/Resolvers/Microsoft.DotNet.SdkResolver/NETCoreSdkResolver.cs#L16).
+
+4. **`RestoreTask`/`PluginManager` singleton (server + `/mt`) — unmerged fix** — Already the tracked blocker in #13315; PR #13660 is the fix. It remains blocked only on a minor code-style review comment (use `FrozenDictionary` / `const string`). Until merged, NuGet auth and plugin state leak between builds under server mode. This is the most urgent unmerged item — higher severity than items 1–3 in theory but actionable purely by merging one PR. **Evidence:** PR #13660, `AssemblyTaskFactory.cs:443-469`.
+
+5. **`sourcelink AssemblyResolver` event accumulation (NET461, server reuse)** — `AppDomain.CurrentDomain.AssemblyResolve` receives a new handler per server-reuse cycle on .NET Framework. Over a long IDE session, this causes quadratic performance and memory growth for every assembly-resolve event. Lower priority (NET461 only, IDE-scenario only) but can cause mysterious assembly-binding behavior. Action: guard `Initialize()` with `Interlocked.CompareExchange`; clear `s_loaderLog` at `BuildCompleteReuse` boundary. **Evidence:** [`AssemblyResolver.cs:13-17`](https://github.com/dotnet/sourcelink/blob/82c6767d2da34db2f64eb14d9062e7b2be4c6018/src/Microsoft.Build.Tasks.Git/AssemblyResolver.cs#L13).
+
+### Wave 2 — Project-type test matrix for default-on validation
+
+> **Scope:** Before flipping `MSBUILDUSESERVER=1` (or `DOTNET_CLI_USE_MSBUILD_SERVER=1`) as the SDK default, every row below should be exercised with the server running. The primary risk class for each row is **server-reuse state leakage**: statics, caches, file locks, ALC-resident assemblies, console/env mutations, and NuGet auth plugins that survive `BuildCompleteReuse` when `OutOfProcServerNode` does not reset them. See Thread D/G for the catalogue of known uncleared state.
+
+---
+
+#### A. Project SDK Families — Representative sample & risk notes
+
+| # | SDK / Project type | Representative public sample | Why it is interesting / risk areas | Recommended verification commands |
+|---|---|---|---|---|
+| 1 | `Microsoft.NET.Sdk` — class library | `dotnet/samples` → `samples/csharp/getting-started/core-console` | Baseline; exercises `CoreCompile`, `ResolveAssemblyReferences`, incremental build. Catch-all for basic server reuse. | `dotnet build` × 3 (cold→warm→change) |
+| 2 | `Microsoft.NET.Sdk` — console exe | `dotnet/runtime` → `src/coreclr/tools/aot/ILLink` | Standard entry-point; exercises `GenerateApplicationManifest`, resource embedding, platform RID resolution. | `dotnet build; dotnet build --no-restore` |
+| 3 | `Microsoft.NET.Sdk` — ASP.NET Core Web API | `dotnet/aspnetcore` → `src/ProjectTemplates/Web.ProjectTemplates` | Razor SDK layered on top; `RazorGenerateComponentDeclaration`, Roslyn compiler tasks; large incremental graph. | `dotnet build -c Release; dotnet publish` |
+| 4 | `Microsoft.NET.Sdk.Web` — Razor Pages / MVC | `dotnet/aspnetcore` → `src/Mvc/test/WebSites/BasicWebSite` | **Razor file-lock race** (VMR issue #5391): server holds handles to `.cshtml` generated files across builds. Critical for file-lock class bugs. | `dotnet build; touch Pages/Index.cshtml; dotnet build` |
+| 5 | `Microsoft.NET.Sdk.BlazorWebAssembly` | `dotnet/aspnetcore` → `src/Components/WebAssembly/testassets/StandaloneApp` | IL linker/trimmer (`ILLink.Tasks`) invoked; Blazor-specific targets produce `.wasm`+`.js` outputs; long build graph with interop generation. | `dotnet build -c Release /p:WasmBuildNative=false` |
+| 6 | `Microsoft.NET.Sdk.Desktop` — WPF | `dotnet/wpf` → `src/Microsoft.DotNet.Wpf/tests/IntegrationTests` | `MarkupCompilePass1/Pass2` tasks run in **per-platform ALC**; static type-cache in `XamlParser`; file-lock on `.baml`. High risk: two-phase Markup compilation uses `DesignTimeBuild` codepath and file-system temp dirs. | `dotnet build; dotnet build /p:DesignTimeBuild=true` |
+| 7 | `Microsoft.NET.Sdk.Desktop` — WinForms | `dotnet/winforms` → `src/System.Windows.Forms/tests/IntegrationTests` | `ResGen` task for `.resx` resources; designer code-gen; single-file packaging; same ALC-isolation risks as WPF. | `dotnet build; dotnet publish /p:PublishSingleFile=true` |
+| 8 | `Microsoft.NET.Sdk.WindowsDesktop` (legacy) | `dotnet/winforms` → `tests/System.Windows.Forms.Design.Tests` | Still used by migration projects; exercises legacy-compatibility targets and multi-targeting `net48`+`net9.0-windows`. | `dotnet build -f net9.0-windows; dotnet build -f net48` |
+| 9 | `Microsoft.Build.Sdk.Solution` (`.slnx` / `.sln`) | `dotnet/msbuild` → root `MSBuild.slnx` | Multi-project orchestration graph; `SolutionProjectDependencyRelationship` evaluation; all sub-project builds share one server. Exercises cross-project result caching and `BuildManager.DefaultBuildManager` singleton reuse (Thread G item 4). | `dotnet build MSBuild.slnx; dotnet build MSBuild.slnx --no-restore` |
+| 10 | `Microsoft.NET.Sdk.IL` (ILAsm / ILASM) | `dotnet/runtime` → `src/coreclr/ilasm` or `src/tests/ilasm` | Uses `ILAsmToolTask`; niche but present in runtime/coreclr VMR builds — directly in the tree that triggered the fsharp timeout. | `dotnet msbuild src/tests/ilasm/testproject.ilproj` |
+| 11 | C++ / Native (`Microsoft.Cpp.targets`) | `dotnet/runtime` → `src/coreclr/hosts/corerun` | `CL`, `Link` tasks have **process-lifetime DLL state** (`cl.exe` is invoked via `ToolTask` with retry); vcpkg integration can mutate env vars. Risk: `cl.exe`-based tasks that rely on `LIB`/`INCLUDE` env vars being stable. | `msbuild corerun.vcxproj /p:Configuration=Release` (raw `MSBuild.exe`) |
+| 12 | F# (`Microsoft.NET.Sdk` + `FSharp.NET.Sdk`) | `dotnet/fsharp` → `src/fsharp/FSharp.Core` | **Direct trigger** of the VMR timeout (investigation.md Thread E). `FSharp.Build.Fsc` task has static `Compiler.Create()` singleton + static `FSharpChecker` that assumes one invocation per process. Also: many short consecutive `dotnet build` invocations → high probability of hitting the pipe-recycling race. | `MSBUILDUSESERVER=1 dotnet build FSharp.Core.fsproj` × 5 rapid-fire |
+| 13 | Aspire AppHost | `dotnet/aspire` → `playground/` | `Aspire.Hosting.Sdk` injects `CreateManifestAsync` target + container-image resolution at build time; heavy use of `IBuildEngine9` task APIs; resource-model evaluation is side-effecting. New, fast-evolving SDK — high unknowns for server reuse. | `dotnet build --environment Development; dotnet run --project AppHost` |
+| 14 | Container publish (`Microsoft.NET.Build.Containers`) | `dotnet/sdk` → `src/Containers` | `CreateNewImage` task pushes layers to registry; may hold static `HttpClient` singletons + auth token caches. File-lock on `.tar` layer blobs during publish. | `dotnet publish /p:PublishProfile=DefaultContainer /p:ContainerImageTag=test` |
+| 15 | AOT publish (`PublishAot=true`) | `dotnet/runtime` → `src/coreclr/nativeaot/samples` | Invokes ILC (`ilc.exe`) via `ToolTask`; large dependency graph; long tail of linker/analyzer targets. `ILLink` + `IlcCompile` use heavy static type-registries. Risk: second AOT publish in same server sees stale trimmed-assembly cache. | `dotnet publish -r linux-x64 /p:PublishAot=true` × 2 |
+| 16 | Trim publish (`PublishTrimmed=true`) | `dotnet/runtime` → `src/coreclr/tools/aot/ILLink` | `ILLink.Tasks.LinkTask` has known static `TypeMapGenerator` cache; trim warnings assume first-run root-set — can produce wrong analysis on server reuse if trim roots differ between builds. | `dotnet publish /p:PublishTrimmed=true /p:TrimmerRootDescriptor=...` |
+| 17 | ReadyToRun (`PublishReadyToRun=true`) | `dotnet/runtime` → `src/coreclr/crossgen2` | Invokes `crossgen2` via `ToolTask` with subprocess; risk is mainly env-var mutation and temp-file leakage (`.r2r`  outputs in `obj/`). | `dotnet publish /p:PublishReadyToRun=true -r win-x64` |
+| 18 | WebAssembly browser-wasm | `dotnet/runtime` → `src/mono/wasm/testassets` | `WasmBuildApp`, `WasmNativeStrip`, emscripten toolchain tasks; EMSDK env vars mutated at task startup, never restored — classic server-reuse env-mutation risk. | `dotnet build /p:TargetFramework=net10.0-browser /p:WasmBuildNative=true` |
+| 19 | Mobile — Android (`net*-android`) | `dotnet/maui` → `src/Controls/samples/Controls.Sample.Droid` | `Xamarin.Android.Build.Tasks` (now MAUI SDK Tasks): static `JavaEnvironment` singleton, `jarsigner` invocation, `aapt2` daemon — all process-global. `XA` tasks historically the hardest for server-reuse. | `dotnet build -f net10.0-android /p:AndroidBuildApplicationPackage=true` |
+| 20 | Mobile — iOS (`net*-ios`) | `dotnet/maui` → `src/Controls/samples/Controls.Sample.iOS` | `Xamarin.iOS.Tasks`/`Microsoft.iOS.Sdk`: `mtouch` invocation, code-signing tasks read from Keychain (process-global), `IBTool` Xcode task. Keychain API is not re-entrant. | `dotnet build -f net10.0-ios /p:RuntimeIdentifier=ios-arm64` |
+| 21 | Reference Assembly project | `dotnet/runtime` → `src/libraries/System.Runtime/ref` | `ProduceReferenceAssembly=true` + `GenerateReferenceAssemblySource`; only public surface emitted. Exercises separate compilation pipeline. Risk: deterministic-compilation hash collisions between reused builds on same server. | `dotnet build /p:ProduceReferenceAssembly=true` × 2 with source change |
+| 22 | Globalization-invariant trim | `dotnet/runtime` → `src/libraries/System.Globalization.Calendars` | `/p:InvariantGlobalization=true` + trim; `ILLink` roots differ from non-invariant builds. Tests that culture/locale state set by prior build does not affect subsequent one. | `dotnet publish /p:InvariantGlobalization=true /p:PublishTrimmed=true` |
+| 23 | Source-Link enabled project | `dotnet/sourcelink` → samples OR `dotnet/runtime` (has `<SourceLink>` enabled) | `SourceLink.Build.Tasks` injects a static `GitRepository` object at pack time; `git` subprocess. Risk: stale source-link mapping when branch/commit changes between builds on a warm server. | `dotnet pack /p:SourceRevisionId=$(git rev-parse HEAD)` |
+| 24 | Snupkg + symbol package | `dotnet/nuget-client` or any SDK library with `<IncludeSymbols>true` + `<SymbolPackageFormat>snupkg` | `CreateNuGetPackageTask` writes `.snupkg` and indexes PDB paths; static `NuGetPackageResolver` in SDK tasks. Symbol-path embedding is absolute — risk of wrong paths when CWD is not reset between server reuses. | `dotnet pack /p:IncludeSymbols=true /p:SymbolPackageFormat=snupkg` |
+| 25 | MAUI multi-target (`net*-android` + `net*-ios` + `net*-maccatalyst`) | `dotnet/maui` → `src/Controls/samples/Controls.Sample.Droid` | Multi-TFM graph in one solution; all mobile risks (rows 19-20) plus TFM-selection property evaluation. `_TargetFramework` global property pollution across multi-TFM builds is a known server-reuse trap. | `dotnet build /p:TargetFrameworks=net10.0-android%3Bnet10.0-ios` |
+
+---
+
+#### B. Build Operations Matrix
+
+| Operation | Risk notes | Verification command template |
+|---|---|---|
+| `restore` | **Highest risk** — `NuGet.Build.Tasks.RestoreTask` static singletons (Thread C / PR #13660). `PluginManager` + `EnvironmentVariableWrapper` survive between builds. Also: `HttpClient` auth-plugin token caches. | `dotnet restore` × 3 back-to-back with different credential contexts |
+| `build` | Incremental build correctness: server may cache `FileExistenceCache` / `FileMatcher` state from prior build; timestamp-based up-to-date checks may be stale. | `dotnet build; touch src/Foo.cs; dotnet build` (must trigger recompile) |
+| `publish` | Container/AOT/Trim targets write to `publish/` dir; stale leftover files from prior publish in same server. | `dotnet publish /p:PublishDir=/tmp/p1; dotnet publish /p:PublishDir=/tmp/p2` |
+| `pack` | `CreateNuGetPackageTask` — CWD-sensitive path embedding; `.nupkg` output hash must differ when version changes. | `dotnet pack /p:Version=1.0.0; dotnet pack /p:Version=1.0.1` |
+| `test` | `VSTest.Console` or `dotnet-test` hosting: test runner launched via `ToolTask`; test logger static singletons; `TRX` file paths. | `dotnet test --logger trx --results-directory /tmp/r1; ...r2` |
+| `run` | `MSBuild.exe` is not in the loop for `dotnet run` hot path (CLI bypasses it), but `dotnet run --project` still invokes MSBuild for build step. Check that `OutputType=Exe` discovery survives server reuse. | `dotnet run --project ConsoleApp.csproj` |
+| `format` | `dotnet format` invokes Roslyn workspace via MSBuild evaluation; `ProjectCollection` singleton. Not server-mode today but relevant for `-graph` builds that include format. | `dotnet format --verify-no-changes` |
+| `clean` | `Clean` target deletes outputs; if server caches file-existence state, subsequent `build` may have stale up-to-date checks. | `dotnet build; dotnet clean; dotnet build` (must be full rebuild) |
+| MSBuild target chains | `BeforeBuild` / `AfterBuild` / `BeforeCompile` hooks in `.targets` files; custom target ordering. | `dotnet msbuild /t:Pack;Publish /p:...` |
+
+---
+
+#### C. Invocation Patterns Matrix
+
+| Pattern | Risk notes | Command |
+|---|---|---|
+| `dotnet build` (CLI) | Standard path; routes through `MSBuildForwardingApp` → `MSBuildClientApp`; most users affected. | `dotnet build project.csproj` |
+| `dotnet msbuild` | Direct forwarding to MSBuild — same server path if env var set. Verify env-var forwarding is consistent. | `dotnet msbuild project.csproj /t:Build` |
+| Raw `MSBuild.exe` (full framework) | Server is NOT used by `MSBuild.exe` on full framework — verify that `CanRunServerBasedOnCommandLineSwitches` correctly blocks it or that `MSBUILDUSESERVER=1` is a no-op for full framework. | `msbuild.exe project.csproj /p:TargetFramework=net48` |
+| `dotnet build -graph` | `/graph` mode forces static graph evaluation via `GraphBuildSubmission`; entirely different scheduler path. Server must survive `StaticGraphBuildRequest` + `GraphBuildResult` round-trip. | `dotnet build --graph project.csproj` |
+| `dotnet build /mt` | In-proc thread workers; combined with server means concurrent builds sharing one process. Highest risk: static caches hit by multiple threads simultaneously. See Thread F. | `dotnet build /p:MultiThreaded=true project.csproj` |
+| `dotnet build --no-restore` | Skips `Restore` target — avoids RestoreTask risk (Thread C) but stresses incremental-build-state staleness. | `dotnet build --no-restore` |
+| `dotnet test` | `VSTest.Console` subprocess + MSBuild test integration; `TestAdapterPath` prop. | `dotnet test --no-build` |
+| IDE-style (`/p:DesignTimeBuild=true`) | Design-time builds are short, frequent, use fast-eval path; heavy use of `GetTargetFrameworks`, `ResolvePackageDependencies`, `CompileDesignTime`. Server is not used by VS directly today, but SDK-style DTB via `dotnet msbuild` is plausible. File-lock risk: Razor `.cshtml` generated source. | `dotnet msbuild /p:DesignTimeBuild=true /t:CollectPackageReferences` |
+| Response file (`@file`) | `MSBuildClientApp` passes args through to server; verify `@file` paths are resolved relative to client CWD not server CWD. | `dotnet msbuild @response.rsp` |
+| Parallel solution (`/m:4`) | Multiple worker nodes plus server node; stress-tests `BuildManager` result-caching across nodes and server identity. | `dotnet build MySolution.slnx /m:4` |
+
+---
+
+#### D. Custom-Task Families — Deliberately Test
+
+| # | Custom-task family | Sample project / trigger | Why it is interesting | Verification commands |
+|---|---|---|---|---|
+| D1 | `BeforeBuild` / `AfterBuild` inline tasks | Any `.csproj` with `<Target Name="BeforeBuild">` | Inline tasks compiled by `RoslynCodeTaskFactory` — `AssemblyLoadContext` for the compiled DLL is cached in the server process; code changes between builds may not be picked up. | Edit inline task body; `dotnet build` × 2 — verify new code runs |
+| D2 | `AssemblyInfoTask` (legacy Reflection.Emit) | Projects using `Microsoft.NET.Sdk` `GenerateAssemblyInfo=true` or old `MSBuildVersioning` package | `AssemblyInfo` generation via `WriteCodeFragment` task; version-stamping properties must not bleed across builds. | `dotnet build /p:Version=1.0.0; dotnet build /p:Version=2.0.0` — inspect `.AssemblyInfo.cs` |
+| D3 | GitVersion / `Nerdbank.GitVersioning` | `dotnet/arcade`-based repos with `version.json` | Runs `git` subprocess; caches parsed `version.json` tree object in static fields. `GitVersionTask` is a known static-cache holder — breaks when branch/tag changes between builds. | `git tag v1.0.0; dotnet build; git tag -d v1.0.0; dotnet build` |
+| D4 | T4 text templates (`TextTemplatingFileGenerator`) | Any project with `.tt` files (e.g., `dotnet/efcore` → `src/EFCore/Infrastructure`) | T4 host is loaded into ALC; static `CompilationUnit` cache may persist. `TransformAll` target re-runs on change — server must re-evaluate. | Modify `.tt` file; `dotnet build` × 2 — verify `.cs` output updated |
+| D5 | Incremental Source Generators (`ISourceGenerator`) | `dotnet/roslyn-analyzers` or `dotnet/runtime` projects with `[Generator]` | Roslyn SG runs inside `CoreCompile`; SG assembly is loaded into the compiler's ALC inside the server process. Modifying the SG package between builds (e.g., upgrading) may not be reflected without ALC isolation. | Build with SG v1; upgrade SG NuGet package; `dotnet build` — verify new output |
+| D6 | NuGet auth plugins (`ICredentialProvider`) | Any project that does authenticated NuGet restore (Azure Artifacts, GitHub Packages) | `NuGet.Protocol` `PluginManager` is the static singleton in Thread C. Credential tokens may expire mid-session; second restore may use stale token from first build's plugin session. | `dotnet restore` with a short-lived PAT; invalidate token; `dotnet restore` again |
+| D7 | `SignTool` / `Microsoft.DotNet.SignTool` | `dotnet/arcade` repos using `Sign.proj` | Sign tool invokes `signtool.exe` via `ToolTask`; certificate store state is process-global on Windows; static `CertificateStore` handle. | `dotnet msbuild Sign.proj /t:Sign` × 2 — verify idempotency |
+
+---
+
+#### Known Orchestrators / First-Party Dogfood Candidates
+
+| Repo | Server mode in CI today | Why interesting | Notes |
+|---|---|---|---|
+| `dotnet/runtime` | ❌ Not enabled by default | Largest VMR vertical; C++, IL, managed, AOT, WASM sub-builds; exercises every SDK family in rows 1-25. Most complex dependency graph in the ecosystem. | Target for issue #13604 Phase 1 dogfood. AOT+IL+WASM sub-graphs will stress static caches hardest. |
+| `dotnet/aspnetcore` | ❌ Not enabled by default | Razor compilation + Blazor + SignalR; file-lock race class already manifested (VMR issue #5391). | High priority dogfood candidate — Razor file-lock is a live production failure class. |
+| `dotnet/sdk` | ❌ Not enabled | Builds itself via bootstrapped MSBuild; exercises `Microsoft.NET.Build.Containers`, `dotnet-test`, and `dotnet-format` targets. | `dotnet/sdk` CI is the natural place to flip `DOTNET_CLI_USE_MSBUILD_SERVER=1` per issue #11358. |
+| `dotnet/roslyn` | ❌ Not enabled | Compiles with the compiler it is building (bootstrap); heavy Roslyn SG usage; many `Csc`/`Vbc` task invocations per build. `Microsoft.Build.Locator`-based tooling in analyzers could conflict with server's ALC. | Confirms SG ALC isolation (row D5). |
+| `dotnet/efcore` | ❌ Not enabled | T4 templates (row D4), NuGet auth for package push, `SqlServer`/`Sqlite` native libraries loaded via P/Invoke in build tasks. | T4 static cache + native P/Invoke DLL-loaded state. |
+| `dotnet/maui` | ❌ Not enabled | Android + iOS + Mac + WinUI multi-target; `Xamarin.Android.Build.Tasks` static singletons; code-signing Keychain. Highest-risk single dogfood candidate for mobile rows 19-20. | Do last — fix all other blockers first; mobile task failures are the hardest to diagnose. |
+| `dotnet/fsharp` | ❌ **Currently broken with server** | **Direct trigger** of this investigation. `FSharp.Build.Fsc` static `FSharpChecker`; pipe-recycling race at high invocation frequency. | Must be green before any other dogfood. Milestone: M1+M2 fixes from Thread E (#13604 Phase 1). |
+| `dotnet/msbuild` (this repo) | ❌ Not enabled in main CI | Builds MSBuild with itself; exercises bootstrap flow; simple graph but validates server core. | Lowest-risk first dogfood — should be enabled in PR CI immediately after M1/M2 fixes merge. |
+
+---
+
+> **Legend:** Rows are roughly priority-ordered within each section. "❌ Not enabled" means `MSBUILDUSESERVER` / `DOTNET_CLI_USE_MSBUILD_SERVER` is not set in published CI pipelines as of investigation date (2026-04). Dogfood should proceed in order: `dotnet/msbuild` → `dotnet/fsharp` (once fixed) → `dotnet/aspnetcore` → `dotnet/sdk` → `dotnet/runtime` → `dotnet/roslyn` → `dotnet/efcore` → `dotnet/maui`.
 
 ## Recommended Mitigations
 
-(filled in after findings)
+### Tiered roadmap to safe default-on MSBuild server
+
+#### Tier 0 — Immediate, must ship before any broader rollout (P0)
+
+| ID | Mitigation | Where | Status | Notes |
+|---|---|---|---|---|
+| **M1** | Catch `TimeoutException` in `TryConnectToPipeStream` | `src/Build/BackEnd/Components/Communications/NodeProviderOutOfProcBase.cs:802-822` | ✅ **prototyped on `prototype/msbuild-server-default-on-mitigations`** | Converts uncaught crash into graceful in-proc fallback. Single most-important fix; addresses the actual VMR fsharp build crash directly. Test: `NodeProviderOutOfProc_Tests.TryConnectToPipeStream_WhenPipeUnavailable_ReturnsTimeoutInsteadOfThrowing` (passing). |
+| **M3** | Bump hot-server connect timeout from 1s → 5s (env-tunable) | `src/Build/BackEnd/Client/MSBuildClient.cs:186` | ✅ **prototyped** | Adds `MSBUILDSERVERHOTCONNECTTIMEOUT` and `MSBUILDSERVERCOLDCONNECTTIMEOUT` env vars. 1s is too short for pipe-recycling under CI load. |
+| **PR #13660** | Route NuGet `RestoreTask` to transient TaskHost in server/`/mt` modes | dotnet/msbuild PR #13660 | ⏳ **open, blocked on minor review comment** (use `FrozenDictionary`/`const string`) | One-merge-away from unblocking the canonical NuGet auth blocker (#13315). |
+
+#### Tier 1 — Required before SDK default-on (P1)
+
+| ID | Mitigation | Where | Status | Notes |
+|---|---|---|---|---|
+| **PR #13651** | Include `Path.GetTempPath()` in handshake salt for non-TaskHost handshakes | dotnet/msbuild PR #13651 | ⏳ **open draft** | Closes #13594. Eliminates structural cross-environment server sharing. Reviewer @rainersigwald. |
+| **VMR-M1** | Set `MSBUILDNODEHANDSHAKESALT=$(Agent.JobName)` per vertical | dotnet/dotnet `eng/pipelines/templates/jobs/vmr-build.yml` | ⚠️ **needs author** | Zero MSBuild code change. Isolates each vertical's MSBuild server identity. |
+| **VMR-M3** | Set `MSBUILDNODEHANDSHAKESALT=$(RepositoryName)` per repo `<Exec>` | dotnet/dotnet `repo-projects/Directory.Build.targets` (`RepoBuild` target) | ⚠️ **needs author** | **Most direct fix for the fsharp timeout** — each repo gets its own server. |
+| **VMR-M2** | Add `--msbuild` to `CleanupRepo` shutdown | dotnet/dotnet `repo-projects/Directory.Build.targets` | ⚠️ **needs author** | Ensures MSBuild server torn down between repo builds; addresses Razor file-lock race (#5391). |
+| **OOT-1** | Fix `Microsoft.NET.Build.Containers.CreateNewImage` credential env-var race | dotnet/sdk `src/Containers/.../CreateNewImage.cs:48-60` | 🔴 **NEW BLOCKER (security-class)** | Process-wide `Environment.SetEnvironmentVariable(HostObjectUser/Pass)` — credentials observable across parallel `/mt` builds. Either replace with thread-local context OR add to PR #13660 allow-list. |
+| **OOT-2** | Add `NuGet.Build.Tasks.GetRestoreSettingsTask` to PR #13660 allow-list | dotnet/msbuild PR #13660 (extension) | ⚠️ **easy follow-up** | Stale machine-wide `nuget.config` problem; same allow-list mechanism. |
+
+#### Tier 2 — Strongly recommended before broad enablement (P2)
+
+| ID | Mitigation | Where | Notes |
+|---|---|---|---|
+| **M2** | Top-level catch-all in `MSBuildClientApp.Execute` falls back to in-proc on any unexpected exception | `src/MSBuild/MSBuildClientApp.cs:60-86` | Already half-done: existing fallback handles `UnableToConnect`/`ServerBusy`/`UnknownServerState`/`LaunchError`. Defense-in-depth: wrap the entire `MSBuildClient.Execute()` call in `try { ... } catch (Exception) { return MSBuildApp.Execute(commandLineArgs); }`. Cheap insurance against future undiscovered exception classes. |
+| **M5** | Retry on `TimeoutException` with backoff (200-500ms × 3) before giving up | `src/Build/BackEnd/Client/MSBuildClient.cs:599-634` | Currently the retry loop excludes `Timeout` status (line 616). Allowing limited retry would absorb the pipe-recycling gap without falling back to in-proc. |
+| **OOT-3** | Add per-build invalidation hook for `Microsoft.DotNet.SdkResolver` static caches | dotnet/sdk `src/Resolvers/Microsoft.DotNet.SdkResolver/NETCoreSdkResolver.cs:16-21` | New SDK installs invisible to running server; user-visible "stale SDK" symptom. |
+| **G1** | Snapshot/restore env + culture around each request in `OutOfProcServerNode` | `src/Build/BackEnd/Node/OutOfProcServerNode.cs:380-387` | Per Thread G: env vars and culture set per-request but never reverted; leaks influence subsequent request defaults. |
+| **G2** | Ensure logger registration is request-scoped and torn down before reuse | `src/Build/BackEnd/Node/OutOfProcServerNode.cs` + `BuildManager.cs:1016+` | Per Thread G: no logger unregister between requests. |
+
+#### Tier 3 — Nice-to-have / longer-term
+
+| ID | Mitigation | Where | Notes |
+|---|---|---|---|
+| **#9692** | Add `SharedId` to `ServerNodeHandshake` for explicit multi-clone isolation | dotnet/msbuild `src/Framework/BackEnd/ServerNodeHandshake.cs` | Enables explicit "different builds" identification beyond TMPDIR. |
+| **#12246** | Define and document the lifetime/contract for static members in Tasks; expose `IsServerMode`/`IsMultiThreaded` to task authors | cross-cutting | Long-term clean fix; replaces the allow-list with a principled API. |
+| **A1** | Add `/preprocess` to `CanRunServerBasedOnCommandLineSwitches` exclusion list | `src/MSBuild/XMake.cs:346-388` | Per Thread A: `/preprocess` produces stdout that should not flow through server IPC. |
+| **G3** | Add per-request reset hook (clear `AppContext`, `MSBuildEventSource`, ALC resolver hooks) before `BuildCompleteReuse` | `OutOfProcServerNode` | Per Thread G: comprehensive process-state hygiene. |
+
+### Decision: should `-mt` and server be coupled?
+
+**No.** Per Thread F: `-mt` and server solve different problems (parallelism vs. process reuse), have distinct risk profiles, and a `-mt`-only user (per-invocation parallelism on CI) does not want a daemon while a server-only user (interactive `dotnet build`) does not want to widen the in-proc concurrency surface. Coupling them prevents users from exercising one risk without the other and raises the cost of rolling either back.
+
+**Recommendation:** keep flags independent. Ship server-on default at SDK level (per #9379 plan for .NET 10.0.200) **after** Tier 0+1 mitigations land. Keep `-mt` opt-in indefinitely.
+
+### Default-on rollout plan (proposed)
+
+1. **Phase 0** (now): Ship M1+M3 to dotnet/msbuild main; merge PR #13660 + PR #13651. (Three MSBuild PRs, all ready or near-ready.)
+2. **Phase 1** (.NET 10 GA prep): Apply VMR-M1/M2/M3 to dotnet/dotnet pipeline. Validate VMR builds with server on (issue #13604). Fix OOT-1 (`CreateNewImage` credential leak) — ship in dotnet/sdk.
+3. **Phase 2** (.NET 10 GA dogfood): Enable server in `dotnet/msbuild`, then `dotnet/fsharp` (validates Phase 0 fixes), then `dotnet/aspnetcore` (validates Razor file-lock fixes). Order from #13604 dogfood plan.
+4. **Phase 3** (.NET 10.0.200): Per #11358, flip `DOTNET_CLI_USE_MSBUILD_SERVER=1` in SDK wrapper. Defer if any Tier-1 item slips.
+5. **Phase 4** (post-GA, telemetry-driven): Tier 2 + Tier 3 cleanup, retirement of allow-list once #12246 lands.
 
 ## Prototype branches
 
-(if applicable)
+### `prototype/msbuild-server-default-on-mitigations`
+
+- **Base:** `main`
+- **Commits:**
+  1. `investigation: MSBuild server default-on root-cause + mitigations` — full investigation.md
+  2. `prototype: M1+M3 mitigations for MSBuild server connect timeout` — code fix + test (this commit)
+- **Files changed (excluding investigation.md):**
+  - `src/Build/BackEnd/Components/Communications/NodeProviderOutOfProcBase.cs` — wrap `nodeStream.Connect(timeout)` in try/catch for `TimeoutException`; return `HandshakeStatus.Timeout` instead of throwing
+  - `src/Build/BackEnd/Client/MSBuildClient.cs` — bump hot-server timeout 1s → 5s, add `MSBUILDSERVERHOTCONNECTTIMEOUT` / `MSBUILDSERVERCOLDCONNECTTIMEOUT` env-var overrides
+  - `src/Build.UnitTests/BackEnd/NodeProviderOutOfProc_Tests.cs` — new regression test `TryConnectToPipeStream_WhenPipeUnavailable_ReturnsTimeoutInsteadOfThrowing`
+- **Validation:** `Microsoft.Build.Engine.UnitTests` builds clean; new test passes (1/1 succeeded, 1.4s).
+- **Deferred to follow-up commits:** M2 top-level catch-all (defense-in-depth); M5 backoff-retry; G1/G2 env+culture+logger reset.
 
 
 

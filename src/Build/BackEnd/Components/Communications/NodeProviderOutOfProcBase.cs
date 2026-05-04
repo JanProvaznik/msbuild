@@ -801,7 +801,25 @@ namespace Microsoft.Build.BackEnd
         /// </remarks>
         internal static bool TryConnectToPipeStream(NamedPipeClientStream nodeStream, string pipeName, Handshake handshake, int timeout, out HandshakeResult result)
         {
-            nodeStream.Connect(timeout);
+            try
+            {
+                nodeStream.Connect(timeout);
+            }
+            catch (TimeoutException ex)
+            {
+                // The pipe was not available within the timeout. Common scenarios:
+                // - Server is in the gap between disposing the old NamedPipeServerStream and creating
+                //   a new one (recycling between BuildCompleteReuse cycles).
+                // - Server is starting up but hasn't reached Listen() yet.
+                // - Stale handshake hash points at a no-longer-listening process.
+                // Returning Timeout here lets MSBuildClient.TryConnectToServer fall through to its
+                // UnableToConnect branch, which MSBuildClientApp.Execute translates to a graceful
+                // in-proc fallback. Without this, the TimeoutException would propagate uncaught and
+                // crash the build (see investigation.md Thread E).
+                CommunicationsUtilities.Trace($"Timed out connecting to pipe {pipeName} after {timeout}ms: {ex.Message.TrimEnd()}");
+                result = HandshakeResult.Failure(HandshakeStatus.Timeout, $"Timed out connecting to pipe '{pipeName}' after {timeout}ms.");
+                return false;
+            }
 
 #if !FEATURE_PIPEOPTIONS_CURRENTUSERONLY
             if (NativeMethodsShared.IsWindows)

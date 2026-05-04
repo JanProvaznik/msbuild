@@ -183,7 +183,13 @@ namespace Microsoft.Build.Experimental
                 }
 
                 // Connect to server.
-                if (!TryConnectToServer(serverIsAlreadyRunning ? 1_000 : 20_000))
+                // Hot server timeout: 5 seconds (was 1s) to tolerate the pipe-recycling gap between
+                // BuildCompleteReuse cycles where the old NamedPipeServerStream has been disposed
+                // but the new one hasn't yet been created. Cold server timeout: 20 seconds.
+                // Tunable via MSBUILDSERVERHOTCONNECTTIMEOUT / MSBUILDSERVERCOLDCONNECTTIMEOUT.
+                int hotTimeout = EnvironmentUtilities.GetValueAsInt32OrDefault("MSBUILDSERVERHOTCONNECTTIMEOUT", 5_000);
+                int coldTimeout = EnvironmentUtilities.GetValueAsInt32OrDefault("MSBUILDSERVERCOLDCONNECTTIMEOUT", 20_000);
+                if (!TryConnectToServer(serverIsAlreadyRunning ? hotTimeout : coldTimeout))
                 {
                     return _exitResult;
                 }
