@@ -1064,6 +1064,19 @@ Failure mode discovered by the test:
 | **TEL-6 (revised)** | When `MSBuildClientExitType.Unexpected` is returned, set `ServerFallbackReason = "ConnectionLostMidBuild"` for telemetry visibility BUT **do not** fall back to in-proc — let the failure surface to the user. | `src/MSBuild/MSBuildClientApp.cs` (after the existing fallback if-block) | **P2** |
 
 This is the **second rubber-duck-style lesson** in this investigation (CIO-1 was the first). Both demonstrate that "make server fall back more aggressively" can introduce silent re-execution bugs — the fallback set must be carefully scoped to states that guarantee the build *has not yet started* on the server.
+### Wave 5 — Broader regression test sweep on prototype branch
+
+After all prototype changes (M1+M2+M3+TEL-1+rubber-duck fixes; CIO-1 and TEL-6 reverted), broader test classes were exercised on `prototype/msbuild-server-default-on-mitigations` to catch any deeper regressions:
+
+| Test class | Total | Passed | Failed | Skipped | Notes |
+|---|---:|---:|---:|---:|---|
+| `MSBuildServer_Tests` (in `Microsoft.Build.CommandLine.UnitTests`) | 9 | **9** | 0 | 0 | Includes `ServerShouldStartWhenBuildIsInteractive` and `MSBuildServerTest` (the two existing tests that caught CIO-1 and TEL-6 respectively) |
+| `NodeProviderOutOfProc_Tests` (in `Microsoft.Build.Engine.UnitTests`) | 8 | **8** | 0 | 0 | Includes new regression test `TryConnectToPipeStream_WhenPipeUnavailable_ReturnsTimeoutInsteadOfThrowing` |
+| `BuildManager_Tests` | 108 | 100 | **2** | 6 | **Both failures pre-exist on main** (`GraphBuildInvalid`, `GraphBuildCircular` — `ArgumentNullException` in `GraphBuildRequestData.GlobalPropertiesLookup` at `src/Build/Graph/GraphBuildRequestData.cs:228`); unrelated to MSBuild server changes; verified by switching to main branch and re-running |
+| `*TaskHost*` (any class matching) | 116 | 102 | 0 | 14 | All TaskHost-related tests pass |
+| `*Telemetry*` (any class matching) | 48 | 48 | 0 | 0 | TEL-1 (`IsServerModeEnabled` field) does not regress existing telemetry tests |
+
+**Verdict: no regressions caused by the prototype.** The two `BuildManager_Tests` failures are pre-existing on `main` and unrelated.
 ## Recommended Mitigations
 
 ### Tiered roadmap to safe default-on MSBuild server
