@@ -142,6 +142,10 @@ namespace Microsoft.Build.Logging
         private bool _initialTargetOutputLogging;
         private bool _initialLogImports;
         private string _initialIsBinaryLoggerEnabled;
+        // Track the event source we subscribed to so Shutdown() can unsubscribe.
+        // Without this, re-using the same logger instance across MSBuild server requests
+        // would accumulate handlers (one extra per request) — see investigation.md LOG-1.
+        private IEventSource _eventSource;
 
         /// <summary>
         /// Describes whether to collect the project files (including imported project files) used during the build.
@@ -457,6 +461,7 @@ namespace Microsoft.Build.Logging
                 }
 
                 eventSource.AnyEventRaised += EventSource_AnyEventRaised;
+                _eventSource = eventSource;
             }
         }
 
@@ -516,6 +521,14 @@ namespace Microsoft.Build.Logging
                 projectImportsCollector = null;
             }
 
+            // LOG-1: Unsubscribe from AnyEventRaised so re-using the same logger instance across
+            // MSBuild server requests doesn't accumulate handlers (one extra per request leading to
+            // double/triple-fired events). See investigation.md Wave 3 logging audit.
+            if (_eventSource != null)
+            {
+                _eventSource.AnyEventRaised -= EventSource_AnyEventRaised;
+                _eventSource = null;
+            }
 
             // Log additional file paths before closing stream (so they're recorded in the binlog)
             if (AdditionalFilePaths != null && AdditionalFilePaths.Count > 0 && stream != null)
