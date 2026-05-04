@@ -882,6 +882,169 @@ The team designed server mode to coexist with `-interactive`, presumably because
 - **Background-thread escape hatch:** packet-pump thread exceptions are already marshaled back through `PacketPumpException` and turned into `MSBuildClientExitType.Unexpected` inside `MSBuildClient.Execute`, so I did not find an obvious unhandled background-thread path that bypasses the client entry point.
 - **Timeout-sensitive tests:** I did not find an existing `MSBuildServer_Tests` / `NodeProviderOutOfProc_Tests` assertion that depends on the hot timeout being exactly 1s.
 
+### Wave 4 — Rubber-duck critique of M1+M2+M3 prototype
+
+The rubber-duck agent (Claude Sonnet 4.6) was asked to review the M1+M2+M3 + TEL-1 prototype for blind spots. **Verdict: no blocking issues.** Four non-blocking issues were identified and **all four have been addressed** on the prototype branch:
+
+| # | Critique | Status | Fix |
+|---|---|---|---|
+| 1 | `TryShutdownServer` (`MSBuildClient.cs:265`) still uses a **hardcoded 1s** connect timeout — the same pipe-recycling race that M3 fixed for builds also affects `dotnet build-server shutdown`. | ✅ Fixed | Use `MSBUILDSERVERHOTCONNECTTIMEOUT` (default 5s) for shutdown connect too; clamped `Math.Max(1, ...)`. |
+| 2 | `MSBUILDSERVERHOTCONNECTTIMEOUT` / `MSBUILDSERVERCOLDCONNECTTIMEOUT` env vars not clamped — `0` or negative values bypass fallback and return `MSBuildClientFailure`. | ✅ Fixed | `Math.Max(1, GetValueAsInt32OrDefault(...))` for both env vars and the shutdown timeout. |
+| 3 | M2 catches `OperationCanceledException` because `ExceptionHandling.IsCriticalException()` does not classify it as critical — Ctrl-C cancellation could be silently converted into an in-proc retry. | ✅ Fixed | Catch filter explicitly excludes `OperationCanceledException`: `catch (Exception ex) when (ex is not OperationCanceledException && !ExceptionHandling.IsCriticalException(ex))`. |
+| 4 | M2's new catch/fallback path has no direct unit test. | ⚠️ Deferred | A direct test would require mock infrastructure or a production refactor heavier than the fix itself. M2 behavior is implicitly exercised by the existing end-to-end `MSBuildServer_Tests.MSBuildServerTest`, which calls `MSBuildClientApp.Execute()` and asserts success. Adding a dedicated test is queued as follow-up. |
+
+**Items the rubber-duck checked and found acceptable:**
+- M1 is surgical enough — keeping it to `TimeoutException` is the right shape.
+- M2 is not obviously swallowing malformed cmdline errors from normal user paths; the cancellation risk (#3) was the only real M2 concern.
+- Telemetry payload `ClientUnhandledException:TypeName` is PII-safe.
+- Background-thread path (packet pump) is contained — its exceptions are marshaled back into `Execute()`.
+- Blast radius is small — only `MSBuildClient`, worker-node `TryConnectToProcess`, and the new unit test call `TryConnectToPipeStream`.
+- No existing test depends on the hot timeout being exactly 1s.
+
+The CIO-1 design rejection (separately documented above) was a fifth lesson learned from a different sub-agent; the rubber-duck did not need to flag it because it was already caught by the existing `MSBuildServer_Tests.ServerShouldStartWhenBuildIsInteractive` test.
+### Wave 5 — VMR-side concrete patches (PR-ready diffs)
+
+All three patches target `dotnet/dotnet` directly (PRs accepted to `eng/pipelines/` and `repo-projects/`; those paths are VMR-native, not mirrored from component repos). `src/roslyn/eng/pipelines/variables-build.yml` is mirrored from `dotnet/roslyn` — changes there must go to `dotnet/roslyn` first and flow in via Maestro/Darc.
+
+#### VMR-M1 — Per-vertical handshake salt in `vmr-build.yml`
+
+**File:** `eng/pipelines/templates/jobs/vmr-build.yml` (SHA `9a61739`)
+**Scope:** all ~30 vertical jobs. **Risk:** zero (purely additive). **Dependency:** none.
+
+```diff
+--- a/eng/pipelines/templates/jobs/vmr-build.yml
++++ b/eng/pipelines/templates/jobs/vmr-build.yml
+@@ -186,6 +186,12 @@
+   - name: failedJobArtifactName
+     value: $(successfulJobArtifactName)_Attempt$(System.JobAttempt)
+ 
++  # Give every vertical job a unique MSBuild server pipe name.
++  # The salt is mixed into the ServerNodeHandshake hash, so two jobs that share the
++  # same SDK installation path (toolsDirectory) but different Agent.JobName will bind
++  # to different named pipes and never share a server.
++  - name: MSBUILDNODEHANDSHAKESALT
++    value: $(Agent.JobName)
+```
+
+#### VMR-M2 — Add `--msbuild` to `CleanupRepo` shutdown
+
+**File:** `repo-projects/Directory.Build.targets` (SHA `71974cf`)
+**Scope:** every repo with `CleanWhileBuilding=true` (non-internal non-source-build).
+**Risk:** low; **silently a no-op** for the MSBuild server today (Wave 3: `MSBuildServer.Shutdown()` in dotnet/sdk only reaches local in-proc nodes). Patch is correct in intent but **requires SDK-1** to be effective. Merge anyway so the correct behavior activates automatically when SDK-1 lands.
+
+```diff
+--- a/repo-projects/Directory.Build.targets
++++ b/repo-projects/Directory.Build.targets
+@@ -474,11 +474,15 @@
+     <!--
+       … existing comment …
+       Don't run when source building to prevent the build from hanging indefinitely - https://github.com/dotnet/source-build/issues/4796
++
++      Also shut down the MSBuild server to release any file handles it may hold on the
++      repo's artifacts directory (e.g. Razor generated sources, see dotnet/dotnet#5391).
++      NOTE: --msbuild shutdown is a no-op until dotnet/sdk SDK-1 is fixed; keep this line
++      so the correct behaviour activates automatically once SDK-1 lands.
+     -->
+-    <Exec Command="&quot;$(DotNetTool)&quot; build-server shutdown --vbcscompiler"
++    <Exec Command="&quot;$(DotNetTool)&quot; build-server shutdown --vbcscompiler --msbuild"
+           Condition="'$(DotNetBuildSourceOnly)' != 'true'"
+           EnvironmentVariables="NUGET_PACKAGES=$(RepoArtifactsPackageCache)"
+           IgnoreStandardErrorWarningFormat="true"
+```
+
+#### VMR-M3 — Per-repo handshake salt in `RepoBuild` `<Exec>` *(highest leverage)*
+
+**File:** `repo-projects/Directory.Build.targets` (SHA `71974cf`)
+**Scope:** every repo built by the VMR orchestrator (~25 repos × ~30 verticals). **Risk:** low–medium (each repo cold-starts its own server; ~1-2s JIT warmup once per repo, then warm for the remainder of that repo's invocations). **Dependency:** none — works today without any MSBuild code change. **This is the most direct fix for the VMR fsharp timeout.**
+
+```diff
+--- a/repo-projects/Directory.Build.targets
++++ b/repo-projects/Directory.Build.targets
+@@ -437,6 +437,14 @@
+     <!-- Create directories for extra debugging. -->
+     <MakeDir Directories="$(MSBuildDebugPathTargetDir);
+                           $(RoslynDebugPathTargetDir);
+                           $(AspNetRazorBuildServerLogDir)"
+              Condition="'$(EnableExtraDebugging)' == 'true'" />
+ 
++    <!-- Isolate the MSBuild server pipe per repository.
++         MSBUILDNODEHANDSHAKESALT is mixed into ServerNodeHandshake.ComputeHash(), giving
++         each repo a unique pipe name (MSBuildServer-hash(reponame+toolsDir)). Without this,
++         all repos within a vertical share the same server because they share the same
++         .dotnet SDK installation path — the structural root cause of the fsharp VMR timeout
++         (dotnet/msbuild#13604, investigation Thread E). -->
++    <ItemGroup>
++      <EnvironmentVariables Include="MSBUILDNODEHANDSHAKESALT=$(RepositoryName)" />
++    </ItemGroup>
++
+     <Exec Command="$(FullCommand)"
+           WorkingDirectory="$(ProjectDirectory)"
+           EnvironmentVariables="@(EnvironmentVariables);@(BuildEnvironmentVariable)"
+```
+
+#### Patch application order
+
+| Order | Patch | Gate |
+|---|---|---|
+| 1 | **VMR-M3** (per-repo salt in `Directory.Build.targets`) | None — safe to merge standalone; **highest leverage** |
+| 2 | **VMR-M1** (per-vertical salt in `vmr-build.yml`) | None — defensive baseline, merge alongside VMR-M3 |
+| 3 | **VMR-M2** (`--msbuild` shutdown) | Merge code change now; **requires SDK-1** before it has effect |
+| — | **SDK-1** (`MSBuildServer.Shutdown()` fix in dotnet/sdk) | Separate dotnet/sdk PR; activates VMR-M2 |
+
+#### PR contribution model
+
+| File | Authoring | PR target |
+|---|---|---|
+| `eng/pipelines/templates/jobs/vmr-build.yml` | VMR-native | `dotnet/dotnet` direct |
+| `repo-projects/Directory.Build.targets` | VMR-native | `dotnet/dotnet` direct |
+| `src/roslyn/eng/pipelines/variables-build.yml` | mirrored from dotnet/roslyn | PR `dotnet/roslyn` first; auto-syncs via Maestro |
+
+Reviewers: `@dotnet/source-build-internal` (dotnet unified-build team).
+### Wave 5 — EFCore + Razor SDK static-state audit
+
+#### Scope
+
+Audit of two task assemblies not covered by prior waves: `dotnet/efcore` design-time tasks (EFCore.Tasks + EFCore.Design) and the `Microsoft.NET.Sdk.Razor` build tasks (`dotnet/sdk:src/RazorSdk`). Focus areas: process-lifetime statics surviving server reuse; file-handle leaks relevant to issue #5391; source-generator ALC isolation.
+
+#### EFCore — verdict: out-of-process design, no MSBuild server risk
+
+All EFCore MSBuild tasks (`OptimizeDbContext`, plus scaffolding/migration tasks added in future) extend `ToolTask` and spawn `dotnet exec ef.dll` as a child process for every design-time operation (`OperationTaskBase.cs`). No static caches exist in the MSBuild task code; `_resultBuilder` is a `private readonly` instance field. EFCore has **no Roslyn `[Generator]`-attributed source generator** and no in-process T4 host — template files ship as content and are invoked out-of-process via `dotnet-ef`. Two frozen read-only statics exist in `CSharpHelper.cs` (`Keywords`, `LiteralFuncs`) and one auto-generated `ResourceManager` in `DesignStrings.Designer.cs`; all are immutable after type initialization and pose no server-reuse risk.
+
+#### Razor SDK — process-lifetime ALC cache in `rzc server` (HIGH risk)
+
+The Razor SDK (`Microsoft.NET.Sdk.Razor.Tasks`) contains `DotNetToolTask`, which can route build requests to a long-lived `rzc server` process over a named pipe (`UseServer=true`). Inside that server, `DefaultExtensionAssemblyLoader` maintains four never-invalidated `Dictionary` fields and a custom `ExtensionAssemblyLoadContext` that is created once per loader instance and never unloaded or recreated between builds. The `ShadowCopyManager` shadow-copies extension DLLs to `%TEMP%/Razor/ShadowCopy/<GUID>/` on first load and never refreshes them; `Dispose()` releases a mutex but does not delete files, so server crashes leave shadow-copy files on disk — the same mechanism as the file-lock race in dotnet/dotnet #5391.
+
+#### Static-state audit table
+
+| Task / file | Location | Static / state kind | Risk under server reuse | Severity | Suggested mitigation |
+|---|---|---|---|---|---|
+| `OperationTaskBase` | `dotnet/efcore:src/EFCore.Tasks/Tasks/Internal/OperationTaskBase.cs` | `ToolTask` subclass; spawns `dotnet exec ef.dll`; `_resultBuilder` is `private readonly` instance field | None — child process per invocation | **SAFE** | No action needed |
+| `OptimizeDbContext.CopyDirectoryRecursive` | `dotnet/efcore:src/EFCore.Tasks/Tasks/OptimizeDbContext.cs` | `private static` utility method; no state | None | **BENIGN** | No action needed |
+| `DesignStrings._resourceManager` | `dotnet/efcore:src/EFCore.Design/Properties/DesignStrings.Designer.cs` | `private static readonly ResourceManager` — auto-generated; frozen at type init | Frozen singleton; content never changes | **BENIGN** | No action needed |
+| `CSharpHelper.Keywords` + `LiteralFuncs` | `dotnet/efcore:src/EFCore.Design/Design/Internal/CSharpHelper.cs` | Two `private static readonly` frozen collections (C# keywords list; type→formatter dispatch) | Immutable after type init; thread-safe language-spec constants | **BENIGN** | No action needed |
+| EFCore `[Generator]` / T4 | `dotnet/efcore:src/EFCore.Design/` | No `[Generator]` attribute; `.t4` templates invoked out-of-process by `dotnet-ef` CLI | N/A — no in-process generator or T4 host | **N/A** | No action needed |
+| `SdkRazorGenerate.SourceRequiredMetadata` | `dotnet/sdk:src/RazorSdk/Tasks/SdkRazorGenerate.cs:14-16` | `private static readonly string[]` — 3-element frozen array of metadata key names | Frozen; no cross-build leakage | **BENIGN** | No action needed |
+| `DotnetToolTask._razorServerCts` | `dotnet/sdk:src/RazorSdk/Tasks/DotnetToolTask.cs:18` | `CancellationTokenSource` instance field; disposed via `using` in `TryExecuteOnServer` | Instance-scoped; null between invocations | **SAFE** | No action needed |
+| `DefaultExtensionAssemblyLoader` dictionaries | `dotnet/sdk:src/RazorSdk/Tool/DefaultExtensionAssemblyLoader.cs:16-22` | 4 instance `Dictionary` fields (`_loadedByPath`, `_loadedByIdentity`, `_identityCache`, `_wellKnownAssemblies`) **never cleared** between builds in `rzc server` | Changed extension DLLs on disk are silently ignored; tag-helper or source-generator logic is stale for the server's lifetime | **HIGH** | Add mtime/hash check before returning cached assembly; or invalidate on `BuildBegin`; or force server restart when extension DLLs change |
+| `ExtensionAssemblyLoadContext` (no ALC teardown) | `dotnet/sdk:src/RazorSdk/Tool/DefaultExtensionAssemblyLoader.cs:122+` | Custom `AssemblyLoadContext` created once per loader; never unloaded; not collectible | ALC isolation between builds is absent; assemblies from build N are visible to build N+1; conflicting extension versions cause silent misbehavior | **HIGH** — ALC not re-isolated between builds | Use collectible ALC (`isCollectible: true`) per build request, unloaded after each build completes; mirrors the Roslyn analyzer ALC isolation pattern |
+| `ShadowCopyManager` temp files | `dotnet/sdk:src/RazorSdk/Tool/ShadowCopyManager.cs` | Shadow-copies extension DLLs to `%TEMP%/Razor/ShadowCopy/<GUID>/`; `Dispose()` releases mutex but **does not delete files**; on crash, files persist | On server crash, unlocked shadow copies remain → next build may lock the same path → file-lock race identical to dotnet/dotnet #5391 | **MED** | Ensure `Dispose()` also deletes `UniqueDirectory`; run `PurgeUnusedDirectoriesAsync` proactively on server startup; register cleanup handler on server shutdown signal |
+
+#### Source-generator ALC isolation — finding
+
+The `rzc server` does **not** re-isolate extension assemblies between builds. There is no collectible ALC, no assembly reload, and no version check. This means:
+- A user who modifies a Razor extension (e.g., a custom tag-helper assembly) without restarting the Razor server will silently build against the old version.
+- The CLI path (`UseServer=false`) avoids this entirely because `dotnet exec rzc.dll` forks a new process per invocation, giving fresh ALC state.
+- The risk only manifests when `UseServer=true` (the default when `DotNetToolTask.UseServer` property is set in the `.targets` file, i.e., the default Razor SDK flow).
+
+#### File-handle leak connection to issue #5391
+
+The `ShadowCopyManager.AddAssembly()` copies source DLLs to a per-session temp directory and never refreshes them. On a normal server shutdown, `Dispose()` is called (releasing the mutex) but leaves the temp directory intact. On an abnormal termination (crash, OOM, SIGKILL), neither the mutex nor the directory is cleaned up. The next build starts a new server with a new GUID directory but calls `PurgeUnusedDirectoriesAsync()` to clean up orphaned old directories — however, if the original server's mutex handle is still open in a zombie process, the purge skips that directory. Any other process (e.g., an MSBuild task reading the same extension DLL) that opens a handle on the shadow-copied file will see a locked file, matching the `System.IO.IOException: The process cannot access the file '…' because it is being used by another process` pattern in #5391.
+
+**Recommended addition to Tier 1 mitigations (OOT-4):** File dotnet/sdk issue: `DefaultExtensionAssemblyLoader` must use a collectible ALC with per-build lifetime; `ShadowCopyManager.Dispose()` must delete `UniqueDirectory`; add to `OutOfProcServerNode.HandleShutdown` equivalent in `rzc server` to ensure cleanup.
+```
+
+---
+
 ## Recommended Mitigations
 
 ### Tiered roadmap to safe default-on MSBuild server
