@@ -66,7 +66,7 @@ namespace Microsoft.Build.CommandLine
                 MSBuildClient msbuildClient = new MSBuildClient(commandLineArgs, msbuildLocation);
                 exitResult = msbuildClient.Execute(cancellationToken);
             }
-            catch (Exception ex) when (!ExceptionHandling.IsCriticalException(ex))
+            catch (Exception ex) when (ex is not OperationCanceledException && !ExceptionHandling.IsCriticalException(ex))
             {
                 // Defense-in-depth fallback: any unexpected exception from the client path
                 // (pipe errors, handshake errors, environment problems, etc.) must NOT crash
@@ -75,6 +75,9 @@ namespace Microsoft.Build.CommandLine
                 // (see investigation.md Thread E) but other exception classes can surface as
                 // server mode evolves; this catch keeps the server an opportunistic optimization
                 // rather than a hard dependency.
+                //
+                // Note: OperationCanceledException is explicitly excluded so cancellation
+                // requests (e.g. Ctrl-C) are not converted into an in-proc retry.
                 if (KnownTelemetry.PartialBuildTelemetry != null)
                 {
                     KnownTelemetry.PartialBuildTelemetry.ServerFallbackReason = "ClientUnhandledException:" + ex.GetType().Name;

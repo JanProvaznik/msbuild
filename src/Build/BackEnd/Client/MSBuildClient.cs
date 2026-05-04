@@ -187,8 +187,9 @@ namespace Microsoft.Build.Experimental
                 // BuildCompleteReuse cycles where the old NamedPipeServerStream has been disposed
                 // but the new one hasn't yet been created. Cold server timeout: 20 seconds.
                 // Tunable via MSBUILDSERVERHOTCONNECTTIMEOUT / MSBUILDSERVERCOLDCONNECTTIMEOUT.
-                int hotTimeout = EnvironmentUtilities.GetValueAsInt32OrDefault("MSBUILDSERVERHOTCONNECTTIMEOUT", 5_000);
-                int coldTimeout = EnvironmentUtilities.GetValueAsInt32OrDefault("MSBUILDSERVERCOLDCONNECTTIMEOUT", 20_000);
+                // Clamp to >= 1 to avoid zero/negative timeouts that would bypass fallback.
+                int hotTimeout = Math.Max(1, EnvironmentUtilities.GetValueAsInt32OrDefault("MSBUILDSERVERHOTCONNECTTIMEOUT", 5_000));
+                int coldTimeout = Math.Max(1, EnvironmentUtilities.GetValueAsInt32OrDefault("MSBUILDSERVERCOLDCONNECTTIMEOUT", 20_000));
                 if (!TryConnectToServer(serverIsAlreadyRunning ? hotTimeout : coldTimeout))
                 {
                     return _exitResult;
@@ -262,7 +263,11 @@ namespace Microsoft.Build.Experimental
             }
 
             // Connect to server.
-            if (!TryConnectToServer(1_000))
+            // Use the same hot-server timeout as Execute() — shutdown faces the same pipe-recycling
+            // race (server may be in BuildCompleteReuse gap with old pipe disposed, new not yet listening).
+            // Pre-fix: hardcoded 1s lost the same race that M3 fixed for builds (rubber-duck finding).
+            int shutdownTimeout = Math.Max(1, EnvironmentUtilities.GetValueAsInt32OrDefault("MSBUILDSERVERHOTCONNECTTIMEOUT", 5_000));
+            if (!TryConnectToServer(shutdownTimeout))
             {
                 CommunicationsUtilities.Trace("Client cannot connect to idle server to shut it down.");
                 return false;

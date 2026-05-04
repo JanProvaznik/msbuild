@@ -828,6 +828,60 @@ The team designed server mode to coexist with `-interactive`, presumably because
 |---|---|---|---|
 | **CIO-1 (revised)** | Add NuGet credential-provider task names to `TaskRouter.s_knownProblematicTaskNames` allow-list (alongside `RestoreTask`) so they get a transient TaskHost — preserving server reuse for the rest of the build while keeping interactive auth flows isolated | `src/Build/BackEnd/Components/RequestBuilder/TaskRouter.cs` (extension to PR #13660) | **P2** |
 
+### Wave 4 — Rubber-duck critique of M1+M2+M3 prototype
+
+**Overall:** no blocking issue found in the prototype diff. M1 is appropriately surgical: catching only `TimeoutException` in `TryConnectToPipeStream` fixes the crash without changing the worker-node path's broader exception handling (`TryConnectToProcess` still catches other non-critical connect failures), and the blast radius is small (`MSBuildClient`, worker-node `TryConnectToProcess`, plus the new unit test are the only call sites).
+
+#### Non-Blocking Issues
+
+1. **Shutdown path still keeps the old 1s connect timeout**
+   - **Impact:** `MSBuildClient.TryShutdownServer` still calls `TryConnectToServer(1_000)` (`src/Build/BackEnd/Client/MSBuildClient.cs:264-269`). That leaves `dotnet build-server shutdown --msbuild` exposed to the same pipe-recycling gap that motivated M3, so cleanup can spuriously fail even though build execution got the new 5s mitigation.
+   - **Severity:** Non-Blocking
+   - **Recommended fix:** reuse the hot-connect timeout (or introduce a dedicated shutdown timeout override) instead of hardcoding 1s.
+
+2. **New timeout env vars are not validated/clamped**
+   - **Impact:** `MSBUILDSERVERHOTCONNECTTIMEOUT=0` or a negative value makes `TryConnectToServer` skip its loop entirely and return `false` without setting `MSBuildClientExitType`, which then falls through to `MSBuildApp.ExitType.MSBuildClientFailure` instead of the normal in-proc fallback (`src/Build/BackEnd/Client/MSBuildClient.cs:605-639`, `src/MSBuild/MSBuildClientApp.cs:86-108`).
+   - **Severity:** Non-Blocking
+   - **Recommended fix:** clamp both env-var-derived values with `Math.Max(1, ...)` and add a regression test for zero/negative overrides.
+
+3. **M2 catch-all also catches `OperationCanceledException`**
+   - **Impact:** `ExceptionHandling.IsCriticalException` does not treat `OperationCanceledException` as critical (`src/Framework/ExceptionHandling.cs:25-55`), so the new top-level catch in `MSBuildClientApp.Execute` would convert a cancellation during client setup/execute into an in-proc retry instead of honoring cancellation.
+   - **Severity:** Non-Blocking
+   - **Recommended fix:** exclude `OperationCanceledException` from the filter (`when (ex is not OperationCanceledException && !ExceptionHandling.IsCriticalException(ex))`).
+
+4. **The new M2 fallback path has no direct regression test**
+   - **Impact:** the prototype tests M1 directly, but nothing currently verifies that an unexpected non-critical client exception actually triggers in-proc fallback and sets `ServerFallbackReason = "ClientUnhandledException:<TypeName>"`.
+   - **Severity:** Non-Blocking
+   - **Recommended fix:** add a focused `MSBuildClientApp` test that injects a non-critical client failure and asserts fallback + telemetry behavior; optionally add a cancellation test if issue #3 is fixed.
+
+#### Suggestions
+
+1. **Document the new env vars**
+   - **Impact:** `MSBUILDSERVERHOTCONNECTTIMEOUT` / `MSBUILDSERVERCOLDCONNECTTIMEOUT` are operator-facing mitigations but are not listed in `documentation/wiki/MSBuild-Environment-Variables.md`.
+   - **Severity:** Suggestion
+   - **Recommended fix:** add both variables, defaults (5s / 20s), and intended usage to the env-var doc. The names themselves are consistent with existing all-caps MSBuild env-var conventions.
+
+2. **Add a backward-compat test for the worker-node caller**
+   - **Impact:** the new unit test only exercises `TryConnectToPipeStream` directly. It does not verify that the worker-node caller (`TryConnectToProcess`) still behaves correctly with M1 in place, nor does it exercise the server-client fallback end-to-end.
+   - **Severity:** Suggestion
+   - **Recommended fix:** add one worker-node regression test (to confirm existing broad exception swallowing still works) and one client-app fallback test.
+
+3. **Cold-server timeout likely does not need a default bump yet**
+   - **Impact:** I did not find evidence in the current diff/tests that a 20s cold-start timeout is the immediate failure mode. The structural cold/hot issue remains handshake isolation / pipe-recycling, not just the numeric default.
+   - **Severity:** Suggestion
+   - **Recommended fix:** keep the 20s default for now, rely on the new cold-timeout override for experiments, and prioritize the structural handshake-isolation fix if VMR still reports cold-start failures.
+
+4. **Telemetry payload looks acceptable**
+   - **Impact:** `ClientUnhandledException:<TypeName>` appears PII-safe because it records only the exception type name, not message/stack/path data. It should be useful enough for coarse bucketing, although not for deep diagnosis by itself.
+   - **Severity:** Suggestion
+   - **Recommended fix:** no immediate change required; keep the type-only payload unless telemetry needs stronger bucketing later.
+
+#### Checked and found acceptable
+
+- **M1 exception scope:** narrow `TimeoutException` handling is the right shape; broadening `TryConnectToPipeStream` to also convert `IOException` / `UnauthorizedAccessException` / `InvalidOperationException` would change retry/fallback behavior rather than just fixing the crash.
+- **Background-thread escape hatch:** packet-pump thread exceptions are already marshaled back through `PacketPumpException` and turned into `MSBuildClientExitType.Unexpected` inside `MSBuildClient.Execute`, so I did not find an obvious unhandled background-thread path that bypasses the client entry point.
+- **Timeout-sensitive tests:** I did not find an existing `MSBuildServer_Tests` / `NodeProviderOutOfProc_Tests` assertion that depends on the hot timeout being exactly 1s.
+
 ## Recommended Mitigations
 
 ### Tiered roadmap to safe default-on MSBuild server
