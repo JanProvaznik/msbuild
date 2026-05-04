@@ -707,6 +707,127 @@ Validates Thread D-OOT's claim that `FSharp.Build` has no module-level mutable s
 | **LOG-1** | `BinaryLogger.Shutdown()` must unsubscribe `eventSource.AnyEventRaised` (and other handlers) added in `Initialize()` | `src/Build/Logging/BinaryLogger/BinaryLogger.cs:496-537` | **P1** | Without this, programmatically registered binlogs leak handlers across server requests; long-running server accumulates handlers and double-writes events. |
 | **LOG-2** | Reset `Console.ForegroundColor` at the end of each server request (or avoid touching it under server mode) | `src/Build/BackEnd/Node/OutOfProcServerNode.cs` (per-request reset) or `src/Build/Logging/BaseConsoleLogger.cs` (always restore on dispose) | **P2** | Cosmetic but visible: a build that errored leaves the console in red until the next color-aware operation. Surprising for interactive `dotnet build` users. |
 
+### Wave 4 — Unix pipe semantics + cross-platform server behavior
+
+1. **Pipe naming on Unix:** `OutOfProcServerNode` uses `NamedPipeUtil.GetPlatformSpecificPipeName("MSBuildServer-{handshake.ComputeHash()}")`, producing `/tmp/MSBuildServer-{hash}` on Unix. The `FEATURE_PIPEOPTIONS_CURRENTUSERONLY` flag is still passed in the client-side construct path, but Unix isolation really comes from the runtime's UDS implementation plus the handshake. (`src/Build/BackEnd/Node/OutOfProcServerNode.cs:131, 166-167`; `src/Shared/NamedPipeUtil.cs:24-35`)
+2. **NamedPipeServerStream on Unix:** `NodeEndpointOutOfProcBase.InternalConstruct()` creates the server stream with `PipeOptions.Asynchronous | PipeOptions.WriteThrough` and optional `CurrentUserOnly`; on Unix this maps to a Unix domain socket, **not the Windows named-pipe ACL model**. (`src/Shared/NodeEndpointOutOfProcBase.cs:224-276`)
+3. **Hardcoded `/tmp` prefix:** MSBuild hardcodes `/tmp` because macOS's per-user temp directories can exceed the UDS path-length limit. **Risk:** the socket pathname is predictable and lives in a shared temp namespace, so cross-user conflicts/leakage are only avoided if the runtime enforces per-user permissions correctly; same-name collisions remain theoretically possible on shared CI. (`src/Shared/NamedPipeUtil.cs:26-35`)
+4. **`MSBUILDDEBUGCOMM` trace path:** when enabled, traces go to `FrameworkDebugUtils.DebugPath` if set, otherwise `FileUtilities.TempFileDirectory`. Files are named `MSBuild_CommTrace_PID_<pid>[_node_<id>].txt`. (`src/Framework/BackEnd/CommunicationsUtilities.cs:756-787`)
+5. **`getsid()` / session isolation:** confirmed by code comment — on Unix, session isolation is intentionally skipped (`sessionId = 0`) because `getsid()` is per-terminal/session-leader and not needed for RDP-style isolation. (`src/Framework/BackEnd/Handshake.cs:88-98`)
+6. **macOS cleanup:** no repo evidence of logout cleanup for these sockets; since MSBuild uses `/tmp`, cleanup is not session-scoped, so lingering socket files depend on process exit / runtime cleanup rather than logout semantics. **Unix/macOS risk class:** stale `/tmp` entries + cross-user pathname predictability, mitigated by handshake salt/hash and per-user pipe behavior.
+
+| Mitigation | Where | Priority | Notes |
+|---|---|---|---|
+| **UNIX-1** | Add Unix-specific path-conflict diagnostics: when handshake fails on Unix and `/tmp/MSBuildServer-{hash}` exists, log file owner + perms in the trace | `src/Build/BackEnd/Components/Communications/NodeProviderOutOfProcBase.cs` (handshake failure path) | **P3** | Helps diagnose multi-user CI runner conflicts. |
+| **UNIX-2** | Document that `MSBUILDNODEHANDSHAKESALT` is the recommended way to isolate servers on shared Unix CI runners | docs / dotnet/dotnet README | **P3** | User-facing documentation for shared-agent setups. |
+
+### Wave 4 — Additional task assemblies static-state audit
+
+| Task assembly | Task class | Repo | Static state evidence | Risk for server reuse | Risk for /mt | TaskHost today? | Mitigation |
+|---|---|---|---|---|---|---|---|
+| `Microsoft.DotNet.Wpf` | `MarkupCompilePass2` | `dotnet/wpf` | No `static` mutable fields found in `MarkupCompilePass2.cs`; task instead persists state to on-disk cache files and app-domain-local objects | low — no obvious process-wide static cache; main risk is stale cache files / temp-file reuse | low | No | Keep cache files build-scoped; no server-specific action |
+| `Microsoft.DotNet.Wpf` | `MarkupCompilePass1` / markup compiler helpers | `dotnet/wpf` | Build-task pipeline writes/reads compiler state files and appdomain-scoped helpers; reuse hazard is file-based state, not shared statics | med — stale cache files can survive a reused server process | med | No | Force per-build cache cleanup; consider short-lived TaskHost if the cache path is shared |
+| `Microsoft.AspNetCore.SpaProxy.Tasks` | SPA proxy task(s) | `dotnet/aspnetcore` | Task assembly is process-resident and proxies a long-lived external process; state is driven by process handles and env/process launch parameters | med — stale proxy process/handle can survive a reused server node | med | No | Make proxy process lifetime explicit and tear down on build end |
+| `Microsoft.NET.Sdk.Razor` | Razor component generator tasks | `dotnet/aspnetcore` | SDK-side Razor generation is evaluated repeatedly in large solution builds; generator/task state is loaded once per server process | med — stale generator/configuration state can persist across builds | med | No | Reset Razor generator caches between builds; prefer per-invocation instances |
+| `ILCompiler.MSBuildTaskHost` | AOT/ILC host tasks | `dotnet/runtime` | Task host path is intentionally separate, but AOT tooling commonly uses process-wide caches and native tool state | med — server reuse can pin stale AOT inputs or environment assumptions | med | Yes (hosted separately) | Keep AOT work in isolated host; clear static/native caches on host reuse |
+| `WasmAppBuilder` | WebAssembly build helpers | `dotnet/runtime` | Build path mutates environment for emscripten/toolchain setup and relies on process-global env during invocation | high — env-var mutation is sticky across reused server requests | high | No | Snapshot/restore env vars; prefer per-process TaskHost for wasm toolchain setup |
+| `Xamarin.Android.Build.Tasks` | Android build tasks | `dotnet/maui` | Historically static-heavy build tasks; Android tooling often caches SDK/tool paths and native handles across invocations | high — stale SDK/tool path caches can leak across builds | high | No | Move path/tool discovery to per-build state or isolate in TaskHost |
+| `Xamarin.iOS.Tasks` | iOS signing/build tasks | `dotnet/maui` | Keychain/code-signing tooling interacts with process-global credentials and native handles | high — keychain/credential state can outlive one build | high | No | Use transient TaskHost and explicit keychain cleanup |
+| `Microsoft.NET.HostModel` | host-model task helpers | `dotnet/runtime` | Host/packaging helpers are process-resident and often hold file/handle state while rewriting apphost assets | med — stale handle/file state can persist in server process | med | No | Keep host-model operations isolated and close all native handles deterministically |
+| `Microsoft.WindowsAppSDK` | Windows App SDK tasks | `dotnet`/Windows App SDK | Windows packaging tasks commonly touch registry, temp files, and native deployment state | med — server reuse can retain deployment/environment assumptions | med | No | Prefer short-lived TaskHost for packaging/deployment steps |
+| `Microsoft.VSSDK.BuildTools` | VS SDK build tasks | `microsoft/vssdk` | Visual Studio SDK tasks often cache extension/project metadata and interact with VS-specific native tooling | med — stale VS tool state can persist across builds | med | No | Per-build reset hook; isolate VS-specific tasks out of server reuse |
+| `ProjectInstaller` | installer task(s) | `dotnet/installer` | Deprecated path; low signal beyond checking for legacy statics | low | low | No | No action unless reused in active build paths |
+
+**Top 5 Wave 4 next-blockers:**
+1. `Xamarin.iOS.Tasks` — keychain/code-signing state + native handle leakage is the highest-severity reuse risk.
+2. `WasmAppBuilder` — env-var mutation around emscripten/toolchain setup is sticky and thread-hostile.
+3. `Xamarin.Android.Build.Tasks` — static-heavy legacy build tools; likely to hide process-lifetime caches.
+4. `ILCompiler.MSBuildTaskHost` — AOT host reuse needs explicit cache/handle hygiene before server default-on.
+5. `Microsoft.AspNetCore.SpaProxy.Tasks` — process lifetime of proxy subprocesses and handles can leak across builds.
+
+### Wave 4 — Console redirect + I/O correctness under server mode
+
+1. **Console output forwarding (server → client):** `OutOfProcServerNode.RedirectConsoleWriter` buffers writes into a `StringWriter` and flushes every 40ms via a timer; `Dispose()` stops the timer, flushes, and disposes the inner writer. Race-prone if a late `WriteLine` arrives during shutdown — directly explains issue #12580 (closed/not-planned `ObjectDisposedException` during `pack -graph`). (`src/Build/BackEnd/Node/OutOfProcServerNode.cs:455-782`)
+2. **Stdin forwarding (client → server): NOT implemented.** `MSBuildClient` does **not** forward stdin to the server. It only pumps packets and prints `ServerNodeConsoleWrite` back to local `Console`/`Console.Error`. Interactive `Console.ReadLine()` from a task running on the server will hang indefinitely. (`src/Build/BackEnd/Client/MSBuildClient.cs:310-363`, `src/Build/BackEnd/BuildManager/BuildManager.cs:830`)
+3. **`ServerNodeBuildCommand` payload:** carries client's command line, environment block, cultures, and a `TargetConsoleConfiguration` (buffer width / ANSI / screen / background color). **No `Console.OutputEncoding` / codepage propagation.** (`src/Build/BackEnd/Shared/ServerNodeBuildCommand.cs:15-105`, `src/Build/BackEnd/Shared/ConsoleConfiguration.cs:14-62`)
+4. **`Console.OutputEncoding` per request:** `OutOfProcServerNode` sets `ConsoleConfiguration.Provider` per request and temporarily applies buffer width / background color, but **never sets/restores `Console.OutputEncoding`** per build. Encoding correctness is whatever the server process happened to inherit at startup. (`src/Build/BackEnd/Node/OutOfProcServerNode.cs:365-440`)
+5. **`--interactive` flag:** parsed in the CLI (`src/MSBuild/XMake.cs:2285-2287`) and flows into evaluation/resolvers, but **server-mode I/O is not interactive**. NuGet auth over server is broken unless the auth flow avoids stdin entirely (e.g., uses a credential provider that handles its own UI).
+
+**Critical implications:**
+- **Interactive auth is broken under server mode.** This is a hard blocker for any user who relies on credential providers that prompt on stdin (legacy NuGet credential providers, dotnet user-secrets interactive flows).
+- **Console encoding bugs** (e.g., non-Latin text in build output) will exhibit DIFFERENT behavior under server vs. non-server because the server process's startup encoding is sticky for all subsequent requests.
+- **Issue #12580 (ObjectDisposedException) is a real race** — likely to resurface under heavy load or graph builds; the closed-not-planned status is questionable now that we're moving toward default-on.
+
+| Mitigation | Where | Priority | Notes |
+|---|---|---|---|
+| **CIO-1** | Disable server when `-interactive` is on the command line OR when stdin is a TTY | `src/MSBuild/XMake.cs:CanRunServerBasedOnCommandLineSwitches:346-388` | **P0** | Prevents broken auth flows. Trivial check; low blast radius. |
+| **CIO-2** | Propagate `Console.OutputEncoding` / codepage in `ConsoleConfiguration` payload, apply per-request, restore after | `src/Build/BackEnd/Shared/ConsoleConfiguration.cs`, `src/Build/BackEnd/Node/OutOfProcServerNode.cs:HandleServerNodeBuildCommand` | **P1** | Cross-platform correctness for non-ASCII output. |
+| **CIO-3** | Reopen issue #12580; add a barrier in `RedirectConsoleWriter.Dispose()` ensuring no pending `WriteLine` is in flight | `src/Build/BackEnd/Node/OutOfProcServerNode.cs:455-782` | **P1** | Race condition will recur under default-on; closing as "not planned" was a pre-default-on triage decision. |
+| **CIO-4** | Investigate stdin forwarding for interactive auth, or document that server-mode disables interactive flows | new feature OR docs | **P2** | Likely resolved by CIO-1 for now; full forwarding is a larger feature. |
+
+### Wave 4 — Telemetry on server use + monitoring readiness
+
+#### Inventory of server-related telemetry fields
+
+All server telemetry is aggregated in `BuildTelemetry` (`src/Framework/Telemetry/BuildTelemetry.cs`), emitted as a single `VS/MSBuild/build` event per build via two channels:
+- **.NET Framework / VS:** VS Telemetry Service, sampled at **1:25 000** (`DefaultSampleRate = 4e-5` in `TelemetryConstants.cs:34`).
+- **.NET Core / dotnet CLI:** OpenTelemetry `ActivitySource` `Microsoft.Build.TelemetryDefault` (`TelemetryManager.cs:100`). Consumers wire their own listener.
+
+| Field | Values | Source | Notes |
+|---|---|---|---|
+| `InitialMSBuildServerState` | `"hot"`, `"cold"`, `null` | `MSBuildClient.cs:164` | Set before pipe connect; null = server not tried |
+| `ServerFallbackReason` | `ServerBusy`, `UnableToConnect`, `LaunchError`, `UnknownServerState`, `Arguments`, `ErrorParsingCommandLine`, `ClientUnhandledException:<Type>`, `null` | `XMake.cs:374,383`, `MSBuildClientApp.cs:80,93` | null = success |
+| `StartAt` | `DateTime` | `MSBuildClient.cs:164` | Time before pipe connect / server launch |
+| `InnerStartAt` | `DateTime` | server-side `BuildManager` | Time when server actually starts the build |
+| `BuildDurationInMilliseconds` / `InnerBuildDurationInMilliseconds` | ms (computed) | `BuildTelemetry.cs:163,167` | Outer = includes IPC overhead; Inner = server-only execution |
+
+ETW events `MSBuildServerBuildStart` (89) / `MSBuildServerBuildStop` (90) carry richer payload (`clientExitType`, `countOfConsoleMessages`, `sumSizeOfConsoleMessages`) but are **not forwarded** to VS Telemetry / OpenTelemetry — only PerfView/ETW-local.
+
+#### Six critical gaps before default-on monitoring is viable
+
+1. **No explicit "server attempted" boolean.** Success is inferred by `ServerFallbackReason == null AND InitialMSBuildServerState != null` — invisible when env var unset. Need `IsServerModeEnabled: bool?`.
+2. **No connection latency field.** `StartAt → InnerStartAt` gap is muddled with build-prep; pure IPC handshake duration unrecorded.
+3. **No retry count.** `TryConnectToServer` may retry on non-timeout failures; spike invisible.
+4. **No server-process crash attribution** in `CrashTelemetry` — server crash looks identical to in-proc crash.
+5. **`MSBuildClientExitType.Unexpected`** (surprise pipe closure) does NOT trigger `ServerFallbackReason` — disappears from telemetry until users report.
+6. **Sampling at 1:25,000 too sparse** to detect a 5% fallback regression within 24h of a default-on rollout.
+
+#### Suggested server health dashboard
+
+| Panel | Query | Alert |
+|---|---|---|
+| Server adoption rate | `rate(ServerFallbackReason == null AND InitialMSBuildServerState != null) / rate(InitialMSBuildServerState != null)` | <90% → P1 |
+| Fallback breakdown | `count by ServerFallbackReason where ServerFallbackReason != null` | spike >2σ → P2 |
+| Cold-start latency | `avg(InnerBuildDurationInMilliseconds - BuildDurationInMilliseconds) where state="cold"` | P95 >8s → P3 |
+| Hot-reuse overhead | `avg(BuildDurationInMilliseconds - InnerBuildDurationInMilliseconds) where state="hot"` | P95 >2s → P2 |
+| Exception fallback rate | `rate(ServerFallbackReason like 'ClientUnhandledException:%')` | any sustained → P1 |
+| Build-failure parity | `rate(BuildSuccess=false) WHERE state!=null` vs same WHERE `state IS null` | >2% divergence → P1 |
+
+| ID | Mitigation | Where | Priority |
+|---|---|---|---|
+| **TEL-1** | Add `IsServerModeEnabled: bool?` field set in `XMake.cs` when env var detected (regardless of fallback) | `src/Framework/Telemetry/BuildTelemetry.cs` + `src/MSBuild/XMake.cs:314` | **P1** |
+| **TEL-2** | Add `ServerConnectionDurationMs`; record elapsed inside `TryConnectToServer` | `src/Build/BackEnd/Client/MSBuildClient.cs:605-639` | **P1** |
+| **TEL-3** | Add `ServerConnectionRetryCount`; increment in `tryAgain` loop | `src/Build/BackEnd/Client/MSBuildClient.cs:612` | **P2** |
+| **TEL-4** | Forward ETW events 89/90 into `BuildTelemetry` (or new `VS/MSBuild/server` event) | cross-cutting | **P2** |
+| **TEL-5** | Time-limited bump sample rate to 1:1 000 for server fields during rollout | `src/Framework/Telemetry/TelemetryConstants.cs:34` | **P1 (revert post-rollout)** |
+| **TEL-6** | Map `MSBuildClientExitType.Unexpected` → fallback + set `ServerFallbackReason` | `src/MSBuild/MSBuildClientApp.cs:86-93` | **P1** |
+
+### Wave 4 — Lesson learned: rejected mitigation CIO-1 (`-interactive` should NOT disable server)
+
+**The W4-2 sub-agent's CIO-1 recommendation ("disable server when `-interactive` is on cmdline") was prototyped, broke the existing test `MSBuildServer_Tests.ServerShouldStartWhenBuildIsInteractive` (`src/MSBuild.UnitTests/MSBuildServer_Tests.cs:289-308`), and was reverted.**
+
+The existing test contract is **explicit and intentional**:
+`
+pidOfInitialProcess.ShouldNotBe(pidOfServerProcess, "We failed to start a server node when interactive is true.");
+`
+The team designed server mode to coexist with `-interactive`, presumably because modern NuGet credential providers (Azure Artifacts Auth, Microsoft.Build.NuGetSdkResolver, etc.) use out-of-band UI (browser auth, Microsoft Auth Broker) rather than `Console.ReadLine()`.
+
+**Revised guidance:** Wave 4-2's interactive-auth concern is real for *legacy* credential providers that do read stdin, but the framework-level fix should be **per-task** (force credential-provider tasks to a transient TaskHost, similar to PR #13660's RestoreTask handling) rather than blanket-disable server. Adding the credential provider tasks to the `TaskRouter.IsKnownProblematicTask` allow-list is the right approach.
+
+| ID | Mitigation (revised) | Where | Priority |
+|---|---|---|---|
+| **CIO-1 (revised)** | Add NuGet credential-provider task names to `TaskRouter.s_knownProblematicTaskNames` allow-list (alongside `RestoreTask`) so they get a transient TaskHost — preserving server reuse for the rest of the build while keeping interactive auth flows isolated | `src/Build/BackEnd/Components/RequestBuilder/TaskRouter.cs` (extension to PR #13660) | **P2** |
+
 ## Recommended Mitigations
 
 ### Tiered roadmap to safe default-on MSBuild server
