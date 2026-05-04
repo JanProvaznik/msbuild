@@ -136,6 +136,16 @@ namespace Microsoft.Build.Framework.Telemetry
         public string? InitialMSBuildServerState { get; set; }
 
         /// <summary>
+        /// True when MSBuild server mode was requested for this invocation
+        /// (i.e., MSBUILDUSESERVER=1 was set), regardless of whether the client
+        /// successfully reached the server or fell back to in-proc execution.
+        /// Set even when ServerFallbackReason indicates fallback (e.g., Arguments,
+        /// UnableToConnect, ServerBusy) so dashboards can compute true server
+        /// adoption rate. null when the server was not requested at all.
+        /// </summary>
+        public bool? IsServerModeEnabled { get; set; }
+
+        /// <summary>
         /// Framework name suitable for display to a user.
         /// </summary>
         public string? BuildEngineFrameworkName { get; set; }
@@ -174,6 +184,7 @@ namespace Microsoft.Build.Framework.Telemetry
             AddIfNotNull(BuildEngineVersion);
             AddIfNotNull(BuildCheckEnabled);
             AddIfNotNull(MultiThreadedModeEnabled);
+            AddIfNotNull(IsServerModeEnabled);
             AddIfNotNull(SACEnabled);
             AddIfNotNull(IsStandaloneExecution);
             AddIfNotNull(FailureCategory);
@@ -205,6 +216,7 @@ namespace Microsoft.Build.Framework.Telemetry
             AddIfNotNull(BuildSuccess?.ToString(), nameof(BuildSuccess));
             AddIfNotNull(BuildCheckEnabled?.ToString(), nameof(BuildCheckEnabled));
             AddIfNotNull(MultiThreadedModeEnabled?.ToString(), nameof(MultiThreadedModeEnabled));
+            AddIfNotNull(IsServerModeEnabled?.ToString(), nameof(IsServerModeEnabled));
             AddIfNotNull(SACEnabled?.ToString(), nameof(SACEnabled));
             AddIfNotNull(IsStandaloneExecution?.ToString(), nameof(IsStandaloneExecution));
             AddIfNotNull(FailureCategory);

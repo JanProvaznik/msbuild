@@ -310,8 +310,16 @@ namespace Microsoft.Build.CommandLine
             }
 
             int exitCode;
+            bool serverModeRequested = Environment.GetEnvironmentVariable(Traits.UseMSBuildServerEnvVarName) == "1";
+            if (serverModeRequested && KnownTelemetry.PartialBuildTelemetry != null)
+            {
+                // Record that server mode was requested for this invocation, regardless of whether
+                // we end up actually using the server or fall back to in-proc. Dashboards use this
+                // to compute true server adoption rate (TEL-1).
+                KnownTelemetry.PartialBuildTelemetry.IsServerModeEnabled = true;
+            }
             if (
-                Environment.GetEnvironmentVariable(Traits.UseMSBuildServerEnvVarName) == "1" &&
+                serverModeRequested &&
                 !Traits.Instance.EscapeHatches.EnsureStdOutForChildNodesIsPrimaryStdout &&
                 CanRunServerBasedOnCommandLineSwitches(args))
             {
