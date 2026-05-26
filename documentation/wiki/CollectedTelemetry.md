@@ -93,7 +93,19 @@ Expressed and collected via [BuildTelemetry type](https://github.com/dotnet/msbu
 | All          | Host in which MSBuild build was executed (e.g. "VS", "VSCode", "Azure DevOps", "GitHub Action", "CLI"). |
 | All          | State of MSBuild server process before this build (one of 'cold', 'hot', null (if not run as server)). |
 | All          | Path to project file. |
-| All          | MSBuild server fallback reason (either "ServerBusy", "ConnectionError" or null (no fallback)). |
+| All          | MSBuild server fallback reason. Coarse compatibility field: one of `null` (server was used or never requested), `Arguments`, `ErrorParsingCommandLine`, `SingleNode`, `EscapeHatch`, `ServerBusy`, `UnableToConnect`, `UnknownServerState`, `LaunchError`. |
+| >= 10.0.300  | MSBuild server request state: `Requested` or `NotRequested`. |
+| >= 10.0.300  | Normalized `MSBUILDUSESERVER` value: `Unset`, `0`, `1`, or `Other`. |
+| >= 10.0.300  | MSBuild server pre-launch decision: `NotRequested`, `SkippedBeforeLaunch`, or `AttemptServer`. |
+| >= 10.0.300  | MSBuild server pre-launch decision reason: `EnvVarUnset`, `EnvVarZero`, `EnvVarOther`, `Eligible`, `EscapeHatch`, `Help`, `Version`, `NodeMode`, `BinaryLogReplay`, `NodeReuseDisabled`, `SingleNode`, or `ErrorParsingCommandLine`. |
+| >= 10.0.300  | MSBuild server fallback stage: `PreLaunch`, `PostLaunch`, or `null`. |
+| >= 10.0.300  | MSBuild server detailed fallback reason: the specific pre-launch decision reason or post-launch `MSBuildClientExitType`. |
+| >= 10.0.300  | MSBuild server final outcome: `NotRequested`, `SkippedBeforeLaunch`, `AttemptServer`, `RanOnServer`, `FallbackToInProc`, or `ClientFailure`. |
+| >= 10.0.300  | Effective max node count considered by the MSBuild server decision. |
+| >= 10.0.300  | Effective node reuse value considered by the MSBuild server decision. |
+| >= 10.0.300  | Project kind considered by the MSBuild server decision: `Project`, `Solution`, `SolutionFilter`, `BinaryLog`, or `Unknown`. |
+| >= 10.0.300  | Whether `MSBUILDENSURESTDOUTFORTASKPROCESSES=1` affected the MSBuild server decision. |
+| >= 10.0.300  | MSBuild server client exit type returned after a server attempt, when available. |
 | All          | Overall build success (true, false). |
 | All          | Build target. |
 | All          | Version of MSBuild. |

@@ -521,10 +521,7 @@ namespace Microsoft.Build.Experimental
 
             PartialBuildTelemetry? partialBuildTelemetry = KnownTelemetry.PartialBuildTelemetry == null
                 ? null
-                : new PartialBuildTelemetry(
-                    startedAt: KnownTelemetry.PartialBuildTelemetry.StartAt.GetValueOrDefault(),
-                    initialServerState: KnownTelemetry.PartialBuildTelemetry.InitialMSBuildServerState,
-                    serverFallbackReason: KnownTelemetry.PartialBuildTelemetry.ServerFallbackReason);
+                : new PartialBuildTelemetry(KnownTelemetry.PartialBuildTelemetry);
 
             return new ServerNodeBuildCommand(
                         _commandLine,

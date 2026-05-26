@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
@@ -59,6 +59,12 @@ namespace Microsoft.Build.Engine.UnitTests
     {
         private readonly ITestOutputHelper _output;
         private readonly TestEnvironment _env;
+
+        // With the new eligibility rule, MSBuild Server is only used when -m:N (N > 1)
+        // is on the command line. Server integration tests append this switch to opt
+        // into multi-node mode (and therefore the server path).
+        private const string MultiNodeSwitch = " -m:2";
+
         private static string printPidContents = @$"
 <Project>
 <UsingTask TaskName=""ProcessIdTask"" AssemblyFile=""{Assembly.GetExecutingAssembly().Location}"" />
@@ -92,13 +98,13 @@ namespace Microsoft.Build.Engine.UnitTests
         {
             TransientTestFile project = _env.CreateFile("testProject.proj", printPidContents);
             _env.SetEnvironmentVariable("MSBUILDUSESERVER", "1");
-            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path, out bool success, false, _output);
+            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path + MultiNodeSwitch, out bool success, false, _output);
             success.ShouldBeTrue();
             int pidOfInitialProcess = ParseNumber(output, "Process ID is ");
             int pidOfServerProcess = ParseNumber(output, "Server ID is ");
             pidOfInitialProcess.ShouldNotBe(pidOfServerProcess, "We started a server node to execute the target rather than running it in-proc, so its pid should be different.");
 
-            output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path, out success, false, _output);
+            output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path + MultiNodeSwitch, out success, false, _output);
             success.ShouldBeTrue();
             int newPidOfInitialProcess = ParseNumber(output, "Process ID is ");
             newPidOfInitialProcess.ShouldNotBe(pidOfServerProcess, "We started a server node to execute the target rather than running it in-proc, so its pid should be different.");
@@ -121,10 +127,10 @@ namespace Microsoft.Build.Engine.UnitTests
 
             // Start long-lived task execution
             TransientTestFile sleepProject = _env.CreateFile("napProject.proj", string.Format(sleepingTaskContentsFormat, markerFile.Path));
-            RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, sleepProject.Path, out _);
+            RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, sleepProject.Path + MultiNodeSwitch, out _);
 
             // Ensure that a new build can still succeed and that its server node is different.
-            output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path, out success, false, _output);
+            output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path + MultiNodeSwitch, out success, false, _output);
 
             success.ShouldBeTrue();
             newPidOfInitialProcess = ParseNumber(output, "Process ID is ");
@@ -142,7 +148,7 @@ namespace Microsoft.Build.Engine.UnitTests
             TransientTestFile project = _env.CreateFile("testProject.proj", printPidContents);
             _env.SetEnvironmentVariable("MSBUILDUSESERVER", "1");
 
-            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path, out bool success, false, _output);
+            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path + MultiNodeSwitch, out bool success, false, _output);
             success.ShouldBeTrue();
             int pidOfInitialProcess = ParseNumber(output, "Process ID is ");
             int pidOfServerProcess = ParseNumber(output, "Server ID is ");
@@ -151,14 +157,14 @@ namespace Microsoft.Build.Engine.UnitTests
             pidOfInitialProcess.ShouldNotBe(pidOfServerProcess, "We started a server node to execute the target rather than running it in-proc, so its pid should be different.");
 
             Environment.SetEnvironmentVariable("MSBUILDUSESERVER", "");
-            output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path, out success, false, _output);
+            output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path + MultiNodeSwitch, out success, false, _output);
             success.ShouldBeTrue();
             pidOfInitialProcess = ParseNumber(output, "Process ID is ");
             int pidOfNewserverProcess = ParseNumber(output, "Server ID is ");
             pidOfInitialProcess.ShouldBe(pidOfNewserverProcess, "We did not start a server node to execute the target, so its pid should be the same.");
 
             Environment.SetEnvironmentVariable("MSBUILDUSESERVER", "1");
-            output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path, out success, false, _output);
+            output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path + MultiNodeSwitch, out success, false, _output);
             success.ShouldBeTrue();
             pidOfInitialProcess = ParseNumber(output, "Process ID is ");
             pidOfNewserverProcess = ParseNumber(output, "Server ID is ");
@@ -184,7 +190,7 @@ namespace Microsoft.Build.Engine.UnitTests
             int pidOfServerProcess;
             Task t;
             // Start a server node and find its PID.
-            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path, out bool success, false, _output);
+            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path + MultiNodeSwitch, out bool success, false, _output);
             pidOfServerProcess = ParseNumber(output, "Server ID is ");
             _env.WithTransientProcess(pidOfServerProcess);
 
@@ -203,7 +209,7 @@ namespace Microsoft.Build.Engine.UnitTests
             watcher.EnableRaisingEvents = true;
             t = Task.Run(() =>
             {
-                RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, sleepProject.Path, out _, false, _output);
+                RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, sleepProject.Path + MultiNodeSwitch, out _, false, _output);
             });
 
             // The server will soon be in use; make sure we don't try to use it before that happens.
@@ -219,7 +225,10 @@ namespace Microsoft.Build.Engine.UnitTests
 
             Environment.SetEnvironmentVariable("MSBUILDUSESERVER", "1");
 
-            output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path, out success, false, _output);
+            // Pass -m:2 so this build is eligible for the server (SingleNode rule would
+            // otherwise fall back to in-proc); the assertion below verifies fallback when
+            // the server itself is occupied.
+            output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path + MultiNodeSwitch, out success, false, _output);
             success.ShouldBeTrue();
             pidOfServerProcess.ShouldNotBe(ParseNumber(output, "Server ID is "), "The server should be otherwise occupied.");
             pidOfServerProcess.ShouldNotBe(ParseNumber(output, "Process ID is "), "There should not be a server node for this build.");
@@ -242,7 +251,7 @@ namespace Microsoft.Build.Engine.UnitTests
             TransientTestFile project = _env.CreateFile("testProject.proj", printPidContents);
 
             // Start a server node and find its PID.
-            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path, out bool success, false, _output);
+            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path + MultiNodeSwitch, out bool success, false, _output);
             success.ShouldBeTrue();
             int pidOfServerProcess = ParseNumber(output, "Server ID is ");
             _env.WithTransientProcess(pidOfServerProcess);
@@ -279,11 +288,45 @@ namespace Microsoft.Build.Engine.UnitTests
             TransientTestFile project = _env.CreateFile("testProject.proj", printPidContents);
             _env.SetEnvironmentVariable("MSBUILDUSESERVER", "1");
 
-            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path + " /nodereuse:false", out bool success, false, _output);
+            // Pass -m:2 so the SingleNode rule does not also trigger; this test should
+            // verify nodereuse=false specifically, not the single-node fallback.
+            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path + MultiNodeSwitch + " /nodereuse:false", out bool success, false, _output);
             success.ShouldBeTrue();
             int pidOfInitialProcess = ParseNumber(output, "Process ID is ");
             int pidOfServerProcess = ParseNumber(output, "Server ID is ");
             pidOfInitialProcess.ShouldBe(pidOfServerProcess, "We started a server node even when nodereuse is false.");
+        }
+
+        [Fact]
+        public void ServerShouldNotRunWhenCpuCountIsOne()
+        {
+            // Eligibility check: MSBUILDUSESERVER=1 with no -m switch should now run
+            // in-proc (Process ID == Server ID) because server overhead is not justified
+            // for a single-node build. See MSBuildServerDecision.Decide (SingleNode).
+            TransientTestFile project = _env.CreateFile("testProject.proj", printPidContents);
+            _env.SetEnvironmentVariable("MSBUILDUSESERVER", "1");
+
+            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path, out bool success, false, _output);
+            success.ShouldBeTrue();
+            int pidOfInitialProcess = ParseNumber(output, "Process ID is ");
+            int pidOfServerProcess = ParseNumber(output, "Server ID is ");
+            pidOfInitialProcess.ShouldBe(pidOfServerProcess, "MSBuild should not start a server node when the effective cpu count is 1.");
+        }
+
+        [Fact]
+        public void ServerShouldRunWhenMaxCpuCountIsTwo()
+        {
+            // Eligibility check: MSBUILDUSESERVER=1 with -m:2 (multi-node) should start
+            // a server node. Process ID != Server ID.
+            TransientTestFile project = _env.CreateFile("testProject.proj", printPidContents);
+            _env.SetEnvironmentVariable("MSBUILDUSESERVER", "1");
+
+            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path + " -m:2", out bool success, false, _output);
+            success.ShouldBeTrue();
+            int pidOfInitialProcess = ParseNumber(output, "Process ID is ");
+            int pidOfServerProcess = ParseNumber(output, "Server ID is ");
+            _env.WithTransientProcess(pidOfServerProcess);
+            pidOfInitialProcess.ShouldNotBe(pidOfServerProcess, "MSBuild should start a server node when -m:2 is requested.");
         }
 
         [Fact]
@@ -292,7 +335,7 @@ namespace Microsoft.Build.Engine.UnitTests
             TransientTestFile project = _env.CreateFile("testProject.proj", printPidContents);
             _env.SetEnvironmentVariable("MSBUILDUSESERVER", "1");
 
-            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path + " -interactive", out bool success, false, _output);
+            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, project.Path + MultiNodeSwitch + " -interactive", out bool success, false, _output);
             int pidOfInitialProcess = ParseNumber(output, "Process ID is ");
             int pidOfServerProcess = ParseNumber(output, "Server ID is ");
 
@@ -330,7 +373,7 @@ namespace Microsoft.Build.Engine.UnitTests
             _env.SetEnvironmentVariable("MSBUILDUSESERVER", "1");
 
             // Start on current working directory
-            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, $"/t:DisplayMessages {project.Path}", out bool success, false, _output);
+            string output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, $"/t:DisplayMessages{MultiNodeSwitch} {project.Path}", out bool success, false, _output);
             success.ShouldBeTrue();
             int pidOfServerProcess = ParseNumber(output, "Server ID is ");
             _env.WithTransientProcess(pidOfServerProcess);
@@ -338,7 +381,7 @@ namespace Microsoft.Build.Engine.UnitTests
 
             // Start on transient project directory
             _env.SetCurrentDirectory(Path.GetDirectoryName(project.Path));
-            output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, $"/t:DisplayMessages {project.Path}", out success, false, _output);
+            output = RunnerUtilities.ExecMSBuild(BuildEnvironmentHelper.Instance.CurrentMSBuildExePath, $"/t:DisplayMessages{MultiNodeSwitch} {project.Path}", out success, false, _output);
             int pidOfNewServerProcess = ParseNumber(output, "Server ID is ");
             if (pidOfServerProcess != pidOfNewServerProcess)
             {

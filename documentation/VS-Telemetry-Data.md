@@ -35,7 +35,19 @@ The primary telemetry event capturing overall build information.
 | `SACEnabled` | bool | Whether Smart Application Control was enabled |
 | `IsStandaloneExecution` | bool | True if MSBuild runs from command line |
 | `InitialMSBuildServerState` | string | Server state before build: "cold", "hot", or null |
-| `ServerFallbackReason` | string | If server was bypassed: "ServerBusy", "ConnectionError", or null |
+| `ServerFallbackReason` | string | Coarse MSBuild Server fallback reason, or null |
+| `MSBuildServerRequestState` | string | Whether MSBuild Server was requested: `Requested` or `NotRequested` |
+| `MSBuildServerEnvVarValue` | string | Normalized `MSBUILDUSESERVER` value: `Unset`, `0`, `1`, or `Other` |
+| `MSBuildServerDecision` | string | Pre-launch decision: `NotRequested`, `SkippedBeforeLaunch`, or `AttemptServer` |
+| `MSBuildServerDecisionReason` | string | Specific pre-launch decision reason, such as `Eligible`, `SingleNode`, `NodeReuseDisabled`, or `ErrorParsingCommandLine` |
+| `MSBuildServerFallbackStage` | string | Fallback stage: `PreLaunch`, `PostLaunch`, or null |
+| `MSBuildServerFallbackDetailedReason` | string | Specific pre-launch decision reason or post-launch client exit type |
+| `MSBuildServerFinalOutcome` | string | Final server outcome: `NotRequested`, `SkippedBeforeLaunch`, `AttemptServer`, `RanOnServer`, `FallbackToInProc`, or `ClientFailure` |
+| `MSBuildServerEffectiveMaxNodeCount` | int | Effective max node count used by the server decision |
+| `MSBuildServerNodeReuseEnabled` | bool | Effective node reuse value used by the server decision |
+| `MSBuildServerProjectKind` | string | Project input kind: `Project`, `Solution`, `SolutionFilter`, `BinaryLog`, or `Unknown` |
+| `MSBuildServerStdOutEscapeHatchEnabled` | bool | Whether `MSBUILDENSURESTDOUTFORTASKPROCESSES=1` affected the server decision |
+| `MSBuildServerClientExitType` | string | Server client exit type reported after a server attempt, when available |
 | `ProjectPath` | string | Path to the project file being built |
 | `FailureCategory` | string | Primary failure category when build fails (see Error Categorization) |
 | `ErrorCounts` | object | Breakdown of errors by category (see Error Categorization) |

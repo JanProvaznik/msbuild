@@ -47,6 +47,18 @@ public class KnownTelemetry_Tests
         buildTelemetry.InnerStartAt.ShouldBeNull();
         buildTelemetry.ProjectPath.ShouldBeNull();
         buildTelemetry.ServerFallbackReason.ShouldBeNull();
+        buildTelemetry.MSBuildServerRequestState.ShouldBeNull();
+        buildTelemetry.MSBuildServerEnvVarValue.ShouldBeNull();
+        buildTelemetry.MSBuildServerDecision.ShouldBeNull();
+        buildTelemetry.MSBuildServerDecisionReason.ShouldBeNull();
+        buildTelemetry.MSBuildServerFallbackStage.ShouldBeNull();
+        buildTelemetry.MSBuildServerFallbackDetailedReason.ShouldBeNull();
+        buildTelemetry.MSBuildServerFinalOutcome.ShouldBeNull();
+        buildTelemetry.MSBuildServerEffectiveMaxNodeCount.ShouldBeNull();
+        buildTelemetry.MSBuildServerNodeReuseEnabled.ShouldBeNull();
+        buildTelemetry.MSBuildServerProjectKind.ShouldBeNull();
+        buildTelemetry.MSBuildServerStdOutEscapeHatchEnabled.ShouldBeNull();
+        buildTelemetry.MSBuildServerClientExitType.ShouldBeNull();
         buildTelemetry.StartAt.ShouldBeNull();
         buildTelemetry.BuildSuccess.ShouldBeNull();
         buildTelemetry.BuildTarget.ShouldBeNull();
@@ -75,6 +87,18 @@ public class KnownTelemetry_Tests
         buildTelemetry.InnerStartAt = innerStartAt;
         buildTelemetry.ProjectPath = "C:/dev/theProject";
         buildTelemetry.ServerFallbackReason = "busy";
+        buildTelemetry.MSBuildServerRequestState = "Requested";
+        buildTelemetry.MSBuildServerEnvVarValue = "1";
+        buildTelemetry.MSBuildServerDecision = "AttemptServer";
+        buildTelemetry.MSBuildServerDecisionReason = "Eligible";
+        buildTelemetry.MSBuildServerFallbackStage = "PostLaunch";
+        buildTelemetry.MSBuildServerFallbackDetailedReason = "ServerBusy";
+        buildTelemetry.MSBuildServerFinalOutcome = "FallbackToInProc";
+        buildTelemetry.MSBuildServerEffectiveMaxNodeCount = 2;
+        buildTelemetry.MSBuildServerNodeReuseEnabled = true;
+        buildTelemetry.MSBuildServerProjectKind = "Project";
+        buildTelemetry.MSBuildServerStdOutEscapeHatchEnabled = false;
+        buildTelemetry.MSBuildServerClientExitType = "ServerBusy";
         buildTelemetry.StartAt = startAt;
         buildTelemetry.BuildSuccess = true;
         buildTelemetry.BuildTarget = "Clean";
@@ -85,7 +109,7 @@ public class KnownTelemetry_Tests
 
         var properties = buildTelemetry.GetProperties();
 
-        properties.Count.ShouldBe(14);
+        properties.Count.ShouldBe(26);
 
         properties["BuildEngineDisplayVersion"].ShouldBe("Some Display Version");
         properties["BuildEngineFrameworkName"].ShouldBe("new .NET");
@@ -93,6 +117,18 @@ public class KnownTelemetry_Tests
         properties["InitialMSBuildServerState"].ShouldBe("hot");
         properties["ProjectPath"].ShouldBe("theProject");
         properties["ServerFallbackReason"].ShouldBe("busy");
+        properties["MSBuildServerRequestState"].ShouldBe("Requested");
+        properties["MSBuildServerEnvVarValue"].ShouldBe("1");
+        properties["MSBuildServerDecision"].ShouldBe("AttemptServer");
+        properties["MSBuildServerDecisionReason"].ShouldBe("Eligible");
+        properties["MSBuildServerFallbackStage"].ShouldBe("PostLaunch");
+        properties["MSBuildServerFallbackDetailedReason"].ShouldBe("ServerBusy");
+        properties["MSBuildServerFinalOutcome"].ShouldBe("FallbackToInProc");
+        properties["MSBuildServerEffectiveMaxNodeCount"].ShouldBe("2");
+        properties["MSBuildServerNodeReuseEnabled"].ShouldBe("True");
+        properties["MSBuildServerProjectKind"].ShouldBe("Project");
+        properties["MSBuildServerStdOutEscapeHatchEnabled"].ShouldBe("False");
+        properties["MSBuildServerClientExitType"].ShouldBe("ServerBusy");
         properties["BuildSuccess"].ShouldBe("True");
         properties["BuildTarget"].ShouldBe("Clean");
         properties["BuildEngineVersion"].ShouldBe("1.2.3.4");
@@ -204,6 +240,41 @@ public class KnownTelemetry_Tests
         var errorCounts = activityProperties["ErrorCounts"] as ErrorCountsInfo;
         errorCounts.ShouldNotBeNull();
         errorCounts.Task.ShouldBe(10);
+    }
+
+    [Fact]
+    public void BuildTelemetryActivityPropertiesIncludesMSBuildServerData()
+    {
+        BuildTelemetry buildTelemetry = new()
+        {
+            MSBuildServerRequestState = "Requested",
+            MSBuildServerEnvVarValue = "1",
+            MSBuildServerDecision = "AttemptServer",
+            MSBuildServerDecisionReason = "Eligible",
+            MSBuildServerFallbackStage = "PostLaunch",
+            MSBuildServerFallbackDetailedReason = "ServerBusy",
+            MSBuildServerFinalOutcome = "FallbackToInProc",
+            MSBuildServerEffectiveMaxNodeCount = 2,
+            MSBuildServerNodeReuseEnabled = true,
+            MSBuildServerProjectKind = "Project",
+            MSBuildServerStdOutEscapeHatchEnabled = false,
+            MSBuildServerClientExitType = "ServerBusy",
+        };
+
+        var activityProperties = buildTelemetry.GetActivityProperties();
+
+        activityProperties["MSBuildServerRequestState"].ShouldBe("Requested");
+        activityProperties["MSBuildServerEnvVarValue"].ShouldBe("1");
+        activityProperties["MSBuildServerDecision"].ShouldBe("AttemptServer");
+        activityProperties["MSBuildServerDecisionReason"].ShouldBe("Eligible");
+        activityProperties["MSBuildServerFallbackStage"].ShouldBe("PostLaunch");
+        activityProperties["MSBuildServerFallbackDetailedReason"].ShouldBe("ServerBusy");
+        activityProperties["MSBuildServerFinalOutcome"].ShouldBe("FallbackToInProc");
+        activityProperties["MSBuildServerEffectiveMaxNodeCount"].ShouldBe(2);
+        activityProperties["MSBuildServerNodeReuseEnabled"].ShouldBe(true);
+        activityProperties["MSBuildServerProjectKind"].ShouldBe("Project");
+        activityProperties["MSBuildServerStdOutEscapeHatchEnabled"].ShouldBe(false);
+        activityProperties["MSBuildServerClientExitType"].ShouldBe("ServerBusy");
     }
 
     [Fact]

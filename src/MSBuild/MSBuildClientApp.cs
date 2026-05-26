@@ -68,7 +68,12 @@ namespace Microsoft.Build.CommandLine
             {
                 if (KnownTelemetry.PartialBuildTelemetry != null)
                 {
-                    KnownTelemetry.PartialBuildTelemetry.ServerFallbackReason = exitResult.MSBuildClientExitType.ToString();
+                    string clientExitType = exitResult.MSBuildClientExitType.ToString();
+                    KnownTelemetry.PartialBuildTelemetry.ServerFallbackReason = clientExitType;
+                    KnownTelemetry.PartialBuildTelemetry.MSBuildServerFallbackStage = MSBuildServerDecision.FallbackStagePostLaunch;
+                    KnownTelemetry.PartialBuildTelemetry.MSBuildServerFallbackDetailedReason = clientExitType;
+                    KnownTelemetry.PartialBuildTelemetry.MSBuildServerFinalOutcome = MSBuildServerDecision.FinalOutcomeFallbackToInProc;
+                    KnownTelemetry.PartialBuildTelemetry.MSBuildServerClientExitType = clientExitType;
                 }
 
                 // Surface a single user-visible message on stderr when the failure is something
@@ -89,9 +94,21 @@ namespace Microsoft.Build.CommandLine
             if (exitResult.MSBuildClientExitType == MSBuildClientExitType.Success &&
                 Enum.TryParse(exitResult.MSBuildAppExitTypeString, out MSBuildApp.ExitType MSBuildAppExitType))
             {
+                if (KnownTelemetry.PartialBuildTelemetry != null)
+                {
+                    KnownTelemetry.PartialBuildTelemetry.MSBuildServerFinalOutcome = MSBuildServerDecision.FinalOutcomeRanOnServer;
+                    KnownTelemetry.PartialBuildTelemetry.MSBuildServerClientExitType = exitResult.MSBuildClientExitType.ToString();
+                }
+
                 // The client successfully set up a build task for MSBuild server and received the result.
                 // (Which could be a failure as well). Return the received exit type.
                 return MSBuildAppExitType;
+            }
+
+            if (KnownTelemetry.PartialBuildTelemetry != null)
+            {
+                KnownTelemetry.PartialBuildTelemetry.MSBuildServerFinalOutcome = MSBuildServerDecision.FinalOutcomeClientFailure;
+                KnownTelemetry.PartialBuildTelemetry.MSBuildServerClientExitType = exitResult.MSBuildClientExitType.ToString();
             }
 
             return MSBuildApp.ExitType.MSBuildClientFailure;

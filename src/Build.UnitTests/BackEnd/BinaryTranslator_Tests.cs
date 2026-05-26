@@ -12,6 +12,7 @@ using Microsoft.Build.BackEnd;
 using Microsoft.Build.Exceptions;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Framework.BuildException;
+using Microsoft.Build.Framework.Telemetry;
 using Shouldly;
 using Xunit;
 
@@ -799,6 +800,58 @@ namespace Microsoft.Build.UnitTests.BackEnd
             // Both casings should be interned if the comparer was correctly reset.
             Assert.Equal(mixedCaseValue, deserializedMixedCaseValue);
             Assert.Equal(lowerCaseValue, deserializedLowerCaseValue);
+        }
+
+        [Fact]
+        public void PartialBuildTelemetrySerializesMSBuildServerFields()
+        {
+            DateTime startedAt = DateTime.UtcNow;
+            BuildTelemetry source = new()
+            {
+                StartAt = startedAt,
+                InitialMSBuildServerState = "hot",
+                ServerFallbackReason = "ServerBusy",
+                MSBuildServerRequestState = "Requested",
+                MSBuildServerEnvVarValue = "1",
+                MSBuildServerDecision = "AttemptServer",
+                MSBuildServerDecisionReason = "Eligible",
+                MSBuildServerFallbackStage = "PostLaunch",
+                MSBuildServerFallbackDetailedReason = "ServerBusy",
+                MSBuildServerFinalOutcome = "FallbackToInProc",
+                MSBuildServerEffectiveMaxNodeCount = 2,
+                MSBuildServerNodeReuseEnabled = true,
+                MSBuildServerProjectKind = "Project",
+                MSBuildServerStdOutEscapeHatchEnabled = false,
+                MSBuildServerClientExitType = "ServerBusy",
+            };
+
+            MemoryStream serializationStream = new();
+            using ITranslator writeTranslator = BinaryTranslator.GetWriteTranslator(serializationStream);
+            PartialBuildTelemetry partialBuildTelemetry = new(source);
+            partialBuildTelemetry.Translate(writeTranslator);
+
+            serializationStream.Position = 0;
+
+            using ITranslator readTranslator = BinaryTranslator.GetReadTranslator(serializationStream, InterningBinaryReader.PoolingBuffer);
+            PartialBuildTelemetry deserialized = PartialBuildTelemetry.FactoryForDeserialization(readTranslator);
+            BuildTelemetry target = new();
+            deserialized.ApplyTo(target);
+
+            target.StartAt.ShouldBe(startedAt);
+            target.InitialMSBuildServerState.ShouldBe("hot");
+            target.ServerFallbackReason.ShouldBe("ServerBusy");
+            target.MSBuildServerRequestState.ShouldBe("Requested");
+            target.MSBuildServerEnvVarValue.ShouldBe("1");
+            target.MSBuildServerDecision.ShouldBe("AttemptServer");
+            target.MSBuildServerDecisionReason.ShouldBe("Eligible");
+            target.MSBuildServerFallbackStage.ShouldBe("PostLaunch");
+            target.MSBuildServerFallbackDetailedReason.ShouldBe("ServerBusy");
+            target.MSBuildServerFinalOutcome.ShouldBe("FallbackToInProc");
+            target.MSBuildServerEffectiveMaxNodeCount.ShouldBe(2);
+            target.MSBuildServerNodeReuseEnabled.ShouldBe(true);
+            target.MSBuildServerProjectKind.ShouldBe("Project");
+            target.MSBuildServerStdOutEscapeHatchEnabled.ShouldBe(false);
+            target.MSBuildServerClientExitType.ShouldBe("ServerBusy");
         }
 
         /// <summary>

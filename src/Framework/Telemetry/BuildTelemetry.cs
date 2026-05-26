@@ -56,8 +56,8 @@ namespace Microsoft.Build.Framework.Telemetry
         public string? BuildTarget { get; set; }
 
         /// <summary>
-        /// MSBuild server fallback reason.
-        /// Either "ServerBusy", "ConnectionError" or null (no fallback).
+        /// MSBuild server fallback reason. Kept as the coarse compatibility field.
+        /// More granular fields below describe request/config/decision/outcome details.
         /// </summary>
         public string? ServerFallbackReason { get; set; }
 
@@ -136,6 +136,77 @@ namespace Microsoft.Build.Framework.Telemetry
         public string? InitialMSBuildServerState { get; set; }
 
         /// <summary>
+        /// Whether MSBuild Server was requested (for example, via MSBUILDUSESERVER=1).
+        /// Expected values: "Requested" or "NotRequested".
+        /// </summary>
+        public string? MSBuildServerRequestState { get; set; }
+
+        /// <summary>
+        /// Normalized MSBUILDUSESERVER environment variable value.
+        /// Expected values: "Unset", "0", "1", or "Other".
+        /// </summary>
+        public string? MSBuildServerEnvVarValue { get; set; }
+
+        /// <summary>
+        /// Top-level server decision before attempting to connect to or launch a server.
+        /// Expected values: "NotRequested", "SkippedBeforeLaunch", or "AttemptServer".
+        /// </summary>
+        public string? MSBuildServerDecision { get; set; }
+
+        /// <summary>
+        /// Specific reason behind <see cref="MSBuildServerDecision"/>.
+        /// Expected values include "EnvVarUnset", "EnvVarZero", "EnvVarOther", "Eligible",
+        /// "EscapeHatch", "Help", "Version", "NodeMode", "BinaryLogReplay",
+        /// "NodeReuseDisabled", "SingleNode", and "ErrorParsingCommandLine".
+        /// </summary>
+        public string? MSBuildServerDecisionReason { get; set; }
+
+        /// <summary>
+        /// Stage at which the server path fell back to in-process execution.
+        /// Expected values: "PreLaunch" or "PostLaunch".
+        /// </summary>
+        public string? MSBuildServerFallbackStage { get; set; }
+
+        /// <summary>
+        /// Most specific fallback reason available. For pre-launch fallbacks this is the
+        /// decision reason; for post-launch fallbacks this is the MSBuildClientExitType.
+        /// </summary>
+        public string? MSBuildServerFallbackDetailedReason { get; set; }
+
+        /// <summary>
+        /// Final server outcome after any client-server interaction.
+        /// Expected values: "NotRequested", "SkippedBeforeLaunch", "AttemptServer",
+        /// "RanOnServer", "FallbackToInProc", or "ClientFailure".
+        /// </summary>
+        public string? MSBuildServerFinalOutcome { get; set; }
+
+        /// <summary>
+        /// Effective max node count from the command line (-m / -maxcpucount) after parsing.
+        /// </summary>
+        public int? MSBuildServerEffectiveMaxNodeCount { get; set; }
+
+        /// <summary>
+        /// Effective node reuse setting from the command line and environment.
+        /// </summary>
+        public bool? MSBuildServerNodeReuseEnabled { get; set; }
+
+        /// <summary>
+        /// Kind of input being built for the server-eligibility decision.
+        /// Expected values include "Project", "Solution", "SolutionFilter", "BinaryLog", and "Unknown".
+        /// </summary>
+        public string? MSBuildServerProjectKind { get; set; }
+
+        /// <summary>
+        /// Whether MSBUILDENSURESTDOUTFORTASKPROCESSES was enabled for the decision.
+        /// </summary>
+        public bool? MSBuildServerStdOutEscapeHatchEnabled { get; set; }
+
+        /// <summary>
+        /// MSBuildClientExitType returned by the server client, when available.
+        /// </summary>
+        public string? MSBuildServerClientExitType { get; set; }
+
+        /// <summary>
         /// Framework name suitable for display to a user.
         /// </summary>
         public string? BuildEngineFrameworkName { get; set; }
@@ -156,7 +227,7 @@ namespace Microsoft.Build.Framework.Telemetry
         /// </summary>
         public Dictionary<string, object> GetActivityProperties()
         {
-            Dictionary<string, object> telemetryItems = new(8);
+            Dictionary<string, object> telemetryItems = new(24);
 
             if (StartAt.HasValue && FinishedAt.HasValue)
             {
@@ -178,6 +249,18 @@ namespace Microsoft.Build.Framework.Telemetry
             AddIfNotNull(IsStandaloneExecution);
             AddIfNotNull(FailureCategory);
             AddIfNotNull(ErrorCounts);
+            AddIfNotNull(MSBuildServerRequestState);
+            AddIfNotNull(MSBuildServerEnvVarValue);
+            AddIfNotNull(MSBuildServerDecision);
+            AddIfNotNull(MSBuildServerDecisionReason);
+            AddIfNotNull(MSBuildServerFallbackStage);
+            AddIfNotNull(MSBuildServerFallbackDetailedReason);
+            AddIfNotNull(MSBuildServerFinalOutcome);
+            AddIfNotNull(MSBuildServerEffectiveMaxNodeCount);
+            AddIfNotNull(MSBuildServerNodeReuseEnabled);
+            AddIfNotNull(MSBuildServerProjectKind);
+            AddIfNotNull(MSBuildServerStdOutEscapeHatchEnabled);
+            AddIfNotNull(MSBuildServerClientExitType);
 
             return telemetryItems;
 
@@ -200,6 +283,18 @@ namespace Microsoft.Build.Framework.Telemetry
             AddIfNotNull(InitialMSBuildServerState);
             AddIfNotNull(ProjectPath != null ? Path.GetFileName(ProjectPath) : null, nameof(ProjectPath));
             AddIfNotNull(ServerFallbackReason);
+            AddIfNotNull(MSBuildServerRequestState);
+            AddIfNotNull(MSBuildServerEnvVarValue);
+            AddIfNotNull(MSBuildServerDecision);
+            AddIfNotNull(MSBuildServerDecisionReason);
+            AddIfNotNull(MSBuildServerFallbackStage);
+            AddIfNotNull(MSBuildServerFallbackDetailedReason);
+            AddIfNotNull(MSBuildServerFinalOutcome);
+            AddIfNotNull(MSBuildServerEffectiveMaxNodeCount?.ToString(CultureInfo.InvariantCulture), nameof(MSBuildServerEffectiveMaxNodeCount));
+            AddIfNotNull(MSBuildServerNodeReuseEnabled?.ToString(), nameof(MSBuildServerNodeReuseEnabled));
+            AddIfNotNull(MSBuildServerProjectKind);
+            AddIfNotNull(MSBuildServerStdOutEscapeHatchEnabled?.ToString(), nameof(MSBuildServerStdOutEscapeHatchEnabled));
+            AddIfNotNull(MSBuildServerClientExitType);
             AddIfNotNull(SanitizeBuildTarget(BuildTarget), nameof(BuildTarget));
             AddIfNotNull(BuildEngineVersion?.ToString(), nameof(BuildEngineVersion));
             AddIfNotNull(BuildSuccess?.ToString(), nameof(BuildSuccess));

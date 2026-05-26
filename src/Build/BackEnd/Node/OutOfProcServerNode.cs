@@ -405,10 +405,9 @@ namespace Microsoft.Build.Experimental
             if (command.PartialBuildTelemetry != null)
             {
                 BuildTelemetry buildTelemetry = KnownTelemetry.PartialBuildTelemetry ??= new BuildTelemetry();
-
-                buildTelemetry.StartAt = command.PartialBuildTelemetry.StartedAt;
-                buildTelemetry.InitialMSBuildServerState = command.PartialBuildTelemetry.InitialServerState;
-                buildTelemetry.ServerFallbackReason = command.PartialBuildTelemetry.ServerFallbackReason;
+                command.PartialBuildTelemetry.ApplyTo(buildTelemetry);
+                buildTelemetry.MSBuildServerFinalOutcome = PartialBuildTelemetry.FinalOutcomeRanOnServer;
+                buildTelemetry.MSBuildServerClientExitType = MSBuildClientExitType.Success.ToString();
             }
 
             // Also try our best to increase chance custom Loggers which use Console static members will work as expected.

@@ -310,10 +310,14 @@ namespace Microsoft.Build.CommandLine
             }
 
             int exitCode;
-            if (
-                Environment.GetEnvironmentVariable(Traits.UseMSBuildServerEnvVarName) == "1" &&
-                !Traits.Instance.EscapeHatches.EnsureStdOutForChildNodesIsPrimaryStdout &&
-                CanRunServerBasedOnCommandLineSwitches(args))
+            MSBuildServerDecisionResult serverDecision = MSBuildServerDecision.Decide(args, commandLineParser, Traits.Instance);
+
+            if (KnownTelemetry.PartialBuildTelemetry is { } telemetry)
+            {
+                serverDecision.ApplyTo(telemetry);
+            }
+
+            if (serverDecision.UseServer)
             {
                 Console.CancelKeyPress += Console_CancelKeyPress;
 
@@ -335,57 +339,6 @@ namespace Microsoft.Build.CommandLine
             TelemetryManager.Instance?.Dispose();
 
             return exitCode;
-        }
-
-        /// <summary>
-        /// Returns true if arguments allows or make sense to leverage msbuild server.
-        /// </summary>
-        /// <remarks>
-        /// Will not throw. If arguments processing fails, we will not run it on server - no reason as it will not run any build anyway.
-        /// </remarks>
-        private static bool CanRunServerBasedOnCommandLineSwitches(string[] commandLine)
-        {
-            bool canRunServer = true;
-            try
-            {
-                commandLineParser.GatherAllSwitches(
-                    commandLine,
-                    s_globalMessagesToLogInBuildLoggers,
-                    out CommandLineSwitches switchesFromAutoResponseFile,
-                    out CommandLineSwitches switchesNotFromAutoResponseFile,
-                    out string fullCommandLine,
-                    out s_exeName);
-
-                CommandLineSwitches commandLineSwitches = CombineSwitchesRespectingPriority(switchesFromAutoResponseFile, switchesNotFromAutoResponseFile, fullCommandLine);
-                if (commandLineParser.CheckAndGatherProjectAutoResponseFile(switchesFromAutoResponseFile, commandLineSwitches, false, fullCommandLine))
-                {
-                    commandLineSwitches = CombineSwitchesRespectingPriority(switchesFromAutoResponseFile, switchesNotFromAutoResponseFile, fullCommandLine);
-                }
-                string projectFile = ProcessProjectSwitch(commandLineSwitches[CommandLineSwitches.ParameterizedSwitch.Project], commandLineSwitches[CommandLineSwitches.ParameterizedSwitch.IgnoreProjectExtensions], Directory.GetFiles);
-                if (commandLineSwitches[CommandLineSwitches.ParameterlessSwitch.Help] ||
-                    commandLineSwitches.IsParameterizedSwitchSet(CommandLineSwitches.ParameterizedSwitch.NodeMode) ||
-                    commandLineSwitches[CommandLineSwitches.ParameterlessSwitch.Version] ||
-                    FileUtilities.IsBinaryLogFilename(projectFile) ||
-                    !ProcessNodeReuseSwitch(commandLineSwitches[CommandLineSwitches.ParameterizedSwitch.NodeReuse]))
-                {
-                    canRunServer = false;
-                    if (KnownTelemetry.PartialBuildTelemetry != null)
-                    {
-                        KnownTelemetry.PartialBuildTelemetry.ServerFallbackReason = "Arguments";
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                CommunicationsUtilities.Trace($"Unexpected exception during command line parsing. Can not determine if it is allowed to use Server. Fall back to old behavior. Exception: {ex}");
-                if (KnownTelemetry.PartialBuildTelemetry != null)
-                {
-                    KnownTelemetry.PartialBuildTelemetry.ServerFallbackReason = "ErrorParsingCommandLine";
-                }
-                canRunServer = false;
-            }
-
-            return canRunServer;
         }
 
         /// <summary>
@@ -2621,7 +2574,7 @@ namespace Microsoft.Build.CommandLine
             return automatedEnvironmentVariables.Any(envVar => !string.IsNullOrEmpty(Environment.GetEnvironmentVariable(envVar)));
         }
 
-        private static CommandLineSwitches CombineSwitchesRespectingPriority(CommandLineSwitches switchesFromAutoResponseFile, CommandLineSwitches switchesNotFromAutoResponseFile, string commandLine)
+        internal static CommandLineSwitches CombineSwitchesRespectingPriority(CommandLineSwitches switchesFromAutoResponseFile, CommandLineSwitches switchesNotFromAutoResponseFile, string commandLine)
         {
             // combine the auto-response file switches with the command line switches in a left-to-right manner, where the
             // auto-response file switches are on the left (default options), and the command line switches are on the
