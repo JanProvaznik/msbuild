@@ -17,18 +17,20 @@ jobs:
     env:
       VALIDATE_PAT: |
         if [ -z "$COPILOT_GITHUB_TOKEN" ]; then echo "status=empty" >> "$GITHUB_OUTPUT"; exit 0; fi
-        set +e; timeout 30 copilot --prompt "Say OK" --available-tools="" --silent --effort=low; rc=$?; set -e
+        set +e; timeout 30 copilot --prompt "Say OK" --available-tools="" --silent --effort=low --no-ask-user; rc=$?; set -e
         if [ $rc -eq 0 ]; then echo "status=valid" >> "$GITHUB_OUTPUT"
         elif [ $rc -eq 124 ]; then echo "status=unknown" >> "$GITHUB_OUTPUT"
-        else echo "status=invalid" >> "$GITHUB_OUTPUT"; fi
+        else echo "status=failed" >> "$GITHUB_OUTPUT"; fi
     steps:
       - name: Setup gh-aw scripts
-        uses: github/gh-aw-actions/setup@49dc896ccb7d6d975514cfe232bcbd68cc12e2c1 # v0.87.9
+        uses: github/gh-aw-actions/setup@9271a1804551c0dc4fb0085a97979950aa2f8489 # v0.88.2
         with:
           destination: ${{ runner.temp }}/gh-aw/actions
 
       - name: Install Copilot CLI
-        run: bash "${RUNNER_TEMP}/gh-aw/actions/install_copilot_cli.sh" 1.0.55
+        run: bash "${RUNNER_TEMP}/gh-aw/actions/install_copilot_cli.sh"
+        env:
+          GH_AW_COMPILED_VERSION: v0.88.2
 
       # -----------------------------------------------------------
       # Make a Copilot CLI request with each PAT.
@@ -158,32 +160,32 @@ jobs:
           # Build summary
           statuses=("$S0" "$S1" "$S2" "$S3" "$S4" "$S5" "$S6" "$S7" "$S8" "$S9")
 
-          valid=0; empty=0; invalid=0; unknown=0
+          valid=0; empty=0; failed=0; unknown=0
           for s in "${statuses[@]}"; do
             case "$s" in
               valid)   valid=$((valid + 1)) ;;
               empty)   empty=$((empty + 1)) ;;
-              invalid) invalid=$((invalid + 1)) ;;
+              failed) failed=$((failed + 1)) ;;
               *)       unknown=$((unknown + 1)) ;;
             esac
           done
 
           {
-            if [ $invalid -eq 0 ] && [ $unknown -eq 0 ] && [ $valid -gt 0 ]; then
+            if [ $failed -eq 0 ] && [ $unknown -eq 0 ] && [ $valid -gt 0 ]; then
               echo "> [!NOTE]"
-              echo "> **PAT pool is valid** — no action needed"
+              echo "> **All configured entries completed a Copilot request** — this is a point-in-time sample, not a guarantee of future availability."
               echo ""
             fi
 
-            if [ $invalid -eq 0 ] && [ $unknown -eq 0 ] && [ $valid -eq 0 ]; then
+            if [ $failed -eq 0 ] && [ $unknown -eq 0 ] && [ $valid -eq 0 ]; then
               echo "> [!WARNING]"
-              echo "> **Empty PAT pool** — agentic workflows will fall back to the default \`COPILOT_GITHUB_TOKEN\`."
+              echo "> **Empty PAT pool** — the selector fails before agent activation; there is no default-token fallback."
               echo ""
             fi
 
-            if [ $invalid -gt 0 ]; then
+            if [ $failed -gt 0 ]; then
               echo "> [!CAUTION]"
-              echo "> **Invalid PAT pool** — agentic workflows selecting an invalid PAT will fail."
+              echo "> **Copilot requests failed** — check authentication, expiry, request capacity, and service availability before replacing tokens."
               echo ""
             fi
 
@@ -193,7 +195,7 @@ jobs:
               echo ""
             fi
 
-            echo "☑️ Valid: ${valid} • ⏹️ Empty: ${empty} • ❌ Invalid: ${invalid} • ❓ Unknown: ${unknown}"
+            echo "☑️ Valid: ${valid} • ⏹️ Empty: ${empty} • ❌ Failed request: ${failed} • ❓ Unknown: ${unknown}"
             echo ""
 
             echo "| PAT Secret | Status |"
@@ -203,15 +205,15 @@ jobs:
               case "${statuses[$i]}" in
                 valid)   symbol="☑️ Valid" ;;
                 empty)   symbol="⏹️ Empty" ;;
-                invalid) symbol="❌ Invalid" ;;
+                failed) symbol="❌ Failed request" ;;
                 *)       symbol="❓ Unknown" ;;
               esac
               echo "| \`COPILOT_PAT_${i}\` | ${symbol} |"
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [ $invalid -gt 0 ]; then
-            echo "::error::${invalid} PAT(s) in the pool are invalid and need to be removed or replaced"
+          if [ $failed -gt 0 ]; then
+            echo "::error::${failed} Copilot request(s) failed; a failed request alone does not prove the token is invalid"
             exit 1
           fi
 

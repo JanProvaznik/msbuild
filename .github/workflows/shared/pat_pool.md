@@ -38,14 +38,10 @@ jobs:
             fi
           done
 
-          # If none of the entries in the pool have values, emit a warning
-          # and do not set an output value. The consumer can fall back to
-          # using COPILOT_GITHUB_TOKEN.
+          # Consumers require a selected pool entry; there is no default-token fallback.
           if [ ${#PAT_NUMBERS[@]} -eq 0 ]; then
-            warning_message="::warning::None of the PAT pool entries had values "
-            warning_message+="(checked COPILOT_PAT_0 through COPILOT_PAT_9)"
-            echo "$warning_message"
-            exit 0
+            echo "::error::No Copilot PAT pool entries are configured (checked slots 0 through 9)."
+            exit 1
           fi
 
           # Select a random index using the seed if specified

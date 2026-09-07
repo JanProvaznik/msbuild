@@ -110,7 +110,15 @@ engine:
       }}
 ```
 
-The `COPILOT_GITHUB_TOKEN` expression can be collapsed onto a single line if desired. `gh-aw compile` automatically wires `pat_pool` into the activation and agent jobs' `needs:` graph because of the `needs.pat_pool.` references within the `engine.env` property.
+The `COPILOT_GITHUB_TOKEN` expression can be collapsed onto a single line if desired. `gh aw compile` automatically wires `pat_pool` into the activation and agent jobs' `needs:` graph because of the `needs.pat_pool.` references within the `engine.env` property.
+
+An empty pool fails the selector job before activation. These workflows do **not** fall back to a
+default token; the expression's sentinel is not a credential or a fallback. A non-empty pool entry
+can still fail authentication, expire, or have exhausted request capacity.
+
+Use the compiler version recorded in the committed lock files when regenerating them. The PAT
+validation workflow uses that release's Copilot compatibility resolver too; an arbitrary older CLI
+request is not evidence that the deployed engine will work.
 
 ```sh
 gh aw compile <workflow-name> --schedule-seed <org>/<repo>
@@ -149,14 +157,13 @@ This approach aligns with GitHub's documented guidance for [passing secrets][pas
 There are several details of this implementation that keep our workflows and repositories safe.
 
 1. **Secrets adhere to existing trust boundaries.** The pool of PAT secrets is
-   provided to a dedicated step within the `pat_pool` job. That job runs
-   after `pre_activation` and contains only the trusted checkout and action
-   steps--no untrusted context or input is within scope. The
-   `select-pat-number` action only references the secret values to determine
+   provided to a dedicated inline selector within the `pat_pool` job. That job runs
+   after `pre_activation`; it does not check out repository code or run an agent.
+   The `select-pat-number` step only references the secret values to determine
    which are non-empty, filtering the secret numbers to those with values.
 1. **The `pat_pool` job emits only a number, never a secret.** Its sole output,
-   `pat_number`, is the 0-9 index of the selected PAT (or empty when the pool
-   is empty). The actual secret materializes only later, in the activation
+   `pat_number`, is the 0-9 index of the selected PAT. An empty pool fails without
+   an output. The actual secret materializes only later, in the activation
    job's `engine.env` mapping, where the `case()` expression resolves the
    number to the matching secret. This follows GitHub's guidance for
    [passing secrets][passing-secrets] between jobs or workflows, with the

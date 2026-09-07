@@ -1,6 +1,6 @@
 ---
 name: "Expert Code Review (command)"
-description: "Runs the expert-reviewer agent on a pull request when a contributor comments /review."
+description: "Reviews a pull request when an authorized maintainer comments /review; the coordinator publishes through safe outputs."
 
 on:
   slash_command:
@@ -12,12 +12,22 @@ permissions:
   contents: read
   pull-requests: read
 
+# A checkout mapping alone does not suppress gh-aw's issue-comment PR-head checkout.
+checkout: false
+steps:
+  - name: Checkout trusted workflow revision
+    uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    with:
+      repository: ${{ github.repository }}
+      ref: ${{ github.sha }}
+      persist-credentials: false
+
 timeout-minutes: 60
 
 # ###############################################################
 # Disable the per-workflow daily AI Credits guardrail. Cost is
-# controlled via the slash-command trigger (contributors must
-# explicitly request a review) and the shared PAT pool budget.
+# limited by the authorized slash-command trigger and configured
+# run limits; this exception does not authorize unbounded delegation.
 # See dotnet/msbuild#14312.
 # ###############################################################
 max-daily-ai-credits: -1
