@@ -17,3 +17,9 @@ Strings to search for in the build logs:
  * `missing`
 
 Consider using https://msbuildlog.com to help with searching through the build log.
+
+Even when compilation is correctly skipped, a build can spend significant time
+executing preparation and reference-resolution tasks. The
+[OrchardCore no-op investigation](../investigations/no-op-orchardcore.md)
+separates this overhead from actual recompilation, with measured evaluation,
+scheduling, server-reuse, and experimental whole-build freshness controls.

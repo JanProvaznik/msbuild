@@ -1,0 +1,65 @@
+{
+  "TranslationCopy": "passed",
+  "Reference": [
+    {
+      "Case": "empty",
+      "CompileUsingReferenceAssemblies": "true",
+      "Equal": true
+    },
+    {
+      "Case": "empty",
+      "CompileUsingReferenceAssemblies": "false",
+      "Equal": true
+    },
+    {
+      "Case": "absolute",
+      "CompileUsingReferenceAssemblies": "true",
+      "Equal": true
+    },
+    {
+      "Case": "absolute",
+      "CompileUsingReferenceAssemblies": "false",
+      "Equal": true
+    },
+    {
+      "Case": "normal",
+      "CompileUsingReferenceAssemblies": "true",
+      "Equal": true
+    },
+    {
+      "Case": "normal",
+      "CompileUsingReferenceAssemblies": "false",
+      "Equal": true
+    },
+    {
+      "Case": "duplicates",
+      "CompileUsingReferenceAssemblies": "true",
+      "Equal": true
+    },
+    {
+      "Case": "duplicates",
+      "CompileUsingReferenceAssemblies": "false",
+      "Equal": true
+    },
+    {
+      "Case": "escaped",
+      "CompileUsingReferenceAssemblies": "true",
+      "Equal": true
+    },
+    {
+      "Case": "escaped",
+      "CompileUsingReferenceAssemblies": "false",
+      "Equal": true
+    },
+    {
+      "Case": "conditionValues",
+      "CompileUsingReferenceAssemblies": "true",
+      "Equal": true
+    },
+    {
+      "Case": "conditionValues",
+      "CompileUsingReferenceAssemblies": "false",
+      "Equal": true
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+<Project>
+  <!-- Diagnostic control only: this measures dispatch, not build correctness. -->
+  <ItemGroup>
+    <ProjectReferenceTargets Include="ProbeEmpty" Targets="ProbeEmpty" />
+    <ProjectReferenceTargets Include="ProbeEmpty" Targets="ProbeEmpty" OuterBuild="true" />
+  </ItemGroup>
+  <Target Name="ProbeEmpty" />
+</Project>

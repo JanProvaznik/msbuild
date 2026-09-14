@@ -1,0 +1,14 @@
+diff --git a/src/OrchardCore/OrchardCore.Application.Cms.Core.Targets/OrchardCore.Application.Cms.Core.Targets.targets b/src/OrchardCore/OrchardCore.Application.Cms.Core.Targets/OrchardCore.Application.Cms.Core.Targets.targets
+--- a/src/OrchardCore/OrchardCore.Application.Cms.Core.Targets/OrchardCore.Application.Cms.Core.Targets.targets
++++ b/src/OrchardCore/OrchardCore.Application.Cms.Core.Targets/OrchardCore.Application.Cms.Core.Targets.targets
+@@ -27,8 +27,8 @@
+     AfterTargets="Build">
+     <Message Text="Copying translation files: $(MSBuildProjectName)" Importance="high" />
+     <Copy
+-      SourceFiles="%(PackageTranslationFiles.FullPath)"
+-      DestinationFolder="Localization\%(RecursiveDir)"
++      SourceFiles="@(PackageTranslationFiles->'%(FullPath)')"
++      DestinationFolder="Localization\%(PackageTranslationFiles.RecursiveDir)"
+       Condition="'@(PackageTranslationFiles)' != ''"
+       SkipUnchangedFiles="true"
+       OverwriteReadOnlyFiles="false" />

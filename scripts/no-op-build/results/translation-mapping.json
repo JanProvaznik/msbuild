@@ -1,0 +1,29 @@
+{
+  "TranslationItems": 2415,
+  "DistinctSourceBuckets": 2415,
+  "DirectoryBuckets": 21,
+  "DestinationCollisions": 0,
+  "Directories": [
+    "zh-TW\\",
+    "zh-Hant\\",
+    "zh-Hans\\",
+    "zh-CN\\",
+    "vi\\",
+    "tr\\",
+    "sv\\",
+    "ru\\",
+    "pt-BR\\",
+    "pl\\",
+    "mk\\",
+    "ja\\",
+    "it\\",
+    "fr\\",
+    "fi\\",
+    "fa\\",
+    "es\\",
+    "el\\",
+    "de\\",
+    "cs\\",
+    "ar\\"
+  ]
+}

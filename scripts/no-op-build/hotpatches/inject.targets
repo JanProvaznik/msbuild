@@ -1,0 +1,6 @@
+<Project>
+  <Import Project="$(TargetExperimentsOriginalCustomAfterTargets)"
+          Condition="'$(TargetExperimentsOriginalCustomAfterTargets)' != ''" />
+  <Import Project="$(MSBuildThisFileDirectory)translations-batched.targets"
+          Condition="'$(TargetExperimentTranslations)' == 'true' and '$(MSBuildProjectName)' == 'OrchardCore.Cms.Web'" />
+</Project>

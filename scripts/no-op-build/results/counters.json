@@ -1,0 +1,789 @@
+[
+  {
+    "scenario": "stock",
+    "succeeded": true,
+    "buildSeconds": 24.8477287,
+    "projects": 202,
+    "evaluations": 404,
+    "evaluationCumulativeSeconds": 14.904138900000007,
+    "tasks": 23697,
+    "targets": 31252,
+    "skippedTargets": 29796,
+    "nonOrchestrationTaskSeconds": 14.639319300000007,
+    "taskTimings": [
+      {
+        "name": "MSBuild",
+        "Count": 1776,
+        "Milliseconds": 1540800.9814000004
+      },
+      {
+        "name": "CallTarget",
+        "Count": 404,
+        "Milliseconds": 56173.7075
+      },
+      {
+        "name": "ResolveAssemblyReference",
+        "Count": 202,
+        "Milliseconds": 5293.759400000001
+      },
+      {
+        "name": "Copy",
+        "Count": 3393,
+        "Milliseconds": 1187.920200000004
+      },
+      {
+        "name": "ResolvePackageFileConflicts",
+        "Count": 202,
+        "Milliseconds": 970.3418000000004
+      },
+      {
+        "name": "ResolvePackageAssets",
+        "Count": 202,
+        "Milliseconds": 650.8305000000001
+      },
+      {
+        "name": "WriteLinesToFile",
+        "Count": 689,
+        "Milliseconds": 638.4894999999998
+      },
+      {
+        "name": "ProcessFrameworkReferences",
+        "Count": 201,
+        "Milliseconds": 512.0435000000001
+      },
+      {
+        "name": "DefineStaticWebAssets",
+        "Count": 534,
+        "Milliseconds": 487.1099999999997
+      },
+      {
+        "name": "DefineStaticWebAssetEndpoints",
+        "Count": 623,
+        "Milliseconds": 355.0942000000004
+      },
+      {
+        "name": "StaticWebAssetsGeneratePackagePropsFile",
+        "Count": 264,
+        "Milliseconds": 259.88309999999996
+      },
+      {
+        "name": "FindUnderPath",
+        "Count": 1010,
+        "Milliseconds": 231.6189999999998
+      },
+      {
+        "name": "ResolveTargetingPackAssets",
+        "Count": 201,
+        "Milliseconds": 225.9904000000001
+      },
+      {
+        "name": "GetReferenceNearestTargetFrameworkTask",
+        "Count": 201,
+        "Milliseconds": 190.23460000000003
+      },
+      {
+        "name": "AssignTargetPath",
+        "Count": 1294,
+        "Milliseconds": 188.34279999999984
+      },
+      {
+        "name": "GetPackageDirectory",
+        "Count": 2010,
+        "Milliseconds": 184.12549999999985
+      },
+      {
+        "name": "ReadLinesFromFile",
+        "Count": 202,
+        "Milliseconds": 183.9868
+      },
+      {
+        "name": "Hash",
+        "Count": 487,
+        "Milliseconds": 181.02030000000022
+      },
+      {
+        "name": "ResolveAppHosts",
+        "Count": 201,
+        "Milliseconds": 170.70249999999993
+      },
+      {
+        "name": "GenerateStaticWebAssetsManifest",
+        "Count": 89,
+        "Milliseconds": 159.4728999999999
+      },
+      {
+        "name": "AssignProjectConfiguration",
+        "Count": 201,
+        "Milliseconds": 153.59550000000004
+      },
+      {
+        "name": "ReadStaticWebAssetsManifestFile",
+        "Count": 129,
+        "Milliseconds": 153.3253
+      },
+      {
+        "name": "CopyRefAssembly",
+        "Count": 201,
+        "Milliseconds": 132.15020000000004
+      },
+      {
+        "name": "GenerateMSBuildEditorConfig",
+        "Count": 202,
+        "Milliseconds": 129.84180000000003
+      },
+      {
+        "name": "CheckForDuplicateItems",
+        "Count": 606,
+        "Milliseconds": 127.03809999999996
+      },
+      {
+        "name": "ConvertToAbsolutePath",
+        "Count": 202,
+        "Milliseconds": 125.72269999999997
+      },
+      {
+        "name": "MakeDir",
+        "Count": 296,
+        "Milliseconds": 124.56830000000001
+      },
+      {
+        "name": "AssignCulture",
+        "Count": 369,
+        "Milliseconds": 114.66029999999999
+      },
+      {
+        "name": "RemoveDuplicates",
+        "Count": 507,
+        "Milliseconds": 98.51269999999998
+      },
+      {
+        "name": "CheckForUnsupportedWinMDReferences",
+        "Count": 201,
+        "Milliseconds": 91.0971
+      },
+      {
+        "name": "CheckForDuplicateNuGetItemsTask",
+        "Count": 202,
+        "Milliseconds": 86.81659999999997
+      },
+      {
+        "name": "CheckIfPackageReferenceShouldBeFrameworkReference",
+        "Count": 402,
+        "Milliseconds": 79.72669999999995
+      },
+      {
+        "name": "GenerateStaticWebAssetEndpointsManifest",
+        "Count": 89,
+        "Milliseconds": 74.05769999999998
+      },
+      {
+        "name": "CombineXmlElements",
+        "Count": 201,
+        "Milliseconds": 73.38859999999998
+      },
+      {
+        "name": "Message",
+        "Count": 608,
+        "Milliseconds": 65.71939999999994
+      },
+      {
+        "name": "CombineTargetFrameworkInfoProperties",
+        "Count": 201,
+        "Milliseconds": 63.02349999999999
+      },
+      {
+        "name": "ResolveFrameworkReferences",
+        "Count": 201,
+        "Milliseconds": 58.28669999999999
+      },
+      {
+        "name": "CreateCSharpManifestResourceName",
+        "Count": 119,
+        "Milliseconds": 52.9881
+      },
+      {
+        "name": "JoinItems",
+        "Count": 202,
+        "Milliseconds": 45.11540000000002
+      },
+      {
+        "name": "ComputeReferenceStaticWebAssetItems",
+        "Count": 176,
+        "Milliseconds": 42.676400000000015
+      },
+      {
+        "name": "SetRidAgnosticValueForProjects",
+        "Count": 202,
+        "Milliseconds": 42.16420000000003
+      },
+      {
+        "name": "AllowEmptyTelemetry",
+        "Count": 202,
+        "Milliseconds": 40.3777
+      },
+      {
+        "name": "GetRestoreProjectStyleTask",
+        "Count": 202,
+        "Milliseconds": 37.84049999999996
+      },
+      {
+        "name": "ApplyImplicitVersions",
+        "Count": 202,
+        "Milliseconds": 35.57280000000001
+      },
+      {
+        "name": "GenerateGlobalUsings",
+        "Count": 202,
+        "Milliseconds": 33.72679999999998
+      },
+      {
+        "name": "GenerateStaticWebAssetsDevelopmentManifest",
+        "Count": 89,
+        "Milliseconds": 33.61649999999998
+      },
+      {
+        "name": "MergeConfigurationProperties",
+        "Count": 89,
+        "Milliseconds": 33.30409999999999
+      },
+      {
+        "name": "ValidateExecutableReferences",
+        "Count": 202,
+        "Milliseconds": 32.1581
+      },
+      {
+        "name": "FindAppConfigFile",
+        "Count": 202,
+        "Milliseconds": 27.230599999999992
+      },
+      {
+        "name": "CheckForImplicitPackageReferenceOverrides",
+        "Count": 202,
+        "Milliseconds": 25.609600000000007
+      },
+      {
+        "name": "DiscoverDefaultScopedCssItems",
+        "Count": 89,
+        "Milliseconds": 24.252000000000017
+      },
+      {
+        "name": "CheckForDuplicateFrameworkReferences",
+        "Count": 201,
+        "Milliseconds": 23.937799999999985
+      },
+      {
+        "name": "ResolveCompressedAssets",
+        "Count": 89,
+        "Milliseconds": 21.871500000000005
+      },
+      {
+        "name": "GetAssemblyVersion",
+        "Count": 202,
+        "Milliseconds": 18.644000000000005
+      },
+      {
+        "name": "ApplyJsModules",
+        "Count": 89,
+        "Milliseconds": 18.057300000000005
+      },
+      {
+        "name": "FindInList",
+        "Count": 88,
+        "Milliseconds": 18.031399999999998
+      },
+      {
+        "name": "Delete",
+        "Count": 202,
+        "Milliseconds": 17.996400000000012
+      },
+      {
+        "name": "ApplyCompressionNegotiation",
+        "Count": 89,
+        "Milliseconds": 17.182500000000005
+      },
+      {
+        "name": "ComputeStaticWebAssetsTargetPaths",
+        "Count": 88,
+        "Milliseconds": 16.702299999999994
+      },
+      {
+        "name": "ApplyCssScopes",
+        "Count": 89,
+        "Milliseconds": 16.408200000000004
+      },
+      {
+        "name": "GetFrameworkPath",
+        "Count": 202,
+        "Milliseconds": 16.101599999999994
+      },
+      {
+        "name": "EncodeRazorInputItem",
+        "Count": 89,
+        "Milliseconds": 15.992799999999994
+      },
+      {
+        "name": "StaticWebAssetsGeneratePackManifest",
+        "Count": 88,
+        "Milliseconds": 14.946499999999995
+      },
+      {
+        "name": "ComputeEndpointsForReferenceStaticWebAssets",
+        "Count": 176,
+        "Milliseconds": 14.94559999999998
+      },
+      {
+        "name": "GenerateStaticWebAssetEndpointsPropsFile",
+        "Count": 88,
+        "Milliseconds": 14.017800000000003
+      },
+      {
+        "name": "CollectStaticWebAssetsToCopy",
+        "Count": 89,
+        "Milliseconds": 12.3625
+      },
+      {
+        "name": "GenerateStaticWebAssetsPropsFile",
+        "Count": 88,
+        "Milliseconds": 11.350999999999994
+      },
+      {
+        "name": "ComputeCssScope",
+        "Count": 89,
+        "Milliseconds": 11.012999999999998
+      },
+      {
+        "name": "UpdatePackageStaticWebAssets",
+        "Count": 89,
+        "Milliseconds": 10.570600000000004
+      },
+      {
+        "name": "ResolveAllScopedCssAssets",
+        "Count": 89,
+        "Milliseconds": 8.781300000000003
+      },
+      {
+        "name": "DiscoverPrecompressedAssets",
+        "Count": 89,
+        "Milliseconds": 7.4354999999999976
+      },
+      {
+        "name": "ResolveStaticWebAssetsEmbeddedProjectConfiguration",
+        "Count": 1,
+        "Milliseconds": 3.8387
+      }
+    ]
+  },
+  {
+    "scenario": "evaluation",
+    "succeeded": true,
+    "buildSeconds": 4.2785084,
+    "projects": 0,
+    "evaluations": 404,
+    "evaluationCumulativeSeconds": 51.7086413,
+    "tasks": 0,
+    "targets": 0,
+    "skippedTargets": 0,
+    "nonOrchestrationTaskSeconds": 0,
+    "taskTimings": []
+  },
+  {
+    "scenario": "empty-graph",
+    "succeeded": true,
+    "buildSeconds": 6.2415664,
+    "projects": 202,
+    "evaluations": 459,
+    "evaluationCumulativeSeconds": 52.29825780000003,
+    "tasks": 0,
+    "targets": 407,
+    "skippedTargets": 0,
+    "nonOrchestrationTaskSeconds": 0,
+    "taskTimings": []
+  },
+  {
+    "scenario": "server-on",
+    "succeeded": true,
+    "buildSeconds": 18.5436031,
+    "projects": 202,
+    "evaluations": 404,
+    "evaluationCumulativeSeconds": 11.69513580000001,
+    "tasks": 23697,
+    "targets": 31252,
+    "skippedTargets": 29796,
+    "nonOrchestrationTaskSeconds": 11.732931400000002,
+    "taskTimings": [
+      {
+        "name": "MSBuild",
+        "Count": 1776,
+        "Milliseconds": 1234427.8107000003
+      },
+      {
+        "name": "CallTarget",
+        "Count": 404,
+        "Milliseconds": 56774.39509999997
+      },
+      {
+        "name": "ResolveAssemblyReference",
+        "Count": 202,
+        "Milliseconds": 4596.336800000001
+      },
+      {
+        "name": "Copy",
+        "Count": 3393,
+        "Milliseconds": 1111.789000000001
+      },
+      {
+        "name": "ResolvePackageFileConflicts",
+        "Count": 202,
+        "Milliseconds": 849.6762
+      },
+      {
+        "name": "WriteLinesToFile",
+        "Count": 689,
+        "Milliseconds": 615.2515000000003
+      },
+      {
+        "name": "ProcessFrameworkReferences",
+        "Count": 201,
+        "Milliseconds": 416.6000000000002
+      },
+      {
+        "name": "ResolvePackageAssets",
+        "Count": 202,
+        "Milliseconds": 403.4518999999999
+      },
+      {
+        "name": "DefineStaticWebAssets",
+        "Count": 534,
+        "Milliseconds": 358.4975999999999
+      },
+      {
+        "name": "CopyRefAssembly",
+        "Count": 201,
+        "Milliseconds": 205.91920000000005
+      },
+      {
+        "name": "FindUnderPath",
+        "Count": 1010,
+        "Milliseconds": 203.04670000000021
+      },
+      {
+        "name": "StaticWebAssetsGeneratePackagePropsFile",
+        "Count": 264,
+        "Milliseconds": 199.5530000000001
+      },
+      {
+        "name": "GenerateMSBuildEditorConfig",
+        "Count": 202,
+        "Milliseconds": 187.2994000000001
+      },
+      {
+        "name": "DefineStaticWebAssetEndpoints",
+        "Count": 623,
+        "Milliseconds": 184.74770000000012
+      },
+      {
+        "name": "ReadLinesFromFile",
+        "Count": 202,
+        "Milliseconds": 168.54949999999988
+      },
+      {
+        "name": "ResolveTargetingPackAssets",
+        "Count": 201,
+        "Milliseconds": 153.8879000000001
+      },
+      {
+        "name": "GetPackageDirectory",
+        "Count": 2010,
+        "Milliseconds": 139.05680000000018
+      },
+      {
+        "name": "Hash",
+        "Count": 487,
+        "Milliseconds": 108.11119999999993
+      },
+      {
+        "name": "ReadStaticWebAssetsManifestFile",
+        "Count": 129,
+        "Milliseconds": 104.31960000000005
+      },
+      {
+        "name": "AssignTargetPath",
+        "Count": 1294,
+        "Milliseconds": 104.1394999999998
+      },
+      {
+        "name": "GenerateStaticWebAssetsManifest",
+        "Count": 89,
+        "Milliseconds": 87.4326
+      },
+      {
+        "name": "RemoveDuplicates",
+        "Count": 507,
+        "Milliseconds": 82.91190000000002
+      },
+      {
+        "name": "AssignCulture",
+        "Count": 369,
+        "Milliseconds": 78.52389999999998
+      },
+      {
+        "name": "GetReferenceNearestTargetFrameworkTask",
+        "Count": 201,
+        "Milliseconds": 78.33660000000005
+      },
+      {
+        "name": "MakeDir",
+        "Count": 296,
+        "Milliseconds": 76.86500000000001
+      },
+      {
+        "name": "ResolveAppHosts",
+        "Count": 201,
+        "Milliseconds": 74.54439999999994
+      },
+      {
+        "name": "AssignProjectConfiguration",
+        "Count": 201,
+        "Milliseconds": 71.43669999999999
+      },
+      {
+        "name": "CheckForDuplicateItems",
+        "Count": 606,
+        "Milliseconds": 68.84229999999998
+      },
+      {
+        "name": "ConvertToAbsolutePath",
+        "Count": 202,
+        "Milliseconds": 68.30179999999999
+      },
+      {
+        "name": "CreateCSharpManifestResourceName",
+        "Count": 119,
+        "Milliseconds": 66.98990000000002
+      },
+      {
+        "name": "GenerateStaticWebAssetEndpointsManifest",
+        "Count": 89,
+        "Milliseconds": 60.38680000000001
+      },
+      {
+        "name": "CheckIfPackageReferenceShouldBeFrameworkReference",
+        "Count": 402,
+        "Milliseconds": 49.64220000000001
+      },
+      {
+        "name": "CheckForDuplicateNuGetItemsTask",
+        "Count": 202,
+        "Milliseconds": 48.06699999999999
+      },
+      {
+        "name": "Message",
+        "Count": 608,
+        "Milliseconds": 46.6675
+      },
+      {
+        "name": "CombineTargetFrameworkInfoProperties",
+        "Count": 201,
+        "Milliseconds": 40.34699999999997
+      },
+      {
+        "name": "CombineXmlElements",
+        "Count": 201,
+        "Milliseconds": 38.1318
+      },
+      {
+        "name": "AllowEmptyTelemetry",
+        "Count": 202,
+        "Milliseconds": 36.07079999999998
+      },
+      {
+        "name": "JoinItems",
+        "Count": 202,
+        "Milliseconds": 32.762
+      },
+      {
+        "name": "CheckForUnsupportedWinMDReferences",
+        "Count": 201,
+        "Milliseconds": 32.317899999999995
+      },
+      {
+        "name": "ComputeReferenceStaticWebAssetItems",
+        "Count": 176,
+        "Milliseconds": 31.741899999999987
+      },
+      {
+        "name": "SetRidAgnosticValueForProjects",
+        "Count": 202,
+        "Milliseconds": 29.819999999999997
+      },
+      {
+        "name": "GenerateStaticWebAssetsDevelopmentManifest",
+        "Count": 89,
+        "Milliseconds": 28.83859999999999
+      },
+      {
+        "name": "GetRestoreProjectStyleTask",
+        "Count": 202,
+        "Milliseconds": 25.26390000000001
+      },
+      {
+        "name": "ApplyImplicitVersions",
+        "Count": 202,
+        "Milliseconds": 24.945199999999982
+      },
+      {
+        "name": "MergeConfigurationProperties",
+        "Count": 89,
+        "Milliseconds": 24.2197
+      },
+      {
+        "name": "ResolveFrameworkReferences",
+        "Count": 201,
+        "Milliseconds": 23.744200000000003
+      },
+      {
+        "name": "ValidateExecutableReferences",
+        "Count": 202,
+        "Milliseconds": 21.284399999999998
+      },
+      {
+        "name": "FindAppConfigFile",
+        "Count": 202,
+        "Milliseconds": 20.17629999999999
+      },
+      {
+        "name": "CheckForImplicitPackageReferenceOverrides",
+        "Count": 202,
+        "Milliseconds": 18.2525
+      },
+      {
+        "name": "GenerateGlobalUsings",
+        "Count": 202,
+        "Milliseconds": 18.224500000000006
+      },
+      {
+        "name": "CheckForDuplicateFrameworkReferences",
+        "Count": 201,
+        "Milliseconds": 16.827800000000007
+      },
+      {
+        "name": "GetAssemblyVersion",
+        "Count": 202,
+        "Milliseconds": 15.6165
+      },
+      {
+        "name": "FindInList",
+        "Count": 88,
+        "Milliseconds": 14.856499999999999
+      },
+      {
+        "name": "ResolveCompressedAssets",
+        "Count": 89,
+        "Milliseconds": 14.643300000000004
+      },
+      {
+        "name": "Delete",
+        "Count": 202,
+        "Milliseconds": 12.469400000000006
+      },
+      {
+        "name": "ApplyJsModules",
+        "Count": 89,
+        "Milliseconds": 11.715
+      },
+      {
+        "name": "ComputeStaticWebAssetsTargetPaths",
+        "Count": 88,
+        "Milliseconds": 11.377200000000002
+      },
+      {
+        "name": "DiscoverDefaultScopedCssItems",
+        "Count": 89,
+        "Milliseconds": 10.894900000000002
+      },
+      {
+        "name": "EncodeRazorInputItem",
+        "Count": 89,
+        "Milliseconds": 10.7764
+      },
+      {
+        "name": "StaticWebAssetsGeneratePackManifest",
+        "Count": 88,
+        "Milliseconds": 10.214200000000002
+      },
+      {
+        "name": "ComputeEndpointsForReferenceStaticWebAssets",
+        "Count": 176,
+        "Milliseconds": 10.082799999999999
+      },
+      {
+        "name": "GetFrameworkPath",
+        "Count": 202,
+        "Milliseconds": 9.872499999999999
+      },
+      {
+        "name": "ApplyCssScopes",
+        "Count": 89,
+        "Milliseconds": 9.526999999999997
+      },
+      {
+        "name": "ApplyCompressionNegotiation",
+        "Count": 89,
+        "Milliseconds": 9.447299999999998
+      },
+      {
+        "name": "CollectStaticWebAssetsToCopy",
+        "Count": 89,
+        "Milliseconds": 8.6507
+      },
+      {
+        "name": "GenerateStaticWebAssetEndpointsPropsFile",
+        "Count": 88,
+        "Milliseconds": 7.900499999999998
+      },
+      {
+        "name": "ComputeCssScope",
+        "Count": 89,
+        "Milliseconds": 7.727900000000002
+      },
+      {
+        "name": "UpdatePackageStaticWebAssets",
+        "Count": 89,
+        "Milliseconds": 7.355200000000003
+      },
+      {
+        "name": "ResolveAllScopedCssAssets",
+        "Count": 89,
+        "Milliseconds": 6.357199999999999
+      },
+      {
+        "name": "GenerateStaticWebAssetsPropsFile",
+        "Count": 88,
+        "Milliseconds": 6.0998
+      },
+      {
+        "name": "DiscoverPrecompressedAssets",
+        "Count": 89,
+        "Milliseconds": 5.0930000000000035
+      },
+      {
+        "name": "ResolveStaticWebAssetsEmbeddedProjectConfiguration",
+        "Count": 1,
+        "Milliseconds": 0.1035
+      }
+    ]
+  },
+  {
+    "scenario": "gate-hit-evaluation",
+    "succeeded": true,
+    "buildSeconds": 4.233496,
+    "projects": 0,
+    "evaluations": 404,
+    "evaluationCumulativeSeconds": 51.869557000000015,
+    "tasks": 0,
+    "targets": 0,
+    "skippedTargets": 0,
+    "nonOrchestrationTaskSeconds": 0,
+    "taskTimings": []
+  }
+]

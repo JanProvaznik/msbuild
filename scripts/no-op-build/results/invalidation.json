@@ -1,0 +1,44 @@
+[
+  {
+    "scenario": "source",
+    "succeeded": true,
+    "errors": 0,
+    "tasks": 23706,
+    "cscCount": 4.0
+  },
+  {
+    "scenario": "add",
+    "succeeded": true,
+    "errors": 0,
+    "tasks": 23706,
+    "cscCount": 4.0
+  },
+  {
+    "scenario": "remove",
+    "succeeded": true,
+    "errors": 0,
+    "tasks": 23706,
+    "cscCount": 4.0
+  },
+  {
+    "scenario": "failure",
+    "succeeded": false,
+    "errors": 1,
+    "tasks": 20877,
+    "cscCount": 1.0
+  },
+  {
+    "scenario": "missing-output",
+    "succeeded": true,
+    "errors": 0,
+    "tasks": 23697,
+    "cscCount": 0.0
+  },
+  {
+    "scenario": "missing-content",
+    "succeeded": true,
+    "errors": 0,
+    "tasks": 23698,
+    "cscCount": 0.0
+  }
+]

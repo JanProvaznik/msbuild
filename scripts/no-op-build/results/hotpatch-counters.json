@@ -1,0 +1,34 @@
+[
+  {
+    "scenario": "control",
+    "tasks": 23697,
+    "copyCount": 3393,
+    "cscCount": 0,
+    "translationMilliseconds": 407.10269999999997,
+    "referenceMapperMilliseconds": 3207.3879999999986
+  },
+  {
+    "scenario": "translations",
+    "tasks": 21303,
+    "copyCount": 999,
+    "cscCount": 0,
+    "translationMilliseconds": 72.12360000000001,
+    "referenceMapperMilliseconds": 3042.4949999999994
+  },
+  {
+    "scenario": "mapper",
+    "tasks": 23899,
+    "copyCount": 3393,
+    "cscCount": 0,
+    "translationMilliseconds": 580.3075,
+    "referenceMapperMilliseconds": 3193.1724000000013
+  },
+  {
+    "scenario": "combined",
+    "tasks": 21505,
+    "copyCount": 999,
+    "cscCount": 0,
+    "translationMilliseconds": 65.9559,
+    "referenceMapperMilliseconds": 2819.568800000001
+  }
+]
