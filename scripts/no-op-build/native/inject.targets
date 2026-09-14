@@ -1,0 +1,21 @@
+<Project>
+  <Import Project="$(NativeOriginalAfterCommonTargets)" Condition="'$(NativeOriginalAfterCommonTargets)' != ''" />
+  <!-- Keep A/B control builds from treating native state as orphaned products. Clean still removes it. -->
+  <ItemGroup Condition="'$(TargetFramework)' != '' and Exists('$(IntermediateOutputPath)$(MSBuildProjectFile).NativeCoreInputs.cache')">
+    <FileWrites Include="$(IntermediateOutputPath)$(MSBuildProjectFile).NativeCoreInputs.cache;
+                         $(IntermediateOutputPath)$(MSBuildProjectFile).NativeCoreOutputs.cache;
+                         $(IntermediateOutputPath)$(MSBuildProjectFile).NativeCoreBuild.complete" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' != '' and Exists('$(IntermediateOutputPath)$(MSBuildProjectFile).NativeTranslations.complete')">
+    <FileWrites Include="$(IntermediateOutputPath)$(MSBuildProjectFile).NativeTranslations.complete" />
+  </ItemGroup>
+  <Import Project="$(MSBuildThisFileDirectory)core-products.targets"
+          Condition="'$(NativeCoreBuild)' == 'true'
+                     and ('$(TargetFrameworkIdentifier)' == '.NETCoreApp' or '$(TargetFrameworkIdentifier)' == '.NETStandard')
+                     and '$(DesignTimeBuild)' != 'true' and '$(BuildingInsideVisualStudio)' != 'true'
+                     and '$(NoBuild)' != 'true' and '$(SkipCompilerExecution)' != 'true' and '$(ProvideCommandLineArgs)' != 'true'
+                     and '$(ContinuousIntegrationBuild)' != 'true' and '$(EnableSourceLink)' != 'true'
+                     and '$(PreBuildEvent)' == '' and '$(PostBuildEvent)' == '' and '$(NativeForceCoreBuild)' != 'true'" />
+  <Import Project="$(MSBuildThisFileDirectory)translations-products.targets"
+          Condition="'$(NativeIncrementalTranslations)' == 'true' and '$(MSBuildProjectName)' == 'OrchardCore.Cms.Web'" />
+</Project>

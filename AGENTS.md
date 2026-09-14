@@ -22,6 +22,7 @@ Instructions for GitHub Copilot and other AI coding agents working with the MSBu
 ## General
 
 * Performance is the top priority - minimize allocations, avoid LINQ in hot paths, use efficient algorithms.
+* For no-op build performance, prioritize native target `Inputs`/`Outputs`, output inference, and dependency ordering before introducing a new tracking system.
 * Always use the latest C# features, currently C# 14, especially collection expressions (`[]` over `new Type[]`).
 * Match the style of surrounding code when making edits, but modernize aggressively for substantial changes.
 

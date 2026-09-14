@@ -1,0 +1,23 @@
+[
+  {
+    "scenario": "orchard-edit",
+    "tasks": 14922,
+    "csc": 4,
+    "rar": 4,
+    "secondsWithBinlog": 16.1980346
+  },
+  {
+    "scenario": "orchard-after-edit",
+    "tasks": 12078,
+    "csc": 0,
+    "rar": 0,
+    "secondsWithBinlog": 10.927521
+  },
+  {
+    "scenario": "orchard-missing-dll",
+    "tasks": 14913,
+    "csc": 0,
+    "rar": 4,
+    "secondsWithBinlog": 13.5612592
+  }
+]

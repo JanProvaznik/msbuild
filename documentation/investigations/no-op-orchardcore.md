@@ -2,6 +2,12 @@
 
 Measured on 2026-09-14. This investigation changes no production MSBuild defaults.
 
+**Follow-up:** [Native target incrementality](native-target-incrementality.md)
+now demonstrates 20.47 s to 7.59 s (6.18 s with the existing server), using
+ordinary MSBuild incremental targets rather than the external gate below.
+The original evidence established compiler incrementality, not that the target
+definitions and dependency boundaries were already optimal.
+
 ## Result
 
 The ordinary build already does **zero compilations and zero observed file

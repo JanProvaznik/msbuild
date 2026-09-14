@@ -1,0 +1,113 @@
+<Project>
+  <!-- Experimental native incremental boundary for the audited OrchardCore build products.
+       BeforeBuild/AfterBuild and project-reference queries retain their ordinary entry points. -->
+  <PropertyGroup>
+    <_NativeInputsCache>$(IntermediateOutputPath)$(MSBuildProjectFile).NativeCoreInputs.cache</_NativeInputsCache>
+    <_NativeOutputsCache>$(IntermediateOutputPath)$(MSBuildProjectFile).NativeCoreOutputs.cache</_NativeOutputsCache>
+    <_NativeCompletion>$(IntermediateOutputPath)$(MSBuildProjectFile).NativeCoreBuild.complete</_NativeCompletion>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <TargetPathWithTargetPlatformMoniker>
+      <NativeCoreCompletion>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(_NativeCompletion)'))</NativeCoreCompletion>
+    </TargetPathWithTargetPlatformMoniker>
+  </ItemDefinitionGroup>
+
+  <Target Name="CoreBuild"
+          DependsOnTargets="BuildOnlySettings;PrepareForBuild;ResolveProjectReferences;_NativePrepareProducts;_NativeBuildProducts;GetTargetPath">
+    <OnError ExecuteTargets="_NativeInvalidateCompletion;_CleanRecordFileWrites" />
+  </Target>
+
+  <Target Name="_NativePrepareProducts"
+          DependsOnTargets="ResolvePackageAssets;ResolveTargetingPackAssets;ResolveFrameworkReferences">
+    <ReadLinesFromFile File="$(_NativeOutputsCache)">
+      <Output TaskParameter="Lines" ItemName="_NativePriorProducts" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <_NativeInputs Include="$(MSBuildProjectFullPath);$(MSBuildAllProjects);$(ProjectAssetsFile);
+                              @(Compile);@(EmbeddedResource);@(Content);@(None);@(AdditionalFiles);
+                              @(EditorConfigFiles);@(Analyzer);@(Analyzer->'%(NativeCoreCompletion)');@(ResolvedAnalyzers);@(RazorGenerate);
+                              @(ResolvedCompileFileDefinitions);@(RuntimeCopyLocalItems);@(NativeCopyLocalItems);
+                              @(ResourceCopyLocalItems);@(RuntimeTargetsCopyLocalItems);@(Reference);
+                              @(_ResolvedProjectReferencePaths);@(_ResolvedProjectReferencePaths->'%(NativeCoreCompletion)');
+                              @(CustomAdditionalCompileInputs);@(UpToDateCheckInput);
+                              $(ApplicationIcon);$(AssemblyOriginatorKeyFile);$(Win32Resource);$(Win32Manifest);
+                              $(ResolvedCodeAnalysisRuleSet);@(NativeAdditionalInputs)" />
+      <_NativeInputSignature Include="@(_NativeInputs->'%(FullPath)');
+                                     @(Compile->'%(Identity)|%(Link)');
+                                     @(Content->'%(Identity)|%(CopyToOutputDirectory)|%(TargetPath)');
+                                     @(None->'%(Identity)|%(CopyToOutputDirectory)|%(TargetPath)');
+                                     @(EmbeddedResource->'%(Identity)|%(LogicalName)|%(Link)');
+                                     $(Configuration)|$(Platform)|$(TargetFramework)|$(RuntimeIdentifier);
+                                     $(DefineConstants)|$(LangVersion)|$(Optimize)|$(DebugType)|$(DebugSymbols);
+                                     $(Nullable)|$(AllowUnsafeBlocks)|$(CheckForOverflowUnderflow)|$(Deterministic);
+                                     $(GenerateDocumentationFile)|$(ProduceReferenceAssembly)|$(SelfContained);
+                                     $(AssemblyName)|$(RootNamespace)|$(OutputType)|$(TargetPath)|$(OutDir);
+                                     $(RunAnalyzers)|$(RunAnalyzersDuringBuild)|$(TreatWarningsAsErrors)|$(NoWarn);
+                                     $(WarningsAsErrors)|$(WarningsNotAsErrors)|$(WarningLevel)|$(AnalysisLevel);
+                                     $(DefineDebug)|$(DefineTrace)|$(Features)|$(PlatformTarget)|$(Prefer32Bit);
+                                     $(SignAssembly)|$(PublicSign)|$(DelaySign)|$(PathMap)|$(ChecksumAlgorithm);
+                                     $(EmbedAllSources)|$(EmbedUntrackedSources)|$(GenerateTargetFrameworkAttribute);
+                                     $(UseSharedCompilation)|$(UseHostCompilerIfAvailable)|$(ErrorReport)|$(ErrorLog);
+                                     $(AssemblyOriginatorKeyFile)|$(CodePage)|$(DocumentationFile)|$(PdbFile);
+                                     $(GenerateAssemblyInfo)|$(GenerateTargetFrameworkMonikerAttribute);
+                                     $(GenerateDependencyFile)|$(GenerateRuntimeConfigurationFiles)|$(GenerateRuntimeConfigDevFile);
+                                     $(CopyBuildOutputToOutputDirectory)|$(CopyOutputSymbolsToOutputDirectory);
+                                     $(CopyDebugSymbolFilesFromPackages)|$(CopyDocumentationFilesFromPackages)|$(UseCommonOutputDirectory);
+                                     $(CopyLocalLockFileAssemblies)|$(SatelliteResourceLanguages)|$(InvariantGlobalization);
+                                     $(UseAppHost)|$(AppendTargetFrameworkToOutputPath)|$(AppendRuntimeIdentifierToOutputPath);
+                                     $(ContinuousIntegrationBuild)|$(EnableSourceLink)|$(SourceRevisionId);
+                                     $(Version)|$(AssemblyVersion)|$(FileVersion)|$(InformationalVersion);
+                                     $(NETCoreSdkVersion)|$(MSBuildVersion)|$(CoreBuildDependsOn);
+                                     @(NativeAdditionalInputSignature)" />
+      <_NativeKnownProducts Include="@(_NativePriorProducts);$(TargetPath);$(IntermediateOutputPath)$(CleanFile);$(_NativeOutputsCache);@(UpToDateCheckOutput);@(NativeAdditionalOutputs)" />
+      <_NativeMissingProducts Include="@(_NativeKnownProducts)" Condition="!Exists('%(Identity)')" />
+      <!-- Always/IfDifferent copy semantics cannot be represented by just source timestamps. -->
+      <_NativeMissingProducts Include="$(_NativeCompletion).force"
+                             Condition="'@(_SourceItemsToCopyToOutputDirectoryAlways)' != '' or '@(_SourceItemsToCopyToOutputDirectoryIfDifferent)' != '' or '$(PreBuildEvent)' != '' or '$(PostBuildEvent)' != '' or '$(NativeForceCoreBuild)' == 'true'" />
+      <_NativeAlwaysCopy Include="@(Content->WithMetadataValue('CopyToOutputDirectory', 'Always'));@(Content->WithMetadataValue('CopyToOutputDirectory', 'IfDifferent'));
+                                 @(None->WithMetadataValue('CopyToOutputDirectory', 'Always'));@(None->WithMetadataValue('CopyToOutputDirectory', 'IfDifferent'));
+                                 @(Compile->WithMetadataValue('CopyToOutputDirectory', 'Always'));@(Compile->WithMetadataValue('CopyToOutputDirectory', 'IfDifferent'));
+                                 @(EmbeddedResource->WithMetadataValue('CopyToOutputDirectory', 'Always'));@(EmbeddedResource->WithMetadataValue('CopyToOutputDirectory', 'IfDifferent'))" />
+      <_NativeMissingProducts Include="$(_NativeCompletion).always-copy" Condition="'@(_NativeAlwaysCopy)' != ''" />
+      <_NativeParticipatingProjects Include="@(_ResolvedProjectReferencePaths->'%(MSBuildSourceProjectFile)')"
+                                    Condition="'%(_ResolvedProjectReferencePaths.NativeCoreCompletion)' != ''" />
+      <_NativeParticipatingProjects Include="@(Analyzer->'%(MSBuildSourceProjectFile)')"
+                                    Condition="'%(Analyzer.NativeCoreCompletion)' != ''" />
+      <_NativeUncooperativeReferences Include="@(_MSBuildProjectReferenceExistent->'%(FullPath)')"
+                                       Exclude="@(_NativeParticipatingProjects)" />
+      <!-- A non-participating reference may change transitive content without changing its assembly. -->
+      <_NativeMissingProducts Include="$(_NativeCompletion).foreign-reference" Condition="'@(_NativeUncooperativeReferences)' != ''" />
+      <FileWrites Include="$(_NativeInputsCache);$(_NativeOutputsCache);$(_NativeCompletion)" />
+    </ItemGroup>
+    <Hash ItemsToHash="@(_NativeInputSignature)" IgnoreCase="false">
+      <Output TaskParameter="HashResult" PropertyName="_NativeInputsHash" />
+    </Hash>
+    <WriteLinesToFile File="$(_NativeInputsCache)" Lines="$(_NativeInputsHash)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <Target Name="_NativeBuildProducts"
+          Inputs="@(_NativeInputs->Distinct());@(_NativeKnownProducts->Distinct());$(_NativeInputsCache)"
+          Outputs="$(_NativeCompletion);@(_NativeMissingProducts)">
+    <!-- Put the expensive prerequisite chain inside the incremental boundary, not in DependsOnTargets. -->
+    <CallTarget Targets="$(CoreBuildDependsOn)" />
+    <!-- FileWrites also registers optional caches that were never created. Remember actual products only. -->
+    <ReadLinesFromFile File="$(IntermediateOutputPath)$(CleanFile)">
+      <Output TaskParameter="Lines" ItemName="_NativeCurrentFileWrites" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <_NativeCurrentProducts Include="@(_NativeCurrentFileWrites)" Exclude="@(NativeNonCoreProducts)"
+                              Condition="Exists('%(Identity)')" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(_NativeOutputsCache)" Lines="@(_NativeCurrentProducts)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <Touch Files="$(_NativeCompletion)" AlwaysCreate="true" />
+    <OnError ExecuteTargets="_NativeInvalidateCompletion" />
+  </Target>
+
+  <Target Name="_NativeInvalidateCompletion">
+    <Delete Files="$(_NativeCompletion)" />
+  </Target>
+
+  <Target Name="_NativeCleanCompletion" AfterTargets="CoreClean">
+    <Delete Files="$(_NativeInputsCache);$(_NativeOutputsCache);$(_NativeCompletion)" />
+  </Target>
+</Project>

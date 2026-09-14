@@ -1,0 +1,7 @@
+"scenario","iteration","seconds","exitCode"
+"native-dynamic","1","8.0584679","0"
+"native-graph","1","13.5370903","0"
+"native-dynamic","2","7.9703715","0"
+"native-graph","2","13.1724832","0"
+"native-dynamic","3","8.3684063","0"
+"native-graph","3","14.4838033","0"

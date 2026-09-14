@@ -1,0 +1,42 @@
+[
+  {
+    "scenario": "stock-off",
+    "tasks": 23697,
+    "targets": 31252,
+    "evaluations": 404,
+    "csc": 0,
+    "rar": 202,
+    "copy": 3393,
+    "getPackageDirectory": 2010
+  },
+  {
+    "scenario": "native-off",
+    "tasks": 7857,
+    "targets": 13507,
+    "evaluations": 404,
+    "csc": 0,
+    "rar": 0,
+    "copy": 0,
+    "getPackageDirectory": 205
+  },
+  {
+    "scenario": "stock-on",
+    "tasks": 23697,
+    "targets": 31252,
+    "evaluations": 404,
+    "csc": 0,
+    "rar": 202,
+    "copy": 3393,
+    "getPackageDirectory": 2010
+  },
+  {
+    "scenario": "native-on",
+    "tasks": 7857,
+    "targets": 13507,
+    "evaluations": 404,
+    "csc": 0,
+    "rar": 0,
+    "copy": 0,
+    "getPackageDirectory": 205
+  }
+]

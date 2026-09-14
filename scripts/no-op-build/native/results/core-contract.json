@@ -1,0 +1,163 @@
+[
+  {
+    "name": "initial",
+    "exitCode": 0,
+    "csc": 2,
+    "rar": 2,
+    "copy": 7
+  },
+  {
+    "name": "settle",
+    "exitCode": 0,
+    "csc": 0,
+    "rar": 0,
+    "copy": 0
+  },
+  {
+    "name": "noop",
+    "exitCode": 0,
+    "csc": 0,
+    "rar": 0,
+    "copy": 0
+  },
+  {
+    "name": "method-body",
+    "exitCode": 0,
+    "csc": 1,
+    "rar": 2,
+    "copy": 5
+  },
+  {
+    "name": "transitive-content",
+    "exitCode": 0,
+    "csc": 0,
+    "rar": 2,
+    "copy": 7
+  },
+  {
+    "name": "add-source",
+    "exitCode": 0,
+    "csc": 2,
+    "rar": 2,
+    "copy": 6
+  },
+  {
+    "name": "remove-source",
+    "exitCode": 0,
+    "csc": 2,
+    "rar": 2,
+    "copy": 6
+  },
+  {
+    "name": "missing-producer",
+    "exitCode": 0,
+    "csc": 0,
+    "rar": 2,
+    "copy": 5
+  },
+  {
+    "name": "missing-copy",
+    "exitCode": 0,
+    "csc": 0,
+    "rar": 1,
+    "copy": 3
+  },
+  {
+    "name": "define",
+    "exitCode": 0,
+    "csc": 2,
+    "rar": 2,
+    "copy": 6
+  },
+  {
+    "name": "reset-define",
+    "exitCode": 0,
+    "csc": 2,
+    "rar": 2,
+    "copy": 6
+  },
+  {
+    "name": "runtime-config-property",
+    "exitCode": 0,
+    "csc": 0,
+    "rar": 2,
+    "copy": 5
+  },
+  {
+    "name": "reset-runtime-config",
+    "exitCode": 0,
+    "csc": 0,
+    "rar": 2,
+    "copy": 5
+  },
+  {
+    "name": "failure",
+    "exitCode": 1,
+    "csc": -1,
+    "rar": -1,
+    "copy": -1
+  },
+  {
+    "name": "recover",
+    "exitCode": 0,
+    "csc": 1,
+    "rar": 2,
+    "copy": 5
+  },
+  {
+    "name": "after-clean",
+    "exitCode": 0,
+    "csc": 2,
+    "rar": 2,
+    "copy": 7
+  },
+  {
+    "name": "final-noop",
+    "exitCode": 0,
+    "csc": 0,
+    "rar": 0,
+    "copy": 0
+  },
+  {
+    "name": "no-build-guard",
+    "exitCode": 1,
+    "csc": -1,
+    "rar": -1,
+    "copy": -1
+  },
+  {
+    "name": "ci-fallback",
+    "exitCode": 0,
+    "csc": 0,
+    "rar": 2,
+    "copy": 5
+  },
+  {
+    "name": "foreign-reference-warm",
+    "exitCode": 0,
+    "csc": 1,
+    "rar": 2,
+    "copy": 5
+  },
+  {
+    "name": "foreign-reference",
+    "exitCode": 0,
+    "csc": 0,
+    "rar": 2,
+    "copy": 5
+  },
+  {
+    "name": "restored-sources",
+    "exitCode": 0,
+    "csc": 1,
+    "rar": 2,
+    "copy": 7
+  },
+  {
+    "name": "restored-noop",
+    "exitCode": 0,
+    "csc": 0,
+    "rar": 0,
+    "copy": 0
+  }
+]

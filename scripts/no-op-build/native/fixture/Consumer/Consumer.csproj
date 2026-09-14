@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <EnableSourceLink>false</EnableSourceLink>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Producer\Producer.csproj" />
+  </ItemGroup>
+  <Target Name="ObserveAfterBuild" AfterTargets="Build">
+    <WriteLinesToFile File="$(OutputPath)after-build.log"
+                      Lines="$([System.DateTime]::UtcNow.Ticks)"
+                      Overwrite="true" />
+  </Target>
+</Project>

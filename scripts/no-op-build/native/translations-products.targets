@@ -1,0 +1,53 @@
+<Project>
+  <PropertyGroup>
+    <_NativeTranslationCompletion>$(IntermediateOutputPath)$(MSBuildProjectFile).NativeTranslations.complete</_NativeTranslationCompletion>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- A package downgrade or changed mapping must invalidate the cooperating CoreBuild target. -->
+    <NativeAdditionalInputSignature Include="@(PackageTranslationFiles->'Translations:%(FullPath)|%(RecursiveDir)')" />
+    <FileWrites Include="$(_NativeTranslationCompletion)" />
+    <NativeNonCoreProducts Include="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(_NativeTranslationCompletion)'))" />
+  </ItemGroup>
+
+  <Target Name="CopyPackageTranslationFiles" AfterTargets="Build"
+          DependsOnTargets="_NativePrepareTranslations;_NativeIncrementalTranslations;_NativeFallbackTranslations" />
+
+  <Target Name="_NativePrepareTranslations">
+    <ItemGroup>
+      <_NativeTranslationDestinations Include="@(PackageTranslationFiles->'Localization\%(RecursiveDir)%(Filename)%(Extension)')" />
+      <_NativeMissingTranslations Include="@(_NativeTranslationDestinations)" Condition="!Exists('%(Identity)')" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="_NativeIncrementalTranslations"
+          Condition="'$(_NativeCompletion)' != '' and '@(PackageTranslationFiles)' != ''"
+          Inputs="@(PackageTranslationFiles);@(_NativeTranslationDestinations);$(_NativeCompletion)"
+          Outputs="$(_NativeTranslationCompletion);@(_NativeMissingTranslations)"
+          Returns="">
+    <CallTarget Targets="_NativeCopyTranslationProducts" />
+    <Touch Files="$(_NativeTranslationCompletion)" AlwaysCreate="true" />
+    <OnError ExecuteTargets="_NativeInvalidateTranslations" />
+  </Target>
+
+  <Target Name="_NativeFallbackTranslations"
+          Condition="'$(_NativeCompletion)' == '' or '@(PackageTranslationFiles)' == ''">
+    <CallTarget Targets="_NativeCopyTranslationProducts" />
+  </Target>
+
+  <Target Name="_NativeCopyTranslationProducts">
+    <Message Text="Copying translation files: $(MSBuildProjectName)" Importance="high" />
+    <Copy SourceFiles="@(PackageTranslationFiles->'%(FullPath)')"
+          DestinationFiles="@(PackageTranslationFiles->'Localization\%(RecursiveDir)%(Filename)%(Extension)')"
+          Condition="'@(PackageTranslationFiles)' != ''"
+          SkipUnchangedFiles="true"
+          OverwriteReadOnlyFiles="false" />
+  </Target>
+
+  <Target Name="_NativeInvalidateTranslations">
+    <Delete Files="$(_NativeTranslationCompletion)" />
+  </Target>
+
+  <Target Name="_NativeCleanTranslations" AfterTargets="CoreClean">
+    <Delete Files="$(_NativeTranslationCompletion)" />
+  </Target>
+</Project>

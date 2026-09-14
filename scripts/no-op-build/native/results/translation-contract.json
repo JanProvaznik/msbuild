@@ -1,0 +1,47 @@
+[
+  {
+    "name": "initial",
+    "csc": 1,
+    "copy": 3
+  },
+  {
+    "name": "noop",
+    "csc": 0,
+    "copy": 0
+  },
+  {
+    "name": "package-downgrade",
+    "csc": 0,
+    "copy": 3
+  },
+  {
+    "name": "after-downgrade",
+    "csc": 0,
+    "copy": 0
+  },
+  {
+    "name": "newer-destination",
+    "csc": 0,
+    "copy": 1
+  },
+  {
+    "name": "deleted-destination",
+    "csc": 0,
+    "copy": 1
+  },
+  {
+    "name": "added-source",
+    "csc": 0,
+    "copy": 3
+  },
+  {
+    "name": "removed-source",
+    "csc": 0,
+    "copy": 3
+  },
+  {
+    "name": "final-noop",
+    "csc": 0,
+    "copy": 0
+  }
+]

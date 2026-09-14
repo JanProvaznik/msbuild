@@ -1,5 +1,10 @@
 # No-op build laboratory
 
+**Preferred follow-up:** [native target incrementality](native/README.md) uses
+ordinary `dotnet build`, native `Inputs`/`Outputs`, and dependency ordering.
+The external freshness gate documented below is retained as an earlier
+experiment, not the recommended direction.
+
 This is an opt-in experiment, not a change to MSBuild's default behavior.
 It uses the installed SDK's engine and binary-log reader, without rebuilding
 dotnet, replacing the installed SDK, or adding NuGet dependencies.

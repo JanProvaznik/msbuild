@@ -1,0 +1,22 @@
+[
+  {
+    "version": "v2",
+    "secondsWithBinlog": 13.0838803,
+    "tasks": 14265
+  },
+  {
+    "version": "v3",
+    "secondsWithBinlog": 16.2246598,
+    "tasks": 12108
+  },
+  {
+    "version": "v4",
+    "secondsWithBinlog": 10.1103508,
+    "tasks": 12108
+  },
+  {
+    "version": "v5",
+    "secondsWithBinlog": 10.7169787,
+    "tasks": 12078
+  }
+]
