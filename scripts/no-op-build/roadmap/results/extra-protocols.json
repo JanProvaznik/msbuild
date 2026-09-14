@@ -1,0 +1,94 @@
+{
+  "status": "passed",
+  "protocolRows": 4,
+  "script": "Test-ExtraProtocols.ps1",
+  "verifiedDetails": "extra-protocols-verified\\results.json",
+  "sdkConfiguration": "..\\safe-target-sdk\\configuration.json",
+  "comparison": {
+    "sdk": "10.0.400",
+    "samePrivateSdkBothVariants": true,
+    "stock": "EnableIncrementalTargetOptimizations=false",
+    "safe": "EnableIncrementalTargetOptimizations=true",
+    "SourceLink": "default true throughout",
+    "nativeCoreImport": false,
+    "configuration": "Debug",
+    "performanceMeasurements": false
+  },
+  "results": [
+    {
+      "id": "publish-console",
+      "scenario": "01-default-console",
+      "status": "passed",
+      "command": "dotnet publish <App.csproj> --no-restore -c Debug -o <fresh-variant-output>",
+      "publishedFilesPerVariant": 10,
+      "relativeFileSetsEqual": true,
+      "allFileSha256Equal": true,
+      "runtimeOutputBothVariants": "matrix-baseline:middle\npayload-baseline"
+    },
+    {
+      "id": "publish-razor-web",
+      "scenario": "06-razor-static-assets",
+      "status": "passed",
+      "command": "dotnet publish <WebApp.csproj> --no-restore -c Debug -o <fresh-variant-output>",
+      "publishedFilesPerVariant": 18,
+      "relativeFileSetsEqual": true,
+      "allFileSha256Equal": true,
+      "publishedRuntimeEnvironment": "Production",
+      "endpoint": "/matrix",
+      "endpointResponseBothVariants": "matrix-baseline",
+      "staticAsset": "/_content/RazorLibrary/matrix.txt",
+      "staticAssetResponseBothVariants": "asset-baseline"
+    },
+    {
+      "id": "pack-razor-library",
+      "scenario": "06-razor-static-assets",
+      "status": "passed",
+      "command": "dotnet pack <RazorLibrary.csproj> --no-restore -c Debug -o <fresh-variant-output>",
+      "packageId": "RazorLibrary",
+      "packageVersion": "1.0.0",
+      "entriesPerVariant": 12,
+      "rawEntrySetsEqual": true,
+      "payloadHashesAndSemanticMetadataEqual": true,
+      "packedDllMatchesCompiledDll": true,
+      "packedStaticAssetPresent": true,
+      "nuspecCompared": "Full metadata, including dependencies/framework references, not only id/version.",
+      "zipArchiveByteParityClaimed": false
+    },
+    {
+      "id": "git-sourcelink-commit-change",
+      "status": "passed",
+      "realLocalGitRepository": true,
+      "programSourceUnchangedAcrossCommits": true,
+      "commitA": "1e1cb3ed18626fa87ebf1dc6572b1744139eb8b9",
+      "commitB": "eb01db70074d3fbd220b6f3880fb0f1388206bad",
+      "informationalVersionAStockAndSafe": "2.3.4+1e1cb3ed18626fa87ebf1dc6572b1744139eb8b9",
+      "informationalVersionBStockAndSafe": "2.3.4+eb01db70074d3fbd220b6f3880fb0f1388206bad",
+      "SourceRevisionIdMatchesCurrentCommitBothVariants": true,
+      "compiledAssemblyVersionVerifiedByExecution": true,
+      "embeddedPortablePdbSourceLinkVerified": true,
+      "pdbSourceLinkCommitUrlsUpdateBothVariants": true,
+      "committer": "Scenario Matrix Protocol <scenario-matrix@example.invalid>",
+      "coauthoredTrailerOnBothCommits": true,
+      "gitFetchOrPush": false
+    }
+  ],
+  "preservation": {
+    "fixtureSourcesUnchanged": true,
+    "outputsOutsideProjectGlobs": true,
+    "publishedServerProcessesTerminated": true,
+    "environmentRestored": true,
+    "repositorySourceEdits": false,
+    "mainRepositoryCommits": false
+  },
+  "bounds": [
+    "This checks the four requested protocols with Debug, framework-dependent output; no RID/self-contained/AOT/signing variants were added.",
+    "NuGet ZIP timestamps and packaging-only metadata are not raw archive byte-parity assertions. The actual raw entry sets matched in this run.",
+    "The real local Git repository has a synthetic GitHub remote solely to activate the ordinary SourceLink provider. Embedded URLs and commit substitution were verified, not remote URL reachability.",
+    "The fresh Git project first reported NETSDK1004, then restore ran and all four subsequent stock/safe builds across two commits succeeded.",
+    "The first attempt is retained in extra-protocols/results.json. Its pack/Git failures were harness issues: UTF-8 BOM handling and a property query lacking explicit -t:Build. Both were corrected before rerunning all four rows successfully."
+  ],
+  "reproduce": [
+    "$matrix = 'C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\scenario-matrix'",
+    "& \"$matrix\\Test-ExtraProtocols.ps1\" -Registry \"$matrix\\fixtures\\registry.json\" -SdkConfiguration \"$matrix\\..\\safe-target-sdk\\configuration.json\" -OutputRoot '<fresh-external-output-directory>'"
+  ]
+}

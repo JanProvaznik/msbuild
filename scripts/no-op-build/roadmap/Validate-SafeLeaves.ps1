@@ -22,9 +22,10 @@ foreach ($variant in @('stock', 'safe', 'optout'))
     $xml = [xml](Get-Content $sourceTarget -Raw)
     $target = $xml.SelectSingleNode("//*[local-name()='Target' and @Name='GenerateStaticWebAssetsManifest']")
     $task = $target.SelectSingleNode("*[local-name()='GenerateStaticWebAssetsDevelopmentManifest']")
+    $pathPreparation = $target.SelectSingleNode("*[local-name()='PropertyGroup'][*[local-name()='_DevelopmentManifestPathForElision']]")
     $root = Join-Path $ArtifactsDirectory "$variant space's path"
     New-Item -ItemType Directory -Path "$root\wwwroot" | Out-Null
-    $definition = "<Project>$($target.OuterXml)<Target Name=`"DevelopmentOnly`" DependsOnTargets=`"SetPattern`">$($task.OuterXml)</Target></Project>"
+    $definition = "<Project>$($target.OuterXml)<Target Name=`"DevelopmentOnly`" DependsOnTargets=`"SetPattern`">$($pathPreparation.OuterXml)$($task.OuterXml)</Target></Project>"
     $definition | Set-Content "$root\definitions.targets"
     $assembly = Join-Path $Sdk 'Sdks\Microsoft.NET.Sdk.StaticWebAssets\tasks\net10.0\Microsoft.NET.Sdk.StaticWebAssets.Tasks.dll'
     @'
@@ -66,7 +67,7 @@ foreach ($variant in @('stock', 'safe', 'optout'))
 </Project>
 '@ | Set-Content "$root\probe.proj"
 
-    foreach ($stage in @('initial', 'noop', 'changed-before-hook', 'deleted-output', 'equal-time', 'missing-cache'))
+    foreach ($stage in @('initial', 'noop', 'relative-paths', 'changed-before-hook', 'deleted-output', 'equal-time', 'missing-cache'))
     {
         $extra = @()
         $targetName = 'GenerateStaticWebAssetsManifest'
@@ -89,6 +90,10 @@ foreach ($variant in @('stock', 'safe', 'optout'))
         }
         if ($variant -ne 'stock') { $extra += '-p:EnableStaticWebAssetsTaskElision=true' }
         if ($variant -eq 'optout') { $extra = @('-p:EnableIncrementalTargetOptimizations=true', '-p:EnableStaticWebAssetsTaskElision=false') }
+        if ($stage -eq 'relative-paths') {
+            $extra += '-p:StaticWebAssetDevelopmentManifestPath=development.json'
+            $extra += '-p:StaticWebAssetBuildManifestPath=build.json'
+        }
         $log = Join-Path $ArtifactsDirectory "$variant-$stage.binlog"
         & $dotnet (Join-Path $Sdk 'MSBuild.dll') "$root\probe.proj" -nologo -v:q `
             "-p:TasksAssembly=$assembly" "-p:ProbePattern=$pattern" "-t:$targetName" "-bl:$log" @extra | Out-Host
@@ -99,7 +104,7 @@ foreach ($variant in @('stock', 'safe', 'optout'))
         & $probe -Sdk $Sdk -Build:($rows.Count -eq 0) -ProbeArguments @('analyze', $log, $summary) | Out-Host
         $data = Get-Content $summary -Raw | ConvertFrom-Json
         $writers = [int](($data.taskTimings | Where-Object name -eq GenerateStaticWebAssetsDevelopmentManifest | Measure-Object Count -Sum).Sum)
-        if ($variant -eq 'safe' -and $stage -in @('noop','missing-cache') -and $writers -ne 0)
+        if ($variant -eq 'safe' -and $stage -in @('noop','relative-paths','missing-cache') -and $writers -ne 0)
         {
             throw 'Expected native task-condition elision.'
         }

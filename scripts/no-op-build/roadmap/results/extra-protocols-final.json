@@ -1,0 +1,704 @@
+{
+  "sdkVersion": "10.0.400",
+  "mode": "correctness-only",
+  "SourceLinkDisabled": false,
+  "NativeCoreImported": false,
+  "fixtureSourcesUnchanged": true,
+  "rows": [
+    {
+      "id": "publish-console",
+      "status": "passed",
+      "reason": "",
+      "details": {
+        "fileSetAndHashesEqual": true,
+        "variants": [
+          {
+            "variant": "stock",
+            "output": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\extra-protocols-final-paths\\publish-console\\stock",
+            "policy": [
+              {
+                "EnableSourceLink": "true",
+                "NativeCoreBuild": "",
+                "MSBuildSDKsPath": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\safe-target-sdk\\Sdks",
+                "NETCoreSdkVersion": "10.0.400",
+                "EnableIncrementalTargetOptimizations": "false"
+              },
+              {
+                "EnableSourceLink": "true",
+                "NativeCoreBuild": "",
+                "MSBuildSDKsPath": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\safe-target-sdk\\Sdks",
+                "NETCoreSdkVersion": "10.0.400",
+                "EnableIncrementalTargetOptimizations": "false"
+              },
+              {
+                "EnableSourceLink": "true",
+                "NativeCoreBuild": "",
+                "MSBuildSDKsPath": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\safe-target-sdk\\Sdks",
+                "NETCoreSdkVersion": "10.0.400",
+                "EnableIncrementalTargetOptimizations": "false"
+              }
+            ],
+            "files": [
+              {
+                "path": "App.deps.json",
+                "length": 1121,
+                "sha256": "0B45151BF06787B18EFEF5F2478ED355AE5519C44723ADCDD394EF80B609FA35"
+              },
+              {
+                "path": "App.dll",
+                "length": 5120,
+                "sha256": "3D71E8B30C5673C9A644200CF25D68FA614F024B3BDFF5D0808E0C21A66DAC27"
+              },
+              {
+                "path": "App.exe",
+                "length": 162304,
+                "sha256": "AF00A36EC6CD3B671C8A4E997F3817DEA1EF2E1FAB0C38841D26D014019E1D4D"
+              },
+              {
+                "path": "App.pdb",
+                "length": 11016,
+                "sha256": "30A505C522E4D3AC0D1E6A332A423503265DDDA2FA1D8AD9D9CADBB72B0C88CD"
+              },
+              {
+                "path": "App.runtimeconfig.json",
+                "length": 270,
+                "sha256": "256DDA2706E1151BB95987B6B5BE610BF68D64E058285B19E7E958222FC90414"
+              },
+              {
+                "path": "Leaf.dll",
+                "length": 4096,
+                "sha256": "0C2AEAFDD8C9072CA3EADABA5B7D070D7F3CE047417E1FB6CA91F349F00A2DCB"
+              },
+              {
+                "path": "Leaf.pdb",
+                "length": 10952,
+                "sha256": "FED47A731EC2F8A4B309F2ED66E83018C434150989FE3C550B0448912773F777"
+              },
+              {
+                "path": "Middle.dll",
+                "length": 4096,
+                "sha256": "CAFA6F50785B44CD549B168724EE110716C41EF44B239CD3FABF6D8B5B53DB22"
+              },
+              {
+                "path": "Middle.pdb",
+                "length": 10996,
+                "sha256": "6EDCD97D29B4A431E997F20C8F414562FB6CB3D28500084E2B94F68E74EAC835"
+              },
+              {
+                "path": "payload.txt",
+                "length": 16,
+                "sha256": "E94A818C581D3554FF471DA129724D32A7CBFD02976168F1529C3A918F959489"
+              }
+            ],
+            "runtime": "matrix-baseline:middle\npayload-baseline"
+          },
+          {
+            "variant": "safe",
+            "output": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\extra-protocols-final-paths\\publish-console\\safe",
+            "policy": [
+              {
+                "EnableSourceLink": "true",
+                "NativeCoreBuild": "",
+                "MSBuildSDKsPath": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\safe-target-sdk\\Sdks",
+                "NETCoreSdkVersion": "10.0.400",
+                "EnableIncrementalTargetOptimizations": "true"
+              },
+              {
+                "EnableSourceLink": "true",
+                "NativeCoreBuild": "",
+                "MSBuildSDKsPath": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\safe-target-sdk\\Sdks",
+                "NETCoreSdkVersion": "10.0.400",
+                "EnableIncrementalTargetOptimizations": "true"
+              },
+              {
+                "EnableSourceLink": "true",
+                "NativeCoreBuild": "",
+                "MSBuildSDKsPath": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\safe-target-sdk\\Sdks",
+                "NETCoreSdkVersion": "10.0.400",
+                "EnableIncrementalTargetOptimizations": "true"
+              }
+            ],
+            "files": [
+              {
+                "path": "App.deps.json",
+                "length": 1121,
+                "sha256": "0B45151BF06787B18EFEF5F2478ED355AE5519C44723ADCDD394EF80B609FA35"
+              },
+              {
+                "path": "App.dll",
+                "length": 5120,
+                "sha256": "3D71E8B30C5673C9A644200CF25D68FA614F024B3BDFF5D0808E0C21A66DAC27"
+              },
+              {
+                "path": "App.exe",
+                "length": 162304,
+                "sha256": "AF00A36EC6CD3B671C8A4E997F3817DEA1EF2E1FAB0C38841D26D014019E1D4D"
+              },
+              {
+                "path": "App.pdb",
+                "length": 11016,
+                "sha256": "30A505C522E4D3AC0D1E6A332A423503265DDDA2FA1D8AD9D9CADBB72B0C88CD"
+              },
+              {
+                "path": "App.runtimeconfig.json",
+                "length": 270,
+                "sha256": "256DDA2706E1151BB95987B6B5BE610BF68D64E058285B19E7E958222FC90414"
+              },
+              {
+                "path": "Leaf.dll",
+                "length": 4096,
+                "sha256": "0C2AEAFDD8C9072CA3EADABA5B7D070D7F3CE047417E1FB6CA91F349F00A2DCB"
+              },
+              {
+                "path": "Leaf.pdb",
+                "length": 10952,
+                "sha256": "FED47A731EC2F8A4B309F2ED66E83018C434150989FE3C550B0448912773F777"
+              },
+              {
+                "path": "Middle.dll",
+                "length": 4096,
+                "sha256": "CAFA6F50785B44CD549B168724EE110716C41EF44B239CD3FABF6D8B5B53DB22"
+              },
+              {
+                "path": "Middle.pdb",
+                "length": 10996,
+                "sha256": "6EDCD97D29B4A431E997F20C8F414562FB6CB3D28500084E2B94F68E74EAC835"
+              },
+              {
+                "path": "payload.txt",
+                "length": 16,
+                "sha256": "E94A818C581D3554FF471DA129724D32A7CBFD02976168F1529C3A918F959489"
+              }
+            ],
+            "runtime": "matrix-baseline:middle\npayload-baseline"
+          }
+        ]
+      }
+    },
+    {
+      "id": "publish-razor-web",
+      "status": "passed",
+      "reason": "",
+      "details": {
+        "fileSetAndHashesEqual": true,
+        "variants": [
+          {
+            "variant": "stock",
+            "output": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\extra-protocols-final-paths\\publish-razor-web\\stock",
+            "policy": [
+              {
+                "EnableSourceLink": "true",
+                "NativeCoreBuild": "",
+                "MSBuildSDKsPath": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\safe-target-sdk\\Sdks",
+                "NETCoreSdkVersion": "10.0.400",
+                "EnableIncrementalTargetOptimizations": "false"
+              },
+              {
+                "EnableSourceLink": "true",
+                "NativeCoreBuild": "",
+                "MSBuildSDKsPath": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\safe-target-sdk\\Sdks",
+                "NETCoreSdkVersion": "10.0.400",
+                "EnableIncrementalTargetOptimizations": "false"
+              }
+            ],
+            "files": [
+              {
+                "path": "RazorLibrary.dll",
+                "length": 5120,
+                "sha256": "8F1563719F6F8D4DDE1D7A6E5B4D37B940DAB017D7CBABDBD73A9164CBDC1C4B"
+              },
+              {
+                "path": "RazorLibrary.pdb",
+                "length": 21916,
+                "sha256": "9EB54FE3A414E5EE72788AF7716774D53AFE04E45FDD8388681A74141CA7A6CC"
+              },
+              {
+                "path": "web.config",
+                "length": 492,
+                "sha256": "9D0A0733EB19AD42D160C584E83D426BC73B8892F9EAD705C2A4865B3ACC5898"
+              },
+              {
+                "path": "WebApp.deps.json",
+                "length": 799,
+                "sha256": "D8B8665DE9F5F99032CAF0715E5C60311711A4EFA7AF2F99EFF9A78E86D5C811"
+              },
+              {
+                "path": "WebApp.dll",
+                "length": 5632,
+                "sha256": "326C2F8EDA71FA6136A28635B32F1F11EC3CF4B6952574CF06A86A63425A3C40"
+              },
+              {
+                "path": "WebApp.exe",
+                "length": 162304,
+                "sha256": "CE111E97C6A49D49275C56EE3B449205BF15CB5C4578D3910D5B5FD901D877D8"
+              },
+              {
+                "path": "WebApp.pdb",
+                "length": 21416,
+                "sha256": "91F58ECE9790D59CE2A9EBF59EBDC01D3C8A9916D2E18EF9C61BE4FB69FFBD55"
+              },
+              {
+                "path": "WebApp.runtimeconfig.json",
+                "length": 419,
+                "sha256": "4699B89914821B4AAA757DC3C03B351529227815650E58C5ED23BE88E28D3AE1"
+              },
+              {
+                "path": "WebApp.staticwebassets.endpoints.json",
+                "length": 22208,
+                "sha256": "44AE0ED6BDE86F83154E053E2DD18AB08E6AD2205B8858628CAC3F319A8A4432"
+              },
+              {
+                "path": "wwwroot\\_content\\RazorLibrary\\matrix.txt",
+                "length": 14,
+                "sha256": "AE5A08D477FFE4D4BB22787FEAF92117BCF6FC2816E63106F8D440C2FDD561E4"
+              },
+              {
+                "path": "wwwroot\\_content\\RazorLibrary\\matrix.txt.br",
+                "length": 18,
+                "sha256": "0737B9414AE80125FAFD4DB111AD2E8A920E456E66E044D2EEC59C76D7C65C1B"
+              },
+              {
+                "path": "wwwroot\\_content\\RazorLibrary\\matrix.txt.gz",
+                "length": 34,
+                "sha256": "89AA84CCB22F406C5D74DB90D986DC6A00FEAEEC22FC3FCEAA5DABECDC723175"
+              },
+              {
+                "path": "wwwroot\\_content\\RazorLibrary\\RazorLibrary.c84l6b6g70.bundle.scp.css",
+                "length": 102,
+                "sha256": "54C53CA4D1CF0BCACAE6926CC50092ECED5307265EF59987773C7D0E14648088"
+              },
+              {
+                "path": "wwwroot\\_content\\RazorLibrary\\RazorLibrary.c84l6b6g70.bundle.scp.css.br",
+                "length": 100,
+                "sha256": "CF675C786385B9A364B6379BE5E25A44FFDF14B22B354A1FDFD2D77150572551"
+              },
+              {
+                "path": "wwwroot\\_content\\RazorLibrary\\RazorLibrary.c84l6b6g70.bundle.scp.css.gz",
+                "length": 117,
+                "sha256": "69132ADC84DEA241F0984D0CE452EAA5422C8596A414C1CDE7809EA251384093"
+              },
+              {
+                "path": "wwwroot\\WebApp.styles.css",
+                "length": 75,
+                "sha256": "79AFD8F738DE6D44576AA311DDA5627485AFB1E04BEFD24253963687D11D8370"
+              },
+              {
+                "path": "wwwroot\\WebApp.styles.css.br",
+                "length": 67,
+                "sha256": "D440FA7D87C6131EA695DE69AB285B18B52FE00EB2244E686FDBDB22420AEC00"
+              },
+              {
+                "path": "wwwroot\\WebApp.styles.css.gz",
+                "length": 84,
+                "sha256": "625DADFF74AAA49CB07515B7B656517C303E2DC24EF0EA21DDF76572EB79CCD9"
+              }
+            ],
+            "runtime": {
+              "environment": "Production",
+              "endpoint": "/matrix",
+              "response": "matrix-baseline",
+              "asset": "/_content/RazorLibrary/matrix.txt",
+              "assetResponse": "asset-baseline"
+            }
+          },
+          {
+            "variant": "safe",
+            "output": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\extra-protocols-final-paths\\publish-razor-web\\safe",
+            "policy": [
+              {
+                "EnableSourceLink": "true",
+                "NativeCoreBuild": "",
+                "MSBuildSDKsPath": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\safe-target-sdk\\Sdks",
+                "NETCoreSdkVersion": "10.0.400",
+                "EnableIncrementalTargetOptimizations": "true"
+              },
+              {
+                "EnableSourceLink": "true",
+                "NativeCoreBuild": "",
+                "MSBuildSDKsPath": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\safe-target-sdk\\Sdks",
+                "NETCoreSdkVersion": "10.0.400",
+                "EnableIncrementalTargetOptimizations": "true"
+              }
+            ],
+            "files": [
+              {
+                "path": "RazorLibrary.dll",
+                "length": 5120,
+                "sha256": "8F1563719F6F8D4DDE1D7A6E5B4D37B940DAB017D7CBABDBD73A9164CBDC1C4B"
+              },
+              {
+                "path": "RazorLibrary.pdb",
+                "length": 21916,
+                "sha256": "9EB54FE3A414E5EE72788AF7716774D53AFE04E45FDD8388681A74141CA7A6CC"
+              },
+              {
+                "path": "web.config",
+                "length": 492,
+                "sha256": "9D0A0733EB19AD42D160C584E83D426BC73B8892F9EAD705C2A4865B3ACC5898"
+              },
+              {
+                "path": "WebApp.deps.json",
+                "length": 799,
+                "sha256": "D8B8665DE9F5F99032CAF0715E5C60311711A4EFA7AF2F99EFF9A78E86D5C811"
+              },
+              {
+                "path": "WebApp.dll",
+                "length": 5632,
+                "sha256": "326C2F8EDA71FA6136A28635B32F1F11EC3CF4B6952574CF06A86A63425A3C40"
+              },
+              {
+                "path": "WebApp.exe",
+                "length": 162304,
+                "sha256": "CE111E97C6A49D49275C56EE3B449205BF15CB5C4578D3910D5B5FD901D877D8"
+              },
+              {
+                "path": "WebApp.pdb",
+                "length": 21416,
+                "sha256": "91F58ECE9790D59CE2A9EBF59EBDC01D3C8A9916D2E18EF9C61BE4FB69FFBD55"
+              },
+              {
+                "path": "WebApp.runtimeconfig.json",
+                "length": 419,
+                "sha256": "4699B89914821B4AAA757DC3C03B351529227815650E58C5ED23BE88E28D3AE1"
+              },
+              {
+                "path": "WebApp.staticwebassets.endpoints.json",
+                "length": 22208,
+                "sha256": "44AE0ED6BDE86F83154E053E2DD18AB08E6AD2205B8858628CAC3F319A8A4432"
+              },
+              {
+                "path": "wwwroot\\_content\\RazorLibrary\\matrix.txt",
+                "length": 14,
+                "sha256": "AE5A08D477FFE4D4BB22787FEAF92117BCF6FC2816E63106F8D440C2FDD561E4"
+              },
+              {
+                "path": "wwwroot\\_content\\RazorLibrary\\matrix.txt.br",
+                "length": 18,
+                "sha256": "0737B9414AE80125FAFD4DB111AD2E8A920E456E66E044D2EEC59C76D7C65C1B"
+              },
+              {
+                "path": "wwwroot\\_content\\RazorLibrary\\matrix.txt.gz",
+                "length": 34,
+                "sha256": "89AA84CCB22F406C5D74DB90D986DC6A00FEAEEC22FC3FCEAA5DABECDC723175"
+              },
+              {
+                "path": "wwwroot\\_content\\RazorLibrary\\RazorLibrary.c84l6b6g70.bundle.scp.css",
+                "length": 102,
+                "sha256": "54C53CA4D1CF0BCACAE6926CC50092ECED5307265EF59987773C7D0E14648088"
+              },
+              {
+                "path": "wwwroot\\_content\\RazorLibrary\\RazorLibrary.c84l6b6g70.bundle.scp.css.br",
+                "length": 100,
+                "sha256": "CF675C786385B9A364B6379BE5E25A44FFDF14B22B354A1FDFD2D77150572551"
+              },
+              {
+                "path": "wwwroot\\_content\\RazorLibrary\\RazorLibrary.c84l6b6g70.bundle.scp.css.gz",
+                "length": 117,
+                "sha256": "69132ADC84DEA241F0984D0CE452EAA5422C8596A414C1CDE7809EA251384093"
+              },
+              {
+                "path": "wwwroot\\WebApp.styles.css",
+                "length": 75,
+                "sha256": "79AFD8F738DE6D44576AA311DDA5627485AFB1E04BEFD24253963687D11D8370"
+              },
+              {
+                "path": "wwwroot\\WebApp.styles.css.br",
+                "length": 67,
+                "sha256": "D440FA7D87C6131EA695DE69AB285B18B52FE00EB2244E686FDBDB22420AEC00"
+              },
+              {
+                "path": "wwwroot\\WebApp.styles.css.gz",
+                "length": 84,
+                "sha256": "625DADFF74AAA49CB07515B7B656517C303E2DC24EF0EA21DDF76572EB79CCD9"
+              }
+            ],
+            "runtime": {
+              "environment": "Production",
+              "endpoint": "/matrix",
+              "response": "matrix-baseline",
+              "asset": "/_content/RazorLibrary/matrix.txt",
+              "assetResponse": "asset-baseline"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "pack-razor-library",
+      "status": "passed",
+      "reason": "",
+      "details": {
+        "payloadAndNuspecEqual": true,
+        "zipByteParityClaimed": false,
+        "rawEntrySetsEqual": true,
+        "variants": [
+          {
+            "variant": "stock",
+            "policy": {
+              "EnableSourceLink": "true",
+              "NativeCoreBuild": "",
+              "MSBuildSDKsPath": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\safe-target-sdk\\Sdks",
+              "NETCoreSdkVersion": "10.0.400",
+              "EnableIncrementalTargetOptimizations": "false"
+            },
+            "inventory": {
+              "package": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\extra-protocols-final-paths\\pack-razor-library\\stock\\RazorLibrary.1.0.0.nupkg",
+              "rawEntries": [
+                "_rels/.rels",
+                "[Content_Types].xml",
+                "build/Microsoft.AspNetCore.StaticWebAssetEndpoints.props",
+                "build/Microsoft.AspNetCore.StaticWebAssets.props",
+                "build/RazorLibrary.props",
+                "buildMultiTargeting/RazorLibrary.props",
+                "buildTransitive/RazorLibrary.props",
+                "lib/net10.0/RazorLibrary.dll",
+                "package/services/metadata/core-properties/nuget.psmdcp",
+                "RazorLibrary.nuspec",
+                "staticwebassets/matrix.txt",
+                "staticwebassets/RazorLibrary.c84l6b6g70.bundle.scp.css"
+              ],
+              "entries": [
+                {
+                  "path": "_rels/.rels",
+                  "sha256": null,
+                  "semantic": "[{\"type\":\"http://schemas.microsoft.com/packaging/2010/07/manifest\",\"target\":\"/RazorLibrary.nuspec\",\"targetMode\":null},{\"type\":\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\",\"target\":\"/package/services/metadata/core-properties/nuget.psmdcp\",\"targetMode\":null}]"
+                },
+                {
+                  "path": "[Content_Types].xml",
+                  "sha256": null,
+                  "semantic": "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\" /><Default Extension=\"psmdcp\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\" /><Default Extension=\"css\" ContentType=\"application/octet\" /><Default Extension=\"dll\" ContentType=\"application/octet\" /><Default Extension=\"nuspec\" ContentType=\"application/octet\" /><Default Extension=\"props\" ContentType=\"application/octet\" /><Default Extension=\"txt\" ContentType=\"application/octet\" /></Types>"
+                },
+                {
+                  "path": "build/Microsoft.AspNetCore.StaticWebAssetEndpoints.props",
+                  "sha256": "49367A9D9D1A250BFDFB16E8DB4545FE2FB255B6766DD8B02F7B92792F799F52",
+                  "semantic": null
+                },
+                {
+                  "path": "build/Microsoft.AspNetCore.StaticWebAssets.props",
+                  "sha256": "7E68A3DDC1D6C21FE4EF90A00022FA0905A174D0C0543E76D01879AD9B40EF85",
+                  "semantic": null
+                },
+                {
+                  "path": "build/RazorLibrary.props",
+                  "sha256": "A0C8334649677304F9EB88453FED84DE58421AD0CFDABB314223A36D0A741A51",
+                  "semantic": null
+                },
+                {
+                  "path": "buildMultiTargeting/RazorLibrary.props",
+                  "sha256": "5E11C926A436F424099B0C279ED1AC2700C49407A599AAF862A0F8407F91D458",
+                  "semantic": null
+                },
+                {
+                  "path": "buildTransitive/RazorLibrary.props",
+                  "sha256": "0F3468BB4A6AE6BB6A3D97503F32D32B6E28CCED37A6215CA6B03BB6F2E0AB9F",
+                  "semantic": null
+                },
+                {
+                  "path": "lib/net10.0/RazorLibrary.dll",
+                  "sha256": "8F1563719F6F8D4DDE1D7A6E5B4D37B940DAB017D7CBABDBD73A9164CBDC1C4B",
+                  "semantic": null
+                },
+                {
+                  "path": "package/services/metadata/core-properties/nuget.psmdcp",
+                  "sha256": null,
+                  "semantic": "<coreProperties xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\"><dc:creator>RazorLibrary</dc:creator><dc:description>Package Description</dc:description><dc:identifier>RazorLibrary</dc:identifier><version>1.0.0</version><keywords></keywords><lastModifiedBy>NuGet.Packaging, Version=7.9.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35;.NET 8.0</lastModifiedBy></coreProperties>"
+                },
+                {
+                  "path": "RazorLibrary.nuspec",
+                  "sha256": null,
+                  "semantic": "<package xmlns=\"http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd\"><metadata><id>RazorLibrary</id><version>1.0.0</version><authors>RazorLibrary</authors><description>Package Description</description><repository type=\"git\" /><dependencies><group targetFramework=\"net10.0\" /></dependencies><frameworkReferences><group targetFramework=\"net10.0\"><frameworkReference name=\"Microsoft.AspNetCore.App\" /></group></frameworkReferences></metadata></package>"
+                },
+                {
+                  "path": "staticwebassets/matrix.txt",
+                  "sha256": "AE5A08D477FFE4D4BB22787FEAF92117BCF6FC2816E63106F8D440C2FDD561E4",
+                  "semantic": null
+                },
+                {
+                  "path": "staticwebassets/RazorLibrary.c84l6b6g70.bundle.scp.css",
+                  "sha256": "54C53CA4D1CF0BCACAE6926CC50092ECED5307265EF59987773C7D0E14648088",
+                  "semantic": null
+                }
+              ],
+              "nuspec": {
+                "id": "RazorLibrary",
+                "version": "1.0.0",
+                "xml": "<metadata xmlns=\"http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd\"><id>RazorLibrary</id><version>1.0.0</version><authors>RazorLibrary</authors><description>Package Description</description><repository type=\"git\" /><dependencies><group targetFramework=\"net10.0\" /></dependencies><frameworkReferences><group targetFramework=\"net10.0\"><frameworkReference name=\"Microsoft.AspNetCore.App\" /></group></frameworkReferences></metadata>"
+              }
+            }
+          },
+          {
+            "variant": "safe",
+            "policy": {
+              "EnableSourceLink": "true",
+              "NativeCoreBuild": "",
+              "MSBuildSDKsPath": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\safe-target-sdk\\Sdks",
+              "NETCoreSdkVersion": "10.0.400",
+              "EnableIncrementalTargetOptimizations": "true"
+            },
+            "inventory": {
+              "package": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\extra-protocols-final-paths\\pack-razor-library\\safe\\RazorLibrary.1.0.0.nupkg",
+              "rawEntries": [
+                "_rels/.rels",
+                "[Content_Types].xml",
+                "build/Microsoft.AspNetCore.StaticWebAssetEndpoints.props",
+                "build/Microsoft.AspNetCore.StaticWebAssets.props",
+                "build/RazorLibrary.props",
+                "buildMultiTargeting/RazorLibrary.props",
+                "buildTransitive/RazorLibrary.props",
+                "lib/net10.0/RazorLibrary.dll",
+                "package/services/metadata/core-properties/nuget.psmdcp",
+                "RazorLibrary.nuspec",
+                "staticwebassets/matrix.txt",
+                "staticwebassets/RazorLibrary.c84l6b6g70.bundle.scp.css"
+              ],
+              "entries": [
+                {
+                  "path": "_rels/.rels",
+                  "sha256": null,
+                  "semantic": "[{\"type\":\"http://schemas.microsoft.com/packaging/2010/07/manifest\",\"target\":\"/RazorLibrary.nuspec\",\"targetMode\":null},{\"type\":\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\",\"target\":\"/package/services/metadata/core-properties/nuget.psmdcp\",\"targetMode\":null}]"
+                },
+                {
+                  "path": "[Content_Types].xml",
+                  "sha256": null,
+                  "semantic": "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\" /><Default Extension=\"psmdcp\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\" /><Default Extension=\"css\" ContentType=\"application/octet\" /><Default Extension=\"dll\" ContentType=\"application/octet\" /><Default Extension=\"nuspec\" ContentType=\"application/octet\" /><Default Extension=\"props\" ContentType=\"application/octet\" /><Default Extension=\"txt\" ContentType=\"application/octet\" /></Types>"
+                },
+                {
+                  "path": "build/Microsoft.AspNetCore.StaticWebAssetEndpoints.props",
+                  "sha256": "49367A9D9D1A250BFDFB16E8DB4545FE2FB255B6766DD8B02F7B92792F799F52",
+                  "semantic": null
+                },
+                {
+                  "path": "build/Microsoft.AspNetCore.StaticWebAssets.props",
+                  "sha256": "7E68A3DDC1D6C21FE4EF90A00022FA0905A174D0C0543E76D01879AD9B40EF85",
+                  "semantic": null
+                },
+                {
+                  "path": "build/RazorLibrary.props",
+                  "sha256": "A0C8334649677304F9EB88453FED84DE58421AD0CFDABB314223A36D0A741A51",
+                  "semantic": null
+                },
+                {
+                  "path": "buildMultiTargeting/RazorLibrary.props",
+                  "sha256": "5E11C926A436F424099B0C279ED1AC2700C49407A599AAF862A0F8407F91D458",
+                  "semantic": null
+                },
+                {
+                  "path": "buildTransitive/RazorLibrary.props",
+                  "sha256": "0F3468BB4A6AE6BB6A3D97503F32D32B6E28CCED37A6215CA6B03BB6F2E0AB9F",
+                  "semantic": null
+                },
+                {
+                  "path": "lib/net10.0/RazorLibrary.dll",
+                  "sha256": "8F1563719F6F8D4DDE1D7A6E5B4D37B940DAB017D7CBABDBD73A9164CBDC1C4B",
+                  "semantic": null
+                },
+                {
+                  "path": "package/services/metadata/core-properties/nuget.psmdcp",
+                  "sha256": null,
+                  "semantic": "<coreProperties xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\"><dc:creator>RazorLibrary</dc:creator><dc:description>Package Description</dc:description><dc:identifier>RazorLibrary</dc:identifier><version>1.0.0</version><keywords></keywords><lastModifiedBy>NuGet.Packaging, Version=7.9.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35;.NET 8.0</lastModifiedBy></coreProperties>"
+                },
+                {
+                  "path": "RazorLibrary.nuspec",
+                  "sha256": null,
+                  "semantic": "<package xmlns=\"http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd\"><metadata><id>RazorLibrary</id><version>1.0.0</version><authors>RazorLibrary</authors><description>Package Description</description><repository type=\"git\" /><dependencies><group targetFramework=\"net10.0\" /></dependencies><frameworkReferences><group targetFramework=\"net10.0\"><frameworkReference name=\"Microsoft.AspNetCore.App\" /></group></frameworkReferences></metadata></package>"
+                },
+                {
+                  "path": "staticwebassets/matrix.txt",
+                  "sha256": "AE5A08D477FFE4D4BB22787FEAF92117BCF6FC2816E63106F8D440C2FDD561E4",
+                  "semantic": null
+                },
+                {
+                  "path": "staticwebassets/RazorLibrary.c84l6b6g70.bundle.scp.css",
+                  "sha256": "54C53CA4D1CF0BCACAE6926CC50092ECED5307265EF59987773C7D0E14648088",
+                  "semantic": null
+                }
+              ],
+              "nuspec": {
+                "id": "RazorLibrary",
+                "version": "1.0.0",
+                "xml": "<metadata xmlns=\"http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd\"><id>RazorLibrary</id><version>1.0.0</version><authors>RazorLibrary</authors><description>Package Description</description><repository type=\"git\" /><dependencies><group targetFramework=\"net10.0\" /></dependencies><frameworkReferences><group targetFramework=\"net10.0\"><frameworkReference name=\"Microsoft.AspNetCore.App\" /></group></frameworkReferences></metadata>"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "git-sourcelink-commit-change",
+      "status": "passed",
+      "reason": "",
+      "details": {
+        "repository": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\extra-protocols-final-paths\\git-repository",
+        "states": [
+          {
+            "state": "A",
+            "commit": "ded50b869e03c18517f76f6fc1a60ae0b05ae716",
+            "variants": [
+              {
+                "variant": "stock",
+                "output": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\extra-protocols-final-paths\\git-products\\A\\stock",
+                "revision": "ded50b869e03c18517f76f6fc1a60ae0b05ae716",
+                "informationalVersion": "2.3.4+ded50b869e03c18517f76f6fc1a60ae0b05ae716",
+                "sourceLink": {
+                  "documents": {
+                    "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\extra-protocols-final-paths\\git-repository\\*": "https://raw.githubusercontent.com/copilot-scenario-fixtures/local-source-link-protocol/ded50b869e03c18517f76f6fc1a60ae0b05ae716/*"
+                  }
+                }
+              },
+              {
+                "variant": "safe",
+                "output": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\extra-protocols-final-paths\\git-products\\A\\safe",
+                "revision": "ded50b869e03c18517f76f6fc1a60ae0b05ae716",
+                "informationalVersion": "2.3.4+ded50b869e03c18517f76f6fc1a60ae0b05ae716",
+                "sourceLink": {
+                  "documents": {
+                    "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\extra-protocols-final-paths\\git-repository\\*": "https://raw.githubusercontent.com/copilot-scenario-fixtures/local-source-link-protocol/ded50b869e03c18517f76f6fc1a60ae0b05ae716/*"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "state": "B",
+            "commit": "88ec4305d351774ba2eab9a5856c2703a9e50dcf",
+            "variants": [
+              {
+                "variant": "stock",
+                "output": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\extra-protocols-final-paths\\git-products\\B\\stock",
+                "revision": "88ec4305d351774ba2eab9a5856c2703a9e50dcf",
+                "informationalVersion": "2.3.4+88ec4305d351774ba2eab9a5856c2703a9e50dcf",
+                "sourceLink": {
+                  "documents": {
+                    "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\extra-protocols-final-paths\\git-repository\\*": "https://raw.githubusercontent.com/copilot-scenario-fixtures/local-source-link-protocol/88ec4305d351774ba2eab9a5856c2703a9e50dcf/*"
+                  }
+                }
+              },
+              {
+                "variant": "safe",
+                "output": "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\extra-protocols-final-paths\\git-products\\B\\safe",
+                "revision": "88ec4305d351774ba2eab9a5856c2703a9e50dcf",
+                "informationalVersion": "2.3.4+88ec4305d351774ba2eab9a5856c2703a9e50dcf",
+                "sourceLink": {
+                  "documents": {
+                    "C:\\Users\\janprovaznik\\.copilot\\session-state\\bd65763c-be01-4b0d-ac69-82fba21b3517\\files\\extra-protocols-final-paths\\git-repository\\*": "https://raw.githubusercontent.com/copilot-scenario-fixtures/local-source-link-protocol/88ec4305d351774ba2eab9a5856c2703a9e50dcf/*"
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "programSourceUnchanged": true,
+        "embeddedPdbSourceLinkVerified": true,
+        "networkAccess": "none: no fetch/push"
+      }
+    }
+  ],
+  "boundaries": [
+    "Both variants use the same private SDK with the optimization flag off/on; this is not a comparison against another SDK version.",
+    "No SourceLink opt-out or native CoreBuild import is supplied.",
+    "Publish output relative paths and SHA-256 hashes are compared; filesystem timestamps are not required to match.",
+    "NuGet payloads, nuspec semantics and normalized entry sets are compared, not ZIP archive bytes/timestamps.",
+    "NuGet core-properties part GUIDs, relationship IDs, and core-properties creation/modification times are packaging metadata, not payload parity claims.",
+    "The Git repository is real and local. Its synthetic GitHub remote only selects the SourceLink provider; no network fetch/push or remote URL reachability check occurs."
+  ]
+}

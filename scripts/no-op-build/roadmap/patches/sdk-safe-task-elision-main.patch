@@ -1,5 +1,5 @@
 diff --git a/src/sdk/src/StaticWebAssetsSdk/Targets/Microsoft.NET.Sdk.StaticWebAssets.targets b/src/sdk/src/StaticWebAssetsSdk/Targets/Microsoft.NET.Sdk.StaticWebAssets.targets
-index b72da2d4f..4c69859ad 100644
+index b72da2d4f..0fb28c0ab 100644
 --- a/src/sdk/src/StaticWebAssetsSdk/Targets/Microsoft.NET.Sdk.StaticWebAssets.targets
 +++ b/src/sdk/src/StaticWebAssetsSdk/Targets/Microsoft.NET.Sdk.StaticWebAssets.targets
 @@ -679,6 +679,10 @@ Copyright (c) .NET Foundation. All rights reserved.
@@ -13,16 +13,22 @@ index b72da2d4f..4c69859ad 100644
    <Target Name="GenerateStaticWebAssetsManifest" DependsOnTargets="$(GenerateStaticWebAssetsManifestDependsOn)">
  
      <MergeStaticWebAssets Condition="'@(StaticWebAssetsEmbeddedConfiguration)' != ''"
-@@ -733,6 +737,12 @@ Copyright (c) .NET Foundation. All rights reserved.
+@@ -732,7 +736,18 @@ Copyright (c) .NET Foundation. All rights reserved.
+       ExclusionPatternsCacheFilePath="$(StaticWebAssetEndpointsBuildExclusionPatternsCachePath)">
      </GenerateStaticWebAssetEndpointsManifest>
  
++    <PropertyGroup Condition="'$(EnableStaticWebAssetsTaskElision)' == 'true' and '$(StaticWebAssetDevelopmentManifestPath)' != '' and '$(StaticWebAssetBuildManifestPath)' != ''">
++      <_DevelopmentManifestPathForElision>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(StaticWebAssetDevelopmentManifestPath)'))</_DevelopmentManifestPathForElision>
++      <_BuildManifestPathForElision>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(StaticWebAssetBuildManifestPath)'))</_BuildManifestPathForElision>
++    </PropertyGroup>
++
      <GenerateStaticWebAssetsDevelopmentManifest
 +      Condition="'$(EnableStaticWebAssetsTaskElision)' != 'true'
 +                 or '$(PackageId)' == ''
 +                 or '$(StaticWebAssetDevelopmentManifestPath)' == ''
 +                 or '$(StaticWebAssetBuildManifestPath)' == ''
-+                 or !Exists('$(StaticWebAssetDevelopmentManifestPath)')
-+                 or $([System.IO.File]::GetLastWriteTime('$(StaticWebAssetDevelopmentManifestPath)').ToUniversalTime().Ticks) &lt;= $([System.IO.File]::GetLastWriteTime('$(StaticWebAssetBuildManifestPath)').ToUniversalTime().Ticks)"
++                 or !Exists('$(_DevelopmentManifestPathForElision)')
++                 or $([System.IO.File]::GetLastWriteTime('$(_DevelopmentManifestPathForElision)').ToUniversalTime().Ticks) &lt;= $([System.IO.File]::GetLastWriteTime('$(_BuildManifestPathForElision)').ToUniversalTime().Ticks)"
        DiscoveryPatterns="@(StaticWebAssetDiscoveryPattern)"
        Assets="@(_CurrentProjectFilteredAssets)"
        Source="$(PackageId)"

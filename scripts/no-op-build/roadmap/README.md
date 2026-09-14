@@ -16,8 +16,10 @@ failed adversarial review.
 - `results/`: compact evidence. SDKs, binlogs and generated projects are kept outside the checkout.
 - `rejected/reference-mapping.targets`: guarded target-only mapping experiment. Focused parity passed, but no workload performance win was established. It is not part of the safe switch.
 
-Only XML task conditions change in the safe SDK. No public target names or
-dependency lists are replaced. No engine or task C# implementation is changed.
+Only XML guards and private path properties change in the safe SDK. No public
+target names or dependency lists are replaced. Two private properties normalize the
+development-manifest guard against the project directory. No engine or task
+C# implementation is changed.
 
 ## Source-backed SDK copy
 
@@ -95,6 +97,22 @@ The net472 row needs installed Framework reference assemblies.
 Restore is separate from Build. The stock harness first attempts the expected
 no-restore build and only restores after missing-assets evidence.
 No additional test packages or feeds are introduced by the scenario generator.
+
+Run the additional publish/pack/real-Git protocols with:
+
+```powershell
+.\scripts\no-op-build\roadmap\scenarios\Test-ExtraProtocols.ps1 `
+    -Registry C:\lab\scenario-matrix\registry.json `
+    -SdkConfiguration C:\lab\safe-sdk\configuration.json `
+    -OutputRoot C:\lab\extra-protocols
+```
+
+These checks compare published file sets/hashes, run published console and
+Production Web/RCL outputs, inspect package contents/nuspec semantics, and
+verify real Git commit changes through SourceRevisionId, executed assembly
+metadata and embedded PDB SourceLink. No network fetch/push is performed by
+the Git fixture. Archive timestamps and remote URL reachability are not
+claimed as parity.
 
 ## Measure without confusing counts and wall time
 

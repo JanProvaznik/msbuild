@@ -157,7 +157,12 @@ scalar parameters also run it so validation is not suppressed.
 
 The installed MSBuild allowlist does not expose File.GetLastWriteTimeUtc as a
 property function. The working patch uses GetLastWriteTime followed by
-ToUniversalTime; it does not compare ambiguous local clock ticks.
+ToUniversalTime; it does not compare ambiguous local clock ticks. Paths are
+normalized against MSBuildProjectDirectory inside the original target body,
+after BeforeTargets hooks, rather than relying on a process working directory.
+The final path-hardening fixture passed 24 stock/safe/opt-out cases, including
+relative paths and apostrophes. The five-pair timing data predates this
+semantically equivalent path qualification; no additional speedup is claimed.
 
 Current VMR main additionally filters static-web-asset groups. The main port
 retains that work and the filtered items unchanged. This is why replacing the
@@ -193,6 +198,24 @@ Both project and solution routes are preserved in the raw data.
 Every no-op row retained **zero Csc calls**. RAR counts did not change: 202
 remained in Orchard and one or more remained in each applicable fixture.
 That is intentional compatibility, not a failed attempt to hide resolution.
+
+### Additional protocol matrix
+
+Four stock/safe protocol rows also passed without disabling SourceLink or
+importing the coarse CoreBuild target:
+
+| Protocol | Observed parity |
+| --- | --- |
+| Console `publish --no-restore -c Debug` | All 10 published paths and SHA-256 hashes match; published app runs correctly |
+| Web/Razor `publish --no-restore -c Debug` | All 18 paths and hashes match; Production HTTP endpoint and published RCL static asset return expected bytes |
+| Razor library `pack --no-restore -c Debug` | 12 entry names, assembly payload, static asset and full nuspec semantics match; no raw ZIP-byte claim |
+| Real local Git/SourceLink commit change | Two real commits update SourceRevisionId, executed AssemblyInformationalVersion and embedded portable-PDB SourceLink URLs identically |
+
+The Git fixture uses a synthetic remote only to select the normal SourceLink
+provider; it never fetches/pushes or claims that generated URLs are reachable.
+The protocol rows cover Debug framework-dependent output, not RID-specific,
+self-contained, AOT, signing or every deployment mode. Evidence and a portable
+runner are committed under the roadmap harness.
 
 For small projects, budget **zero guaranteed wall-clock saving** from T1/T2.
 For large SDK-heavy graphs, the measured task-count reduction scales with
