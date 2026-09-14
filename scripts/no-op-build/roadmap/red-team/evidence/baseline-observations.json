@@ -1,0 +1,129 @@
+{
+  "sdkVersion": "10.0.400",
+  "sdkSourceCommit": "14fbf8d5271c98133561eb55185fdb05b286f578",
+  "recordedUtc": "2026-09-14T16:36:33.1949131Z",
+  "nativeExtraArgs": [],
+  "targetHashes": [
+    {
+      "file": "inject.targets",
+      "sha256": "B367566D1777084482BCB15EB877EB158EC3A9DFED7C67E539FEF98E95EE6C94"
+    },
+    {
+      "file": "core-products.targets",
+      "sha256": "2807B38595FDF6D45BBFC3951EED678141C2FE80131BC0958A3FC7F9AA33F389"
+    },
+    {
+      "file": "translations-products.targets",
+      "sha256": "5BD65EDFE80F7FF947584F87572087AC3DECBD57991010542F13C1592F3802A5"
+    }
+  ],
+  "observations": [
+    {
+      "id": "1",
+      "title": "PreBuildEvent hook executes after project references",
+      "sourceLocation": "core-products.targets:15-16",
+      "native": {
+        "generated": false,
+        "exitCode": 1
+      },
+      "stock": {
+        "runtime": "42",
+        "exitCode": 0
+      },
+      "reproducedOriginalFailure": true
+    },
+    {
+      "id": "2",
+      "title": "Warm payload suppresses validation hook and SDK/custom state",
+      "sourceLocation": "core-products.targets:88-92",
+      "native": {
+        "observer": [
+          "  OBSERVE: HookState=[] HookItem=[] ReferenceCount=[0] RefWithAssemblies=[0]"
+        ],
+        "exitCode": 0
+      },
+      "stock": {
+        "exitCode": 1
+      },
+      "reproducedOriginalFailure": true
+    },
+    {
+      "id": "3",
+      "title": "Transitive binary reference source change is missed",
+      "sourceLocation": "core-products.targets:26-34",
+      "native": {
+        "exitCode": 0,
+        "primaryUnchanged": true,
+        "runtime": "old"
+      },
+      "stock": {
+        "runtime": "new",
+        "exitCode": 0
+      },
+      "reproducedOriginalFailure": true
+    },
+    {
+      "id": "4",
+      "title": "ServerGarbageCollection runtimeconfig change is missed",
+      "sourceLocation": "core-products.targets:35-61",
+      "native": {
+        "serverGC": null,
+        "exitCode": 0
+      },
+      "stock": {
+        "serverGC": true,
+        "exitCode": 0
+      },
+      "reproducedOriginalFailure": true
+    },
+    {
+      "id": "5",
+      "title": "Execution-time translation mapping change is missed",
+      "sourceLocation": "translations-products.targets:5-7,22-25",
+      "native": {
+        "content": "translation from package one",
+        "exitCode": 0
+      },
+      "stock": {
+        "content": "different translation from package two",
+        "exitCode": 0
+      },
+      "reproducedOriginalFailure": true
+    },
+    {
+      "id": "6",
+      "title": "Company change leaves stale compiled assembly attribute",
+      "sourceLocation": "core-products.targets:35-61",
+      "native": {
+        "company": "OriginalCompany",
+        "exitCode": 0
+      },
+      "stock": {
+        "company": "NewCompany",
+        "exitCode": 0
+      },
+      "reproducedOriginalFailure": true
+    },
+    {
+      "id": "7",
+      "title": "Compile CopyToOutputDirectory metadata change is missed",
+      "sourceLocation": "core-products.targets:36,67-70",
+      "native": {
+        "queryItems": [
+          {
+            "TargetPath": "Program.cs",
+            "CopyToOutputDirectory": "PreserveNewest"
+          }
+        ],
+        "exitCode": 0,
+        "copiedSourceExists": false
+      },
+      "stock": {
+        "copiedSourceExists": true,
+        "exitCode": 0
+      },
+      "reproducedOriginalFailure": true
+    }
+  ],
+  "note": "sourceLocation refers to the original reviewed c6e6728fb target lines. These are recorded counterexamples, not a general compatibility certification."
+}

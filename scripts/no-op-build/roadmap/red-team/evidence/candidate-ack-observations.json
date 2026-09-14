@@ -1,0 +1,97 @@
+{
+  "sdkVersion": "10.0.400",
+  "sdkSourceCommit": "14fbf8d5271c98133561eb55185fdb05b286f578",
+  "recordedUtc": "2026-09-14T16:49:25.9659801Z",
+  "nativeExtraArgs": [
+    "-p:NativeCoreBuildContract=DeclaredInputsAndHooksV1"
+  ],
+  "targetHashes": [
+    {
+      "file": "inject.targets",
+      "sha256": "809E2F70B8BB9D696635020437AC36979FBB0F4F0CBD9EC5A4508BB88CF0BF55"
+    },
+    {
+      "file": "core-products.targets",
+      "sha256": "0FC4A904ECBDCB4AA2A62A99CA70DE47220A19FCC0285779B09F6685EA7635D6"
+    },
+    {
+      "file": "translations-products.targets",
+      "sha256": "8FF338F255138FC4795245E3E06A5C69AEBA1C91A870758BBDBCE9FDC9CDAF1A"
+    }
+  ],
+  "observations": [
+    {
+      "id": "1",
+      "title": "PreBuildEvent hook executes after project references",
+      "sourceLocation": "core-products.targets:15-16",
+      "native": {
+        "generated": false,
+        "exitCode": 1
+      },
+      "stock": {
+        "runtime": "42",
+        "exitCode": 0
+      },
+      "reproducedOriginalFailure": true
+    },
+    {
+      "id": "2",
+      "title": "Warm payload suppresses validation hook and SDK/custom state",
+      "sourceLocation": "core-products.targets:88-92",
+      "native": {
+        "observer": [
+          "  OBSERVE: HookState=[] HookItem=[] ReferenceCount=[0] RefWithAssemblies=[0]"
+        ],
+        "exitCode": 0
+      },
+      "stock": {
+        "exitCode": 1
+      },
+      "reproducedOriginalFailure": true
+    },
+    {
+      "id": "3",
+      "title": "Transitive binary reference source change is missed",
+      "sourceLocation": "core-products.targets:26-34",
+      "native": {
+        "primaryUnchanged": true,
+        "runtime": "new",
+        "exitCode": 0
+      },
+      "stock": {
+        "runtime": "new",
+        "exitCode": 0
+      },
+      "reproducedOriginalFailure": false
+    },
+    {
+      "id": "4",
+      "title": "ServerGarbageCollection runtimeconfig change is missed",
+      "sourceLocation": "core-products.targets:35-61",
+      "native": {
+        "serverGC": true,
+        "exitCode": 0
+      },
+      "stock": {
+        "serverGC": true,
+        "exitCode": 0
+      },
+      "reproducedOriginalFailure": false
+    },
+    {
+      "id": "5",
+      "title": "Execution-time translation mapping change is missed",
+      "sourceLocation": "translations-products.targets:5-7,22-25",
+      "native": {
+        "content": "different translation from package two",
+        "exitCode": 0
+      },
+      "stock": {
+        "content": "different translation from package two",
+        "exitCode": 0
+      },
+      "reproducedOriginalFailure": false
+    }
+  ],
+  "note": "sourceLocation refers to the original reviewed c6e6728fb target lines. These are recorded counterexamples, not a general compatibility certification."
+}

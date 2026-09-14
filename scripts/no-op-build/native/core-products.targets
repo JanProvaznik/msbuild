@@ -18,7 +18,7 @@
   </Target>
 
   <Target Name="_NativePrepareProducts"
-          DependsOnTargets="ResolvePackageAssets;ResolveTargetingPackAssets;ResolveFrameworkReferences">
+          DependsOnTargets="ResolvePackageAssets;ResolveTargetingPackAssets;ResolveFrameworkReferences;_NativePrepareRuntimeContract">
     <ReadLinesFromFile File="$(_NativeOutputsCache)">
       <Output TaskParameter="Lines" ItemName="_NativePriorProducts" />
     </ReadLinesFromFile>
@@ -31,12 +31,12 @@
                               @(_ResolvedProjectReferencePaths);@(_ResolvedProjectReferencePaths->'%(NativeCoreCompletion)');
                               @(CustomAdditionalCompileInputs);@(UpToDateCheckInput);
                               $(ApplicationIcon);$(AssemblyOriginatorKeyFile);$(Win32Resource);$(Win32Manifest);
-                              $(ResolvedCodeAnalysisRuleSet);@(NativeAdditionalInputs)" />
+                              $(ResolvedCodeAnalysisRuleSet);@(NativeAdditionalInputs);@(_NativeRuntimeInputs)" />
       <_NativeInputSignature Include="@(_NativeInputs->'%(FullPath)');
-                                     @(Compile->'%(Identity)|%(Link)');
-                                     @(Content->'%(Identity)|%(CopyToOutputDirectory)|%(TargetPath)');
-                                     @(None->'%(Identity)|%(CopyToOutputDirectory)|%(TargetPath)');
-                                     @(EmbeddedResource->'%(Identity)|%(LogicalName)|%(Link)');
+                                     @(Compile->'%(Identity)|%(Link)|%(CopyToOutputDirectory)|%(TargetPath)');
+                                     @(Content->'%(Identity)|%(Link)|%(CopyToOutputDirectory)|%(TargetPath)');
+                                     @(None->'%(Identity)|%(Link)|%(CopyToOutputDirectory)|%(TargetPath)');
+                                     @(EmbeddedResource->'%(Identity)|%(LogicalName)|%(Link)|%(CopyToOutputDirectory)|%(TargetPath)');
                                      $(Configuration)|$(Platform)|$(TargetFramework)|$(RuntimeIdentifier);
                                      $(DefineConstants)|$(LangVersion)|$(Optimize)|$(DebugType)|$(DebugSymbols);
                                      $(Nullable)|$(AllowUnsafeBlocks)|$(CheckForOverflowUnderflow)|$(Deterministic);
@@ -50,6 +50,16 @@
                                      $(UseSharedCompilation)|$(UseHostCompilerIfAvailable)|$(ErrorReport)|$(ErrorLog);
                                      $(AssemblyOriginatorKeyFile)|$(CodePage)|$(DocumentationFile)|$(PdbFile);
                                      $(GenerateAssemblyInfo)|$(GenerateTargetFrameworkMonikerAttribute);
+                                     $(Company)|$(Copyright)|$(Description)|$(Product)|$(Trademark)|$(AssemblyTitle)|$(NeutralLanguage);
+                                     $(RepositoryUrl)|$(PrivateRepositoryUrl)|$(PublishRepositoryUrl)|$(PublicKey);
+                                     $(GenerateAssemblyCompanyAttribute)|$(GenerateAssemblyConfigurationAttribute)|$(GenerateAssemblyCopyrightAttribute);
+                                     $(GenerateAssemblyDescriptionAttribute)|$(GenerateAssemblyFileVersionAttribute)|$(GenerateAssemblyInformationalVersionAttribute);
+                                     $(GenerateAssemblyTrademarkAttribute)|$(GenerateAssemblyProductAttribute)|$(GenerateAssemblyTitleAttribute)|$(GenerateAssemblyVersionAttribute);
+                                     $(GenerateRepositoryUrlAttribute)|$(GenerateNeutralResourcesLanguageAttribute)|$(GenerateAssemblyMetadataAttributes)|$(GenerateInternalsVisibleToAttributes);
+                                     $(EnablePreviewFeatures)|$(GenerateRequiresPreviewFeaturesAttribute)|$(DisableRuntimeMarshalling);
+                                     $(TargetPlatformIdentifier)|$(TargetPlatformVersion)|$(SupportedOSPlatformVersion)|$(GenerateSupportedOSPlatformAttribute)|$(GenerateTargetPlatformAttribute);
+                                     @(InternalsVisibleTo->'%(Identity)|%(Key)');@(AssemblyMetadata->'%(Identity)|%(Value)');
+                                     @(AssemblyAttribute->'%(Identity)|%(_Parameter1)|%(_Parameter2)|%(_Parameter3)|%(_Parameter4)|%(_Parameter5)|%(_Parameter6)|%(_Parameter7)|%(_Parameter8)');
                                      $(GenerateDependencyFile)|$(GenerateRuntimeConfigurationFiles)|$(GenerateRuntimeConfigDevFile);
                                      $(CopyBuildOutputToOutputDirectory)|$(CopyOutputSymbolsToOutputDirectory);
                                      $(CopyDebugSymbolFilesFromPackages)|$(CopyDocumentationFilesFromPackages)|$(UseCommonOutputDirectory);
@@ -77,12 +87,25 @@
                                        Exclude="@(_NativeParticipatingProjects)" />
       <!-- A non-participating reference may change transitive content without changing its assembly. -->
       <_NativeMissingProducts Include="$(_NativeCompletion).foreign-reference" Condition="'@(_NativeUncooperativeReferences)' != ''" />
+      <_NativeOpaqueReferences Include="@(Reference)"
+                               Condition="'%(Reference.NuGetPackageId)' == '' and '%(Reference.FrameworkReferenceName)' == ''" />
+      <_NativeMissingProducts Include="$(_NativeCompletion).opaque-reference"
+                             Condition="'@(_NativeOpaqueReferences)' != '' or '@(_ExplicitReference)' != ''" />
       <FileWrites Include="$(_NativeInputsCache);$(_NativeOutputsCache);$(_NativeCompletion)" />
     </ItemGroup>
     <Hash ItemsToHash="@(_NativeInputSignature)" IgnoreCase="false">
       <Output TaskParameter="HashResult" PropertyName="_NativeInputsHash" />
     </Hash>
     <WriteLinesToFile File="$(_NativeInputsCache)" Lines="$(_NativeInputsHash)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!-- Reuse the SDK's effective runtime-option contract instead of duplicating its property list. -->
+  <Target Name="_NativePrepareRuntimeContract"
+          Condition="'$(GenerateRuntimeConfigurationFiles)' == 'true'"
+          DependsOnTargets="_GenerateRuntimeConfigurationFilesInputCache">
+    <ItemGroup>
+      <_NativeRuntimeInputs Include="@(GenerateRuntimeConfigurationFilesInputs)" />
+    </ItemGroup>
   </Target>
 
   <Target Name="_NativeBuildProducts"

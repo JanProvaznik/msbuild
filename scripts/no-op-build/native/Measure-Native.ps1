@@ -5,10 +5,14 @@ param(
     [Parameter(Mandatory)][string]$OutputDirectory,
     [string]$Sdk = 'C:\Program Files\dotnet\sdk\10.0.400',
     [ValidateRange(1, 50)][int]$Iterations = 5,
-    [switch]$IncludeServer
+    [switch]$IncludeServer,
+    [switch]$AcknowledgeExperimentalCoreContract
 )
 
 $ErrorActionPreference = 'Stop'
+if (!$AcknowledgeExperimentalCoreContract) {
+    throw 'The coarse CoreBuild experiment has known hook/state incompatibilities. Use the roadmap safe-tier matrix, or explicitly acknowledge the laboratory contract.'
+}
 $Root = (Resolve-Path $Root).Path
 $PrivateSdk = (Resolve-Path $PrivateSdk).Path
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
@@ -37,6 +41,7 @@ function Invoke-Variant([string]$Variant, [int]$Iteration, [string]$Binlog = '')
         "-p:NetCoreRoot=$($configuration.NetCoreRoot)" `
         "-p:CustomAfterMicrosoftCommonTargets=$PSScriptRoot\inject.targets" `
         "-p:NativeCoreBuild=$enabled" "-p:NativeIncrementalTranslations=$enabled" `
+        -p:NativeCoreBuildContract=DeclaredInputsAndHooksV1 `
         "-p:NativeSkipEmptyFrameworkPacks=$enabled" @extra
     $code = $LASTEXITCODE
     if ($Iteration -gt 0)

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <EnableSourceLink>false</EnableSourceLink>
+    <Company Condition="'$(Company)' == ''">OriginalCompany</Company>
+    <SourceCopyMode Condition="'$(SourceCopyMode)' == ''">Never</SourceCopyMode>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Update="Program.cs" CopyToOutputDirectory="$(SourceCopyMode)" />
+  </ItemGroup>
+</Project>

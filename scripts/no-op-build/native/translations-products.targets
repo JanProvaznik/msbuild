@@ -1,27 +1,35 @@
 <Project>
   <PropertyGroup>
     <_NativeTranslationCompletion>$(IntermediateOutputPath)$(MSBuildProjectFile).NativeTranslations.complete</_NativeTranslationCompletion>
+    <_NativeTranslationInputsCache>$(IntermediateOutputPath)$(MSBuildProjectFile).NativeTranslations.inputs.cache</_NativeTranslationInputsCache>
   </PropertyGroup>
   <ItemGroup>
-    <!-- A package downgrade or changed mapping must invalidate the cooperating CoreBuild target. -->
-    <NativeAdditionalInputSignature Include="@(PackageTranslationFiles->'Translations:%(FullPath)|%(RecursiveDir)')" />
-    <FileWrites Include="$(_NativeTranslationCompletion)" />
-    <NativeNonCoreProducts Include="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(_NativeTranslationCompletion)'))" />
+    <FileWrites Include="$(_NativeTranslationCompletion);$(_NativeTranslationInputsCache)" />
+    <NativeNonCoreProducts Include="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(_NativeTranslationCompletion)'));
+                                   $([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(_NativeTranslationInputsCache)'))" />
   </ItemGroup>
 
-  <Target Name="CopyPackageTranslationFiles" AfterTargets="Build"
-          DependsOnTargets="_NativePrepareTranslations;_NativeIncrementalTranslations;_NativeFallbackTranslations" />
+  <!-- Keep preparation in the body so BeforeTargets hooks populate their inputs first. -->
+  <Target Name="CopyPackageTranslationFiles" AfterTargets="Build">
+    <CallTarget Targets="_NativePrepareTranslations;_NativeIncrementalTranslations;_NativeFallbackTranslations" />
+  </Target>
 
   <Target Name="_NativePrepareTranslations">
     <ItemGroup>
       <_NativeTranslationDestinations Include="@(PackageTranslationFiles->'Localization\%(RecursiveDir)%(Filename)%(Extension)')" />
       <_NativeMissingTranslations Include="@(_NativeTranslationDestinations)" Condition="!Exists('%(Identity)')" />
+      <_NativeTranslationMapping Include="@(PackageTranslationFiles->'%(FullPath)|%(RecursiveDir)|%(Filename)%(Extension)')" />
     </ItemGroup>
+    <Hash ItemsToHash="@(_NativeTranslationMapping)" IgnoreCase="false">
+      <Output TaskParameter="HashResult" PropertyName="_NativeTranslationMappingHash" />
+    </Hash>
+    <WriteLinesToFile File="$(_NativeTranslationInputsCache)" Lines="$(_NativeTranslationMappingHash)"
+                      Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
 
   <Target Name="_NativeIncrementalTranslations"
           Condition="'$(_NativeCompletion)' != '' and '@(PackageTranslationFiles)' != ''"
-          Inputs="@(PackageTranslationFiles);@(_NativeTranslationDestinations);$(_NativeCompletion)"
+          Inputs="@(PackageTranslationFiles);@(_NativeTranslationDestinations);$(_NativeCompletion);$(_NativeTranslationInputsCache)"
           Outputs="$(_NativeTranslationCompletion);@(_NativeMissingTranslations)"
           Returns="">
     <CallTarget Targets="_NativeCopyTranslationProducts" />
@@ -44,10 +52,10 @@
   </Target>
 
   <Target Name="_NativeInvalidateTranslations">
-    <Delete Files="$(_NativeTranslationCompletion)" />
+    <Delete Files="$(_NativeTranslationCompletion);$(_NativeTranslationInputsCache)" />
   </Target>
 
   <Target Name="_NativeCleanTranslations" AfterTargets="CoreClean">
-    <Delete Files="$(_NativeTranslationCompletion)" />
+    <Delete Files="$(_NativeTranslationCompletion);$(_NativeTranslationInputsCache)" />
   </Target>
 </Project>

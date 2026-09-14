@@ -33,7 +33,8 @@ function Build-Case([string]$Name, [string[]]$Extra = @(), [switch]$ExpectFailur
     try
     {
         & $dotnet build $consumer --no-restore -m:2 -nologo -v:q `
-            "-p:CustomAfterMicrosoftCommonTargets=$PSScriptRoot\inject.targets" -p:NativeCoreBuild=true "-bl:$log" @Extra | Out-Host
+            "-p:CustomAfterMicrosoftCommonTargets=$PSScriptRoot\inject.targets" -p:NativeCoreBuild=true `
+            -p:NativeCoreBuildContract=DeclaredInputsAndHooksV1 "-bl:$log" @Extra | Out-Host
         $code = $LASTEXITCODE
     }
     finally
@@ -124,6 +125,17 @@ try
     Build-Case 'runtime-config-property' @('-p:GenerateRuntimeConfigurationFiles=true') | Out-Host
     if (!(Test-Path (Join-Path $producerBin 'Producer.runtimeconfig.json'))) { throw 'Requested runtime configuration was not generated.' }
     Build-Case 'reset-runtime-config' | Out-Host
+    Build-Case 'server-gc-property' @('-p:ServerGarbageCollection=true') | Out-Host
+    $runtimeConfig = Get-Content (Join-Path $consumerBin 'Consumer.runtimeconfig.json') -Raw | ConvertFrom-Json
+    if ($runtimeConfig.runtimeOptions.configProperties.'System.GC.Server' -ne $true) { throw 'Effective runtime host option was ignored.' }
+    Build-Case 'reset-server-gc' | Out-Host
+    Build-Case 'company-baseline' @('-p:Company=OriginalCompany') | Out-Host
+    Build-Case 'company-change' @('-p:Company=NewCompany') | Out-Host
+    $company = & $dotnet (Join-Path $consumerBin 'Consumer.dll') --company
+    if ($LASTEXITCODE -ne 0 -or $company -ne 'NewCompany') { throw 'Generated assembly metadata was stale.' }
+    Build-Case 'copy-metadata-change' @('-p:SourceCopyMode=PreserveNewest') | Out-Host
+    if (!(Test-Path (Join-Path $consumerBin 'Program.cs'))) { throw 'Compile copy metadata was ignored.' }
+    Build-Case 'reset-copy-metadata' | Out-Host
 
     [IO.File]::WriteAllText($extraSource, '#error deliberate native incremental failure')
     Build-Case 'failure' -ExpectFailure | Out-Host
@@ -139,7 +151,8 @@ try
     Assert-Run 'two' 'updated transitive payload'
 
     & $dotnet clean $consumer -m:2 -nologo -v:q `
-        "-p:CustomAfterMicrosoftCommonTargets=$PSScriptRoot\inject.targets" -p:NativeCoreBuild=true
+        "-p:CustomAfterMicrosoftCommonTargets=$PSScriptRoot\inject.targets" -p:NativeCoreBuild=true `
+        -p:NativeCoreBuildContract=DeclaredInputsAndHooksV1
     if ($LASTEXITCODE -ne 0) { throw 'Clean failed.' }
     if (Test-Path (Join-Path $consumerBin 'Consumer.dll')) { throw 'Clean left primary output.' }
     foreach ($project in @('Producer', 'Consumer'))
@@ -155,6 +168,8 @@ try
     Assert-Run 'two' 'updated transitive payload'
 
     Build-Case 'no-build-guard' @('-p:NoBuild=true') -ExpectFailure | Out-Host
+    $result = Build-Case 'missing-contract-fallback' @('-p:NativeCoreBuildContract=')
+    if ($result.rar -ne 2) { throw 'Missing explicit contract did not select the stock pipeline.' }
     $result = Build-Case 'ci-fallback' @('-p:ContinuousIntegrationBuild=true')
     if ($result.rar -ne 2) { throw 'CI build did not use the stock pipeline.' }
 

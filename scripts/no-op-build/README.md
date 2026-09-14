@@ -1,7 +1,10 @@
 # No-op build laboratory
 
-**Preferred follow-up:** [native target incrementality](native/README.md) uses
-ordinary `dotnet build`, native `Inputs`/`Outputs`, and dependency ordering.
+**Current recommendation:** the [target-only roadmap](roadmap/README.md)
+separates compatible task-level changes from the coarse native prototype's
+reproduced hook/input incompatibilities.
+The [native target experiment](native/README.md) uses ordinary `dotnet build`,
+native `Inputs`/`Outputs`, and dependency ordering, but is laboratory-only.
 The external freshness gate documented below is retained as an earlier
 experiment, not the recommended direction.
 

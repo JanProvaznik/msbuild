@@ -20,10 +20,14 @@ New-Item -ItemType Directory -Path $app,"$packageA\cs","$packageB\cs" | Out-Null
     <Nullable>enable</Nullable>
     <EnableSourceLink>false</EnableSourceLink>
     <DefaultItemExcludes>$(DefaultItemExcludes);Localization\**</DefaultItemExcludes>
+    <CollectTranslationsBefore Condition="'$(CollectTranslationsBefore)' == ''">BeforeBuild</CollectTranslationsBefore>
   </PropertyGroup>
-  <ItemGroup Condition="'$(TranslationPackageDirectory)' != ''">
-    <PackageTranslationFiles Include="$(TranslationPackageDirectory)\**\*.po" />
-  </ItemGroup>
+  <Target Name="CollectTranslations" BeforeTargets="$(CollectTranslationsBefore)"
+          Condition="'$(TranslationPackageDirectory)' != ''">
+    <ItemGroup>
+      <PackageTranslationFiles Include="$(TranslationPackageDirectory)\**\*.po" />
+    </ItemGroup>
+  </Target>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
   <Import Project="$(NativeTranslationTargets)" Condition="'$(NativeTranslationTargets)' != ''" />
 </Project>
@@ -37,13 +41,15 @@ $destination = Join-Path $app 'Localization\cs\Messages.po'
 $probe = Join-Path (Split-Path $PSScriptRoot) 'Invoke-Probe.ps1'
 $rows = [Collections.Generic.List[object]]::new()
 
-function Build-Translations([string]$Name, [string]$Package)
+function Build-Translations([string]$Name, [string]$Package, [string]$CollectBefore = 'BeforeBuild')
 {
     $log = Join-Path $ArtifactsDirectory "$Name.binlog"
     dotnet build App.csproj --no-restore -nologo -v:q `
         "-p:CustomAfterMicrosoftCommonTargets=$PSScriptRoot\inject.targets" `
         "-p:NativeTranslationTargets=$PSScriptRoot\translations-products.targets" `
-        "-p:TranslationPackageDirectory=$Package" -p:NativeCoreBuild=true "-bl:$log" | Out-Host
+        "-p:TranslationPackageDirectory=$Package" -p:NativeCoreBuild=true `
+        "-p:CollectTranslationsBefore=$CollectBefore" `
+        -p:NativeCoreBuildContract=DeclaredInputsAndHooksV1 "-bl:$log" | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "Failed $Name" }
     $summary = Join-Path $ArtifactsDirectory "$Name.json"
     & $probe -Sdk $Sdk -Build:($rows.Count -eq 0) -ProbeArguments @('analyze',$log,$summary) | Out-Host
@@ -87,6 +93,11 @@ try
     if (!(Test-Path (Join-Path $app 'Localization\cs\Added.po'))) { throw 'Removed source changed stock orphan policy.' }
     $result = Build-Translations 'final-noop' $packageB
     if ($result.copy -ne 0 -or $result.csc -ne 0) { throw 'Final build was not a no-op.' }
+    Build-Translations 'before-copy-v1' $packageA 'CopyPackageTranslationFiles' | Out-Host
+    $result = Build-Translations 'before-copy-v2' $packageB 'CopyPackageTranslationFiles'
+    if ($result.copy -eq 0) { throw 'BeforeTargets mapping change was missed.' }
+    $result = Build-Translations 'before-copy-noop' $packageB 'CopyPackageTranslationFiles'
+    if ($result.copy -ne 0) { throw 'Execution-time mapping did not settle.' }
     $rows | ConvertTo-Json | Set-Content (Join-Path $ArtifactsDirectory 'results.json')
     $rows | Format-Table
 }

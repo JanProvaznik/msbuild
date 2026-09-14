@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Producer\Producer.csproj" />
+    <Compile Update="Program.cs" CopyToOutputDirectory="$(SourceCopyMode)" />
   </ItemGroup>
   <Target Name="ObserveAfterBuild" AfterTargets="Build">
     <WriteLinesToFile File="$(OutputPath)after-build.log"

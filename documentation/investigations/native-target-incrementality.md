@@ -1,5 +1,11 @@
 # Pushing native target incrementality on OrchardCore
 
+> **Superseded for compatibility claims:** the subsequent
+> [target-only roadmap and red-team review](../specs/proposed/target-incrementality-roadmap.md)
+> reproduced seven incompatibilities in the original coarse boundary. The
+> timings below are historical performance evidence, not a generally safe SDK
+> recommendation. Safe task-level elision is measured separately.
+
 Follow-up measured on 2026-09-14, using the same SDK 10.0.400, machine, and
 OrchardCore revision `6587325652261a4606123d19502707dbcfc09ecd` as the
 [initial investigation](no-op-orchardcore.md). The entry point is the complete

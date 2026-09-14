@@ -1,0 +1,30 @@
+<Project>
+  <!-- Research control only. Focused parity passed; no real-workload performance win was demonstrated. -->
+  <PropertyGroup>
+    <EnableSimpleReferenceMapping Condition="'$(EnableSimpleReferenceMapping)' == ''">false</EnableSimpleReferenceMapping>
+  </PropertyGroup>
+  <Target Name="FindReferenceAssembliesForReferences" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <ReferencePath Condition="'%(ReferencePath.ReferenceAssembly)' == ''">
+        <ReferenceAssembly>%(FullPath)</ReferenceAssembly>
+      </ReferencePath>
+    </ItemGroup>
+    <PropertyGroup>
+      <_UseSimpleReferenceMapping>false</_UseSimpleReferenceMapping>
+      <_UseSimpleReferenceMapping Condition="'$(EnableSimpleReferenceMapping)' == 'true' and
+          '@(ReferencePath->Count())' == '@(ReferencePath->Distinct()->Count())'">true</_UseSimpleReferenceMapping>
+    </PropertyGroup>
+    <ItemGroup>
+      <ReferencePathWithRefAssemblies Include="@(ReferencePath->'%(ReferenceAssembly)')"
+          Condition="'$(CompileUsingReferenceAssemblies)' != 'false' and '$(_UseSimpleReferenceMapping)' == 'true'">
+        <OriginalPath Condition="'%(ReferencePath.Identity)' != '%(ReferencePath.ReferenceAssembly)'">%(ReferencePath.Identity)</OriginalPath>
+      </ReferencePathWithRefAssemblies>
+      <ReferencePathWithRefAssemblies Include="@(ReferencePath->'%(ReferenceAssembly)')"
+          Condition="'$(CompileUsingReferenceAssemblies)' != 'false' and '$(_UseSimpleReferenceMapping)' != 'true'">
+        <OriginalPath Condition="'%(ReferencePath.Identity)' != '@(ReferencePath->'%(ReferenceAssembly)')'">%(ReferencePath.Identity)</OriginalPath>
+      </ReferencePathWithRefAssemblies>
+      <ReferencePathWithRefAssemblies Include="@(ReferencePath)"
+          Condition="'$(CompileUsingReferenceAssemblies)' == 'false'" />
+    </ItemGroup>
+  </Target>
+</Project>

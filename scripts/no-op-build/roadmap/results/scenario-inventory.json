@@ -1,0 +1,74 @@
+[
+  {
+    "id": "01-default-console",
+    "title": "Console with a two-edge library reference chain",
+    "projectCount": 3,
+    "expectedEnableSourceLink": "true",
+    "validationStatus": "ready",
+    "coarseLabEligibility": "stock-fallback-required"
+  },
+  {
+    "id": "02-trusted-console",
+    "title": "Console with a two-edge library reference chain",
+    "projectCount": 3,
+    "expectedEnableSourceLink": "false",
+    "validationStatus": "ready",
+    "coarseLabEligibility": "explicitly-trusted-candidate-not-enabled"
+  },
+  {
+    "id": "03-solution-24",
+    "title": "Genuine 24-project, seven-level solution DAG",
+    "projectCount": 24,
+    "expectedEnableSourceLink": "true",
+    "validationStatus": "ready",
+    "coarseLabEligibility": "stock-fallback-required"
+  },
+  {
+    "id": "04-multitarget",
+    "title": "net8.0/net10.0 library consumed by net10.0 app",
+    "projectCount": 2,
+    "expectedEnableSourceLink": "true",
+    "validationStatus": "ready",
+    "coarseLabEligibility": "stock-fallback-required"
+  },
+  {
+    "id": "05-web",
+    "title": "Minimal Web SDK application",
+    "projectCount": 1,
+    "expectedEnableSourceLink": "true",
+    "validationStatus": "ready",
+    "coarseLabEligibility": "stock-fallback-required"
+  },
+  {
+    "id": "06-razor-static-assets",
+    "title": "Razor class library and static assets consumed by Web SDK app",
+    "projectCount": 2,
+    "expectedEnableSourceLink": "true",
+    "validationStatus": "ready",
+    "coarseLabEligibility": "stock-fallback-required"
+  },
+  {
+    "id": "07-wpf",
+    "title": "WPF with generated XAML entry point and window",
+    "projectCount": 1,
+    "expectedEnableSourceLink": "true",
+    "validationStatus": "ready",
+    "coarseLabEligibility": "stock-fallback-required"
+  },
+  {
+    "id": "08-winforms",
+    "title": "Windows Forms with generated ApplicationConfiguration and real Form",
+    "projectCount": 1,
+    "expectedEnableSourceLink": "true",
+    "validationStatus": "ready",
+    "coarseLabEligibility": "stock-fallback-required"
+  },
+  {
+    "id": "09-net472",
+    "title": "SDK-style .NET Framework 4.7.2 library",
+    "projectCount": 1,
+    "expectedEnableSourceLink": "true",
+    "validationStatus": "ready",
+    "coarseLabEligibility": "stock-fallback-required"
+  }
+]

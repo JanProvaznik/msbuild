@@ -1,0 +1,123 @@
+diff --git a/src/sdk/src/StaticWebAssetsSdk/Targets/Microsoft.NET.Sdk.StaticWebAssets.targets b/src/sdk/src/StaticWebAssetsSdk/Targets/Microsoft.NET.Sdk.StaticWebAssets.targets
+index c3e5fad9a..ac9cd0ff8 100644
+--- a/src/sdk/src/StaticWebAssetsSdk/Targets/Microsoft.NET.Sdk.StaticWebAssets.targets
++++ b/src/sdk/src/StaticWebAssetsSdk/Targets/Microsoft.NET.Sdk.StaticWebAssets.targets
+@@ -620,6 +620,10 @@ Copyright (c) .NET Foundation. All rights reserved.
+ 
+   <Target Name="GenerateComputedBuildStaticWebAssets" DependsOnTargets="$(GenerateComputedBuildStaticWebAssetsDependsOn)" />
+ 
++  <PropertyGroup>
++    <EnableStaticWebAssetsTaskElision Condition="'$(EnableStaticWebAssetsTaskElision)' == ''">$(EnableIncrementalTargetOptimizations)</EnableStaticWebAssetsTaskElision>
++  </PropertyGroup>
++
+   <Target Name="GenerateStaticWebAssetsManifest" DependsOnTargets="$(GenerateStaticWebAssetsManifestDependsOn)">
+ 
+     <MergeStaticWebAssets Condition="'@(StaticWebAssetsEmbeddedConfiguration)' != ''"
+@@ -662,6 +666,12 @@ Copyright (c) .NET Foundation. All rights reserved.
+     </GenerateStaticWebAssetEndpointsManifest>
+ 
+     <GenerateStaticWebAssetsDevelopmentManifest
++      Condition="'$(EnableStaticWebAssetsTaskElision)' != 'true'
++                 or '$(PackageId)' == ''
++                 or '$(StaticWebAssetDevelopmentManifestPath)' == ''
++                 or '$(StaticWebAssetBuildManifestPath)' == ''
++                 or !Exists('$(StaticWebAssetDevelopmentManifestPath)')
++                 or $([System.IO.File]::GetLastWriteTime('$(StaticWebAssetDevelopmentManifestPath)').ToUniversalTime().Ticks) &lt;= $([System.IO.File]::GetLastWriteTime('$(StaticWebAssetBuildManifestPath)').ToUniversalTime().Ticks)"
+       DiscoveryPatterns="@(StaticWebAssetDiscoveryPattern)"
+       Assets="@(StaticWebAsset)"
+       Source="$(PackageId)"
+diff --git a/src/sdk/src/Tasks/Microsoft.NET.Build.Tasks/targets/Microsoft.NET.Sdk.FrameworkReferenceResolution.targets b/src/sdk/src/Tasks/Microsoft.NET.Build.Tasks/targets/Microsoft.NET.Sdk.FrameworkReferenceResolution.targets
+index 9ffde1b6f..90fa879e9 100644
+--- a/src/sdk/src/Tasks/Microsoft.NET.Build.Tasks/targets/Microsoft.NET.Sdk.FrameworkReferenceResolution.targets
++++ b/src/sdk/src/Tasks/Microsoft.NET.Build.Tasks/targets/Microsoft.NET.Sdk.FrameworkReferenceResolution.targets
+@@ -264,6 +264,10 @@ Copyright (c) .NET Foundation. All rights reserved.
+ 
+   <UsingTask TaskName="ResolveFrameworkReferences" AssemblyFile="$(MicrosoftNETBuildTasksAssembly)" />
+ 
++  <PropertyGroup>
++    <EnableEmptyPackTaskElision Condition="'$(EnableEmptyPackTaskElision)' == ''">$(EnableIncrementalTargetOptimizations)</EnableEmptyPackTaskElision>
++  </PropertyGroup>
++
+   <!--
+     ============================================================
+                                         ResolveFrameworkReferences
+@@ -279,6 +283,7 @@ Copyright (c) .NET Foundation. All rights reserved.
+           Returns="@(ResolvedFrameworkReference)">
+ 
+     <GetPackageDirectory
++      Condition="'$(EnableEmptyPackTaskElision)' != 'true' or '@(TargetingPack)' != ''"
+       Items="@(TargetingPack)"
+       PackageFolders="@(AssetsFilePackageFolder)">
+ 
+@@ -293,6 +298,7 @@ Copyright (c) .NET Foundation. All rights reserved.
+     </ItemGroup>
+ 
+     <GetPackageDirectory
++      Condition="'$(EnableEmptyPackTaskElision)' != 'true' or '@(AppHostPack)' != ''"
+       Items="@(AppHostPack)"
+       PackageFolders="@(AssetsFilePackageFolder)">
+ 
+@@ -301,6 +307,7 @@ Copyright (c) .NET Foundation. All rights reserved.
+     </GetPackageDirectory>
+ 
+     <GetPackageDirectory
++      Condition="'$(EnableEmptyPackTaskElision)' != 'true' or '@(SingleFileHostPack)' != ''"
+       Items="@(SingleFileHostPack)"
+       PackageFolders="@(AssetsFilePackageFolder)">
+ 
+@@ -309,6 +316,7 @@ Copyright (c) .NET Foundation. All rights reserved.
+     </GetPackageDirectory>
+ 
+     <GetPackageDirectory
++      Condition="'$(EnableEmptyPackTaskElision)' != 'true' or '@(Crossgen2Pack)' != ''"
+       Items="@(Crossgen2Pack)"
+       PackageFolders="@(AssetsFilePackageFolder)">
+ 
+@@ -317,6 +325,7 @@ Copyright (c) .NET Foundation. All rights reserved.
+     </GetPackageDirectory>
+ 
+     <GetPackageDirectory
++      Condition="'$(EnableEmptyPackTaskElision)' != 'true' or '@(HostILCompilerPack)' != ''"
+       Items="@(HostILCompilerPack)"
+       PackageFolders="@(AssetsFilePackageFolder)">
+ 
+@@ -324,6 +333,7 @@ Copyright (c) .NET Foundation. All rights reserved.
+     </GetPackageDirectory>
+ 
+     <GetPackageDirectory
++      Condition="'$(EnableEmptyPackTaskElision)' != 'true' or '@(TargetILCompilerPack)' != ''"
+       Items="@(TargetILCompilerPack)"
+       PackageFolders="@(AssetsFilePackageFolder)">
+ 
+@@ -331,6 +341,7 @@ Copyright (c) .NET Foundation. All rights reserved.
+     </GetPackageDirectory>
+ 
+     <GetPackageDirectory
++      Condition="'$(EnableEmptyPackTaskElision)' != 'true' or '@(PackAsToolShimAppHostPack)' != ''"
+       Items="@(PackAsToolShimAppHostPack)"
+       PackageFolders="@(AssetsFilePackageFolder)">
+ 
+@@ -339,6 +350,7 @@ Copyright (c) .NET Foundation. All rights reserved.
+     </GetPackageDirectory>
+ 
+     <GetPackageDirectory
++      Condition="'$(EnableEmptyPackTaskElision)' != 'true' or '@(ComHostPack)' != ''"
+       Items="@(ComHostPack)"
+       PackageFolders="@(AssetsFilePackageFolder)">
+ 
+@@ -347,6 +359,7 @@ Copyright (c) .NET Foundation. All rights reserved.
+     </GetPackageDirectory>
+ 
+     <GetPackageDirectory
++      Condition="'$(EnableEmptyPackTaskElision)' != 'true' or '@(IjwHostPack)' != ''"
+      Items="@(IjwHostPack)"
+      PackageFolders="@(AssetsFilePackageFolder)">
+ 
+@@ -400,6 +413,7 @@ Copyright (c) .NET Foundation. All rights reserved.
+     </PropertyGroup>
+ 
+     <GetPackageDirectory
++      Condition="'$(EnableEmptyPackTaskElision)' != 'true' or '@(RuntimePack)' != ''"
+       Items="@(RuntimePack)"
+       PackageFolders="@(AssetsFilePackageFolder)">
+ 

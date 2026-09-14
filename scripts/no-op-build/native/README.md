@@ -1,5 +1,13 @@
 # Native MSBuild incrementality experiment
 
+> **Laboratory only, not a general SDK optimization.** The
+> [red-team roadmap](../../../documentation/specs/proposed/target-incrementality-roadmap.md)
+> reproduced seven incompatibilities in the original boundary. Known cases
+> have been mitigated, but arbitrary hook/state contracts remain unsupported.
+> Use the [safe-tier harness](../roadmap/README.md) for compatibility-preserving
+> comparisons. Historical 7.59/6.18-second numbers below are not a blanket
+> correctness claim.
+
 This is the follow-up to the external freshness-gate experiment. **These builds
 run ordinary `dotnet build` and use native MSBuild targets throughout.** There
 is no watcher, filesystem snapshot service, replacement build host, or cached
@@ -9,7 +17,8 @@ The experimental targets use built-in `Inputs`/`Outputs`, `CallTarget`, `Hash`,
 `WriteLinesToFile`, `ReadLinesFromFile`, and `Touch`. They do create ordinary
 per-project `obj` cache/stamp files: an input-list/configuration hash, a list of
 actual generated outputs, and a completion stamp. The translation leaf has its
-own completion stamp. This is target-level incrementality, not statelessness.
+own execution-time mapping cache and completion stamp. This is target-level
+incrementality, not statelessness.
 
 On the pinned 202-project OrchardCore CMS workload, five paired samples gave:
 
@@ -34,7 +43,8 @@ $inject = (Resolve-Path .\scripts\no-op-build\native\inject.targets).Path
 Push-Location C:\lab\OrchardCore
 dotnet build src\OrchardCore.Cms.Web\OrchardCore.Cms.Web.csproj --no-restore -m:8 -v:q `
     "-p:CustomAfterMicrosoftCommonTargets=$inject" `
-    -p:NativeCoreBuild=true -p:NativeIncrementalTranslations=true
+    -p:NativeCoreBuild=true -p:NativeCoreBuildContract=DeclaredInputsAndHooksV1 `
+    -p:NativeIncrementalTranslations=true
 Pop-Location
 ```
 
@@ -57,7 +67,7 @@ The remaining SDK hotpatch adds empty-input conditions to ten
     -Project src\OrchardCore.Cms.Web\OrchardCore.Cms.Web.csproj `
     -PrivateSdk C:\lab\native-sdk `
     -OutputDirectory C:\lab\native-measurements `
-    -Iterations 5 -IncludeServer
+    -Iterations 5 -IncludeServer -AcknowledgeExperimentalCoreContract
 ```
 
 Use fresh SDK/output directories. Copying the whole SDK directory is intentional:
@@ -86,7 +96,8 @@ try
     dotnet build src\OrchardCore.Cms.Web\OrchardCore.Cms.Web.csproj --no-restore -m:8 -v:q `
         "-p:NetCoreRoot=$($config.NetCoreRoot)" `
         "-p:CustomAfterMicrosoftCommonTargets=$inject" `
-        -p:NativeCoreBuild=true -p:NativeIncrementalTranslations=true `
+        -p:NativeCoreBuild=true -p:NativeCoreBuildContract=DeclaredInputsAndHooksV1 `
+        -p:NativeIncrementalTranslations=true `
         -p:NativeSkipEmptyFrameworkPacks=true
 }
 finally
@@ -114,8 +125,9 @@ results propagates content-only changes even when a dependency's reference
 assembly is unchanged. Non-participating references force the ordinary payload.
 
 The translation target uses a native completion boundary and a single batched
-Copy when dirty. The package mapping contributes to the root input signature;
-package downgrades therefore do not disappear behind older source timestamps.
+Copy when dirty. The current mapping is hashed during leaf execution, after the public target's
+BeforeTargets hooks; package downgrades and execution-time items therefore do
+not disappear behind older source timestamps.
 Destination timestamps and missing destinations also invalidate the leaf.
 Its stamp is explicitly excluded from the core's products, avoiding a
 core-stamp/translation-stamp feedback loop. Removed translation sources retain

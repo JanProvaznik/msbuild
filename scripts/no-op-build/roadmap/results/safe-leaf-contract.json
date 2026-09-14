@@ -1,0 +1,128 @@
+[
+  {
+    "variant": "stock",
+    "stage": "initial",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "stock",
+    "stage": "noop",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "stock",
+    "stage": "changed-before-hook",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "stock",
+    "stage": "deleted-output",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "stock",
+    "stage": "equal-time",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "stock",
+    "stage": "missing-cache",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "stock",
+    "stage": "required-source-error",
+    "writers": -1,
+    "passed": true
+  },
+  {
+    "variant": "safe",
+    "stage": "initial",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "safe",
+    "stage": "noop",
+    "writers": 0,
+    "passed": true
+  },
+  {
+    "variant": "safe",
+    "stage": "changed-before-hook",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "safe",
+    "stage": "deleted-output",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "safe",
+    "stage": "equal-time",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "safe",
+    "stage": "missing-cache",
+    "writers": 0,
+    "passed": true
+  },
+  {
+    "variant": "safe",
+    "stage": "required-source-error",
+    "writers": -1,
+    "passed": true
+  },
+  {
+    "variant": "optout",
+    "stage": "initial",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "optout",
+    "stage": "noop",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "optout",
+    "stage": "changed-before-hook",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "optout",
+    "stage": "deleted-output",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "optout",
+    "stage": "equal-time",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "optout",
+    "stage": "missing-cache",
+    "writers": 1,
+    "passed": true
+  },
+  {
+    "variant": "optout",
+    "stage": "required-source-error",
+    "writers": -1,
+    "passed": true
+  }
+]

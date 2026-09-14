@@ -8,6 +8,10 @@ ordinary MSBuild incremental targets rather than the external gate below.
 The original evidence established compiler incrementality, not that the target
 definitions and dependency boundaries were already optimal.
 
+**Adversarial follow-up:** the [target-only roadmap](../specs/proposed/target-incrementality-roadmap.md)
+distinguishes compatible task-level wins from the coarse prototype's reproduced
+incompatibilities, and includes a nine-solution matrix and current RAR evidence.
+
 ## Result
 
 The ordinary build already does **zero compilations and zero observed file

@@ -1,0 +1,129 @@
+{
+  "sdkVersion": "10.0.400",
+  "sdkSourceCommit": "14fbf8d5271c98133561eb55185fdb05b286f578",
+  "recordedUtc": "2026-09-14T17:01:23.5587932Z",
+  "nativeExtraArgs": [
+    "-p:NativeCoreBuildContract=DeclaredInputsAndHooksV1"
+  ],
+  "targetHashes": [
+    {
+      "file": "inject.targets",
+      "sha256": "809E2F70B8BB9D696635020437AC36979FBB0F4F0CBD9EC5A4508BB88CF0BF55"
+    },
+    {
+      "file": "core-products.targets",
+      "sha256": "0FC4A904ECBDCB4AA2A62A99CA70DE47220A19FCC0285779B09F6685EA7635D6"
+    },
+    {
+      "file": "translations-products.targets",
+      "sha256": "8FF338F255138FC4795245E3E06A5C69AEBA1C91A870758BBDBCE9FDC9CDAF1A"
+    }
+  ],
+  "activation": [
+    {
+      "project": "references/App/App.csproj",
+      "completion": "obj\\Debug\\net10.0\\App.csproj.NativeCoreBuild.complete",
+      "contract": "DeclaredInputsAndHooksV1"
+    },
+    {
+      "project": "runtime/App.csproj",
+      "completion": "obj\\Debug\\net10.0\\App.csproj.NativeCoreBuild.complete",
+      "contract": "DeclaredInputsAndHooksV1"
+    },
+    {
+      "project": "translations/App/OrchardCore.Cms.Web.csproj",
+      "completion": "obj\\Debug\\net10.0\\OrchardCore.Cms.Web.csproj.NativeCoreBuild.complete",
+      "contract": "DeclaredInputsAndHooksV1"
+    },
+    {
+      "project": "company/App.csproj",
+      "completion": "obj\\Debug\\net10.0\\App.csproj.NativeCoreBuild.complete",
+      "contract": "DeclaredInputsAndHooksV1"
+    },
+    {
+      "project": "copy/App.csproj",
+      "completion": "obj\\Debug\\net10.0\\App.csproj.NativeCoreBuild.complete",
+      "contract": "DeclaredInputsAndHooksV1"
+    }
+  ],
+  "observations": [
+    {
+      "id": "3",
+      "title": "Transitive binary reference source change is missed",
+      "sourceLocation": "core-products.targets:26-34",
+      "native": {
+        "exitCode": 0,
+        "primaryUnchanged": true,
+        "runtime": "new"
+      },
+      "stock": {
+        "runtime": "new",
+        "exitCode": 0
+      },
+      "reproducedOriginalFailure": false
+    },
+    {
+      "id": "4",
+      "title": "ServerGarbageCollection runtimeconfig change is missed",
+      "sourceLocation": "core-products.targets:35-61",
+      "native": {
+        "serverGC": true,
+        "exitCode": 0
+      },
+      "stock": {
+        "serverGC": true,
+        "exitCode": 0
+      },
+      "reproducedOriginalFailure": false
+    },
+    {
+      "id": "5",
+      "title": "Execution-time translation mapping change is missed",
+      "sourceLocation": "translations-products.targets:5-7,22-25",
+      "native": {
+        "content": "different translation from package two",
+        "exitCode": 0
+      },
+      "stock": {
+        "content": "different translation from package two",
+        "exitCode": 0
+      },
+      "reproducedOriginalFailure": false
+    },
+    {
+      "id": "6",
+      "title": "Company change leaves stale compiled assembly attribute",
+      "sourceLocation": "core-products.targets:35-61",
+      "native": {
+        "exitCode": 0,
+        "company": "NewCompany"
+      },
+      "stock": {
+        "exitCode": 0,
+        "company": "NewCompany"
+      },
+      "reproducedOriginalFailure": false
+    },
+    {
+      "id": "7",
+      "title": "Compile CopyToOutputDirectory metadata change is missed",
+      "sourceLocation": "core-products.targets:36,67-70",
+      "native": {
+        "exitCode": 0,
+        "copiedSourceExists": true,
+        "queryItems": [
+          {
+            "TargetPath": "Program.cs",
+            "CopyToOutputDirectory": "PreserveNewest"
+          }
+        ]
+      },
+      "stock": {
+        "exitCode": 0,
+        "copiedSourceExists": true
+      },
+      "reproducedOriginalFailure": false
+    }
+  ],
+  "note": "Final focused standard-input replay (3-7). All stock/native builds exit 0 and observed outputs agree. Cases 1/2 remain architectural failures from the prior ACK run with identical target hashes. sourceLocation refers to original c6e6728fb lines, not current line numbers."
+}

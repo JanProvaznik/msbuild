@@ -7,10 +7,11 @@
                          $(IntermediateOutputPath)$(MSBuildProjectFile).NativeCoreBuild.complete" />
   </ItemGroup>
   <ItemGroup Condition="'$(TargetFramework)' != '' and Exists('$(IntermediateOutputPath)$(MSBuildProjectFile).NativeTranslations.complete')">
-    <FileWrites Include="$(IntermediateOutputPath)$(MSBuildProjectFile).NativeTranslations.complete" />
+    <FileWrites Include="$(IntermediateOutputPath)$(MSBuildProjectFile).NativeTranslations.complete;
+                         $(IntermediateOutputPath)$(MSBuildProjectFile).NativeTranslations.inputs.cache" />
   </ItemGroup>
   <Import Project="$(MSBuildThisFileDirectory)core-products.targets"
-          Condition="'$(NativeCoreBuild)' == 'true'
+          Condition="'$(NativeCoreBuild)' == 'true' and '$(NativeCoreBuildContract)' == 'DeclaredInputsAndHooksV1'
                      and ('$(TargetFrameworkIdentifier)' == '.NETCoreApp' or '$(TargetFrameworkIdentifier)' == '.NETStandard')
                      and '$(DesignTimeBuild)' != 'true' and '$(BuildingInsideVisualStudio)' != 'true'
                      and '$(NoBuild)' != 'true' and '$(SkipCompilerExecution)' != 'true' and '$(ProvideCommandLineArgs)' != 'true'
@@ -18,4 +19,8 @@
                      and '$(PreBuildEvent)' == '' and '$(PostBuildEvent)' == '' and '$(NativeForceCoreBuild)' != 'true'" />
   <Import Project="$(MSBuildThisFileDirectory)translations-products.targets"
           Condition="'$(NativeIncrementalTranslations)' == 'true' and '$(MSBuildProjectName)' == 'OrchardCore.Cms.Web'" />
+  <Target Name="_ExplainNativeCoreContract" BeforeTargets="Build"
+          Condition="'$(NativeCoreBuild)' == 'true' and '$(NativeCoreBuildContract)' != 'DeclaredInputsAndHooksV1'">
+    <Message Importance="High" Text="NativeCoreBuild remains off: the experimental DeclaredInputsAndHooksV1 contract was not acknowledged. Using the stock target pipeline." />
+  </Target>
 </Project>

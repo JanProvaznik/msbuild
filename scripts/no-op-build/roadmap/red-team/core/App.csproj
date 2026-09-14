@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <StartupObject Condition="'$(StartupObject)' == ''">MainA</StartupObject>
+    <EnableSourceLink>false</EnableSourceLink>
+  </PropertyGroup>
+  <Target Name="GenerateHookState" AfterTargets="CoreCompile">
+    <Message Text="CORE-HOOK-RAN" Importance="high" />
+    <PropertyGroup><HookState>produced</HookState></PropertyGroup>
+    <ItemGroup><HookItem Include="produced-item" /></ItemGroup>
+    <Error Condition="'$(HookFailure)' == 'true'" Text="HOOK-VALIDATION-FAILED" />
+  </Target>
+  <Target Name="ObserveBuildState" AfterTargets="Build">
+    <Message Text="OBSERVE: HookState=[$(HookState)] HookItem=[@(HookItem)] ReferenceCount=[@(ReferencePath->Count())] RefWithAssemblies=[@(ReferencePathWithRefAssemblies->Count())]" Importance="high" />
+  </Target>
+</Project>
