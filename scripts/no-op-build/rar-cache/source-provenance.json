@@ -1,0 +1,18 @@
+{
+  "baseRepository": "dotnet/dotnet",
+  "baseCommit": "14fbf8d5271c98133561eb55185fdb05b286f578",
+  "msbuildComponentCommit": "b0e826c1f29e30dfe49535b4194f960cafbc3510",
+  "buildSdk": "10.0.300",
+  "executionSdk": "10.0.400",
+  "executionPlatform": "Windows x64",
+  "tasksBinarySha256": "CC941F752D2BBA1A66250C1D91944C3C9C255D4744A92EC8743F063A1144AD15",
+  "resultsCacheSourceSha256": "1E67D0AFB3FA793387137DA2E030C5C48086FA28219118F5EA0F621180726F5A",
+  "patchSha256": "A36FA0C10C702FC9F3BF666D40391C6B541B178CE9AE688D3F955F9C1938C20C",
+  "sourceTestHost": "net10.0",
+  "sourceTestsPassed": 37,
+  "targetFrameworksCompiled": [
+    "net10.0",
+    "net472"
+  ],
+  "entryFormat": 5
+}

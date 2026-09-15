@@ -18,9 +18,15 @@ it reduced OrchardCore from **20.77 to 19.70 seconds** and removed **1,854 task
 invocations**. Small-project elapsed differences were mostly noise; this
 roadmap does not turn task-count reductions into promised wall-clock savings.
 
-**Scope:** targets/props authoring and existing tasks only. No engine changes,
+**Scope of this original roadmap:** targets/props authoring and existing tasks only. No engine changes,
 new tracking service, watcher, replacement build host, or new task implementation.
 The C# probe in this branch only reads binlog events.
+
+**Implemented follow-up:** the later [RAR result-cache investigation](../../investigations/rar-result-cache.md)
+goes beyond that target-only scope with an opt-in task implementation and a
+private SDK hotpatch. It preserves target reachability and observes resolution
+inputs rather than suppressing RAR blindly. Its measurements distinguish
+discovery-heavy task savings from the normal Orchard whole-build result.
 
 ## Source basis: the whole stack, not just installed targets
 

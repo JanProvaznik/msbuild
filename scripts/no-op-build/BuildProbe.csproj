@@ -9,6 +9,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="BuildProbe.cs" />
+    <Compile Include="RarCacheLogger.cs" />
     <Reference Include="Microsoft.Build" HintPath="$(MSBuildBinPath)\Microsoft.Build.dll" Private="false" />
     <Reference Include="Microsoft.Build.Framework" HintPath="$(MSBuildBinPath)\Microsoft.Build.Framework.dll" Private="false" />
   </ItemGroup>

@@ -1,0 +1,1469 @@
+diff --git a/src/msbuild/src/Tasks.UnitTests/AssemblyDependency/ResolveAssemblyReferenceResultsCache_Tests.cs b/src/msbuild/src/Tasks.UnitTests/AssemblyDependency/ResolveAssemblyReferenceResultsCache_Tests.cs
+new file mode 100644
+index 000000000..ef16ace1f
+--- /dev/null
++++ b/src/msbuild/src/Tasks.UnitTests/AssemblyDependency/ResolveAssemblyReferenceResultsCache_Tests.cs
+@@ -0,0 +1,112 @@
++// Licensed to the .NET Foundation under one or more agreements.
++// The .NET Foundation licenses this file to you under the MIT license.
++
++#if NET
++using System;
++using System.IO;
++using Microsoft.Build.Framework;
++using Microsoft.Build.Shared;
++using Microsoft.Build.Tasks;
++using Microsoft.Build.Utilities;
++using Shouldly;
++using Xunit;
++
++namespace Microsoft.Build.UnitTests.ResolveAssemblyReference_Tests;
++
++public sealed class ResolveAssemblyReferenceResultsCache_Tests(ITestOutputHelper output)
++{
++    private readonly ITestOutputHelper _output = output;
++
++    [Fact]
++    public void ResultCacheDoesNotExposeMutablePrototypes()
++    {
++        using TestEnvironment env = TestEnvironment.Create(_output);
++        string state = Path.Combine(env.CreateFolder().Path, "references.cache");
++        ResolveAssemblyReference fill = Create(state);
++        fill.Execute().ShouldBeTrue();
++        fill.ResultsCacheHit.ShouldBeFalse();
++        File.Exists(state + ".results").ShouldBeTrue();
++
++        ResolveAssemblyReference hit = Create(state);
++        hit.Execute().ShouldBeTrue();
++        hit.ResultsCacheHit.ShouldBeTrue();
++        hit.ResolvedFiles.ShouldHaveSingleItem();
++        hit.ResolvedFiles[0].GetMetadata("Custom").ShouldBe("a;b%quoted");
++        hit.ResolvedFiles[0].GetMetadata("RecursiveDir").ShouldBe("sub/");
++        hit.ResolvedFiles[0].GetMetadata("OriginalItemSpec").ShouldBe(fill.ResolvedFiles[0].GetMetadata("OriginalItemSpec"));
++        hit.ResolvedFiles[0].SetMetadata("Custom", "mutated");
++        hit.ResolvedFiles[0].ItemSpec = "mutated.dll";
++
++        ResolveAssemblyReference next = Create(state);
++        next.Execute().ShouldBeTrue();
++        next.ResultsCacheHit.ShouldBeTrue();
++        next.ResolvedFiles[0].ItemSpec.ShouldBe(typeof(object).Assembly.Location);
++        next.ResolvedFiles[0].GetMetadata("Custom").ShouldBe("a;b%quoted");
++        next.ResolvedFiles[0].GetMetadata("RecursiveDir").ShouldBe("sub/");
++    }
++
++    [Fact]
++    public void ResultCacheDistinguishesLegacyEmptyAppConfig()
++    {
++        using TestEnvironment env = TestEnvironment.Create(_output);
++        env.SetEnvironmentVariable("MSBUILDDISABLEFEATURESFROMVERSION", ChangeWaves.Wave18_8.ToString());
++        env.WithTransientTestState(new WaveState());
++        string state = Path.Combine(env.CreateFolder().Path, "references.cache");
++        ResolveAssemblyReference fill = Create(state);
++        fill.FindDependencies = true;
++        fill.Execute().ShouldBeTrue();
++        File.Exists(state + ".results").ShouldBeTrue();
++
++        ResolveAssemblyReference hit = Create(state);
++        hit.FindDependencies = true;
++        hit.Execute().ShouldBeTrue();
++        hit.ResultsCacheHit.ShouldBeTrue();
++
++        ResolveAssemblyReference empty = Create(state);
++        empty.FindDependencies = true;
++        empty.AppConfigFile = string.Empty;
++        empty.AppConfigFile.ShouldBe(fill.AppConfigFile);
++        empty.Execute().ShouldBeFalse();
++        empty.ResultsCacheHit.ShouldBeFalse();
++        ((MockEngine)empty.BuildEngine).Errors.ShouldBe(1);
++    }
++
++    [Fact]
++    public void ResultCacheIsDisabledByDefault()
++    {
++        using TestEnvironment env = TestEnvironment.Create(_output);
++        string state = Path.Combine(env.CreateFolder().Path, "references.cache");
++        ResolveAssemblyReference task = Create(state);
++        task.EnableResultsCache = false;
++        task.Execute().ShouldBeTrue();
++        task.ResultsCacheHit.ShouldBeFalse();
++        File.Exists(state + ".results").ShouldBeFalse();
++        new ResolveAssemblyReference().EnableResultsCache.ShouldBeFalse();
++    }
++
++    private ResolveAssemblyReference Create(string state)
++    {
++        var item = new TaskItem(typeof(object).Assembly.Location);
++        ((ITaskItem2)item).SetMetadataValueLiteral("Custom", "a;b%quoted");
++        item.SetMetadata("RecursiveDir", "sub/");
++        return new ResolveAssemblyReference
++        {
++            BuildEngine = new MockEngine(_output),
++            Assemblies = [item],
++            SearchPaths = ["{RawFileName}"],
++            FindDependencies = false,
++            FindRelatedFiles = false,
++            FindSatellites = false,
++            FindSerializationAssemblies = false,
++            StateFile = state,
++            EnableResultsCache = true
++        };
++    }
++
++    private sealed class WaveState : TransientTestState
++    {
++        public WaveState() => ChangeWaves.ResetStateForTests();
++        public override void Revert() => ChangeWaves.ResetStateForTests();
++    }
++}
++#endif
+diff --git a/src/msbuild/src/Tasks/AssemblyDependency/Node/RarTaskParameters.cs b/src/msbuild/src/Tasks/AssemblyDependency/Node/RarTaskParameters.cs
+index b3f8b94e1..3ca72a383 100644
+--- a/src/msbuild/src/Tasks/AssemblyDependency/Node/RarTaskParameters.cs
++++ b/src/msbuild/src/Tasks/AssemblyDependency/Node/RarTaskParameters.cs
+@@ -42,6 +42,29 @@ namespace Microsoft.Build.Tasks.AssemblyDependency
+         // </summary>
+         internal static void Init() => s_reflectedProperties ??= new ReflectedProperties();
+ 
++        internal static Dictionary<string, object?> GetInputValues(ResolveAssemblyReference rar)
++        {
++            s_reflectedProperties ??= new ReflectedProperties();
++            var values = new Dictionary<string, object?>(s_reflectedProperties.Inputs.Length, StringComparer.Ordinal);
++            foreach (ReflectedPropertyInfo property in s_reflectedProperties.Inputs)
++            {
++                values.Add(property.Target.Name, property.Target.GetValue(rar));
++            }
++            return values;
++        }
++
++        internal static void SetOutputValues(ResolveAssemblyReference rar, Dictionary<string, object> values)
++        {
++            s_reflectedProperties ??= new ReflectedProperties();
++            foreach (ReflectedPropertyInfo property in s_reflectedProperties.Outputs)
++            {
++                if (values.TryGetValue(property.Target.Name, out object? value))
++                {
++                    property.Target.SetValue(rar, value);
++                }
++            }
++        }
++
+         /// <summary>
+         /// Creates a mapping from each cached parameter name to its current value on the RAR task.
+         /// Only properties that differ from their default values are included.
+diff --git a/src/msbuild/src/Tasks/AssemblyDependency/ResolveAssemblyReference.ResultsCache.cs b/src/msbuild/src/Tasks/AssemblyDependency/ResolveAssemblyReference.ResultsCache.cs
+new file mode 100644
+index 000000000..ab6add4f4
+--- /dev/null
++++ b/src/msbuild/src/Tasks/AssemblyDependency/ResolveAssemblyReference.ResultsCache.cs
+@@ -0,0 +1,918 @@
++// Licensed to the .NET Foundation under one or more agreements.
++// The .NET Foundation licenses this file to you under the MIT license.
++
++using Microsoft.Build.Framework;
++
++#if NET
++using System;
++using System.Collections;
++using System.Collections.Concurrent;
++using System.Collections.Generic;
++using System.Diagnostics;
++using System.Globalization;
++using System.IO;
++using System.IO.Compression;
++using System.Security.Cryptography;
++using System.Text;
++using Microsoft.Build.BackEnd;
++using Microsoft.Build.Shared;
++using Microsoft.Build.Tasks.AssemblyDependency;
++using Microsoft.Build.Utilities;
++#endif
++
++#nullable enable
++
++namespace Microsoft.Build.Tasks;
++
++public partial class ResolveAssemblyReference
++{
++    /// <summary>
++    /// Enables an experimental complete-result cache for file-based reference resolution.
++    /// Unsupported resolution environments continue to execute normally.
++    /// </summary>
++    public bool EnableResultsCache { get; set; }
++
++    /// <summary>
++    /// Whether this invocation restored a verified result rather than resolving references.
++    /// </summary>
++    [Output]
++    public bool ResultsCacheHit { get; set; }
++
++#if NET
++    private RarResultsObservations? _resultsCacheObservations;
++    private static readonly StringComparer s_resultPathComparer =
++        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
++    private static readonly ConcurrentDictionary<string, RarResultsEntry> s_resultsCache = new(s_resultPathComparer);
++
++    private bool ExecuteWithResultsCache()
++    {
++        ResultsCacheHit = false;
++        if (BuildEngine is not IBuildEngine10 engine || !CanUseResultsCache())
++        {
++            Log.LogMessageFromResources(MessageImportance.Low, "ResolveAssemblyReference.ResultsCacheStatus", "bypass", StateFile, "unsupported-resolution-contract");
++            // Do not accidentally enable result caching in the out-of-proc task after the client
++            // has declined the contract. The request serializer forwards public task inputs.
++            EnableResultsCache = false;
++            try { return ExecuteWithoutResultsCache(); }
++            finally { EnableResultsCache = true; }
++        }
++
++        string cachePath = TaskEnvironment.GetAbsolutePath(StateFile + ".results").Value;
++        string statePath = TaskEnvironment.GetAbsolutePath(StateFile).Value;
++        var timer = Stopwatch.StartNew();
++        string signature;
++        try { signature = GetResultsSignature(engine); }
++        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
++        {
++            Log.LogMessageFromResources(MessageImportance.Low, "ResolveAssemblyReference.ResultsCacheStatus", "bypass", cachePath, e.Message);
++            return ExecuteWithoutResultsCache();
++        }
++        double signatureMs = timer.Elapsed.TotalMilliseconds;
++        RarResultsEntry? previous = LoadResults(cachePath);
++        double loadMs = timer.Elapsed.TotalMilliseconds - signatureMs;
++        string? mismatch = previous is null ? "no-entry"
++            : previous.Signature != signature ? "input-fingerprint"
++            : previous.Observations.Difference();
++
++        double validationMs = timer.Elapsed.TotalMilliseconds - signatureMs - loadMs;
++        if (mismatch is null && previous is not null)
++        {
++            try { RestoreResultOutputs(previous); }
++            catch (Exception e) when (e is IOException or ArgumentException or InvalidDataException or InvalidOperationException or FormatException)
++            {
++                mismatch = "invalid-output-payload: " + e.Message;
++                RemoveResults(cachePath);
++            }
++        }
++        if (mismatch is null && previous is not null)
++        {
++            double restoreMs = timer.Elapsed.TotalMilliseconds - signatureMs - loadMs - validationMs;
++            ResultsCacheHit = true;
++            foreach (RarCachedMessage message in previous.Messages)
++            {
++                engine.LogMessageEvent(message.CreateEvent());
++            }
++            _filesWritten.Add(new TaskItem(cachePath));
++            Log.LogMessageFromResources(MessageImportance.Low, "ResolveAssemblyReference.ResultsCacheStatus", "hit", cachePath,
++                $"{previous.Observations.Files.Count} files; {previous.Observations.Directories.Count} directories; signature-ms={signatureMs:F3}; load-ms={loadMs:F3}; validate-ms={validationMs:F3}; restore-ms={restoreMs:F3}; total-ms={timer.Elapsed.TotalMilliseconds:F3}");
++            return true;
++        }
++
++        Log.LogMessageFromResources(MessageImportance.Low, "ResolveAssemblyReference.ResultsCacheStatus", "miss", cachePath, mismatch);
++        var observations = new RarResultsObservations(TaskEnvironment.ProjectDirectory.Value, statePath, cachePath);
++        SeedResultInputs(observations);
++        var recorder = new RarResultLoggingEngine(engine);
++        BuildEngine = recorder;
++        _resultsCacheObservations = observations;
++        bool success;
++        try
++        {
++            success = ExecuteWithoutResultsCache();
++        }
++        finally
++        {
++            _resultsCacheObservations = null;
++            BuildEngine = engine;
++        }
++
++        if (!success || !recorder.Cacheable)
++        {
++            RemoveResults(cachePath);
++            Log.LogMessageFromResources(MessageImportance.Low, "ResolveAssemblyReference.ResultsCacheStatus", "not-stored", cachePath, "failure-or-diagnostics");
++            return success;
++        }
++
++        // The legacy metadata cache is not a semantic input to a verified result. A normal RAR
++        // invocation may rewrite it (including immutable markers) without changing any assembly.
++        foreach (ITaskItem file in FilesWritten)
++        {
++            observations.ObserveFinalFile(TaskEnvironment.GetAbsolutePath(file.ItemSpec).Value);
++        }
++        string? changed = observations.Difference();
++        bool inputsUnchanged;
++        try { inputsUnchanged = GetResultsSignature(engine) == signature; }
++        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
++        {
++            inputsUnchanged = false;
++            changed = "input-reread: " + e.Message;
++        }
++        if (!observations.Cacheable || changed is not null || !inputsUnchanged)
++        {
++            RemoveResults(cachePath);
++            Log.LogMessageFromResources(MessageImportance.Low, "ResolveAssemblyReference.ResultsCacheStatus", "not-stored", cachePath, changed ?? "unobservable-path");
++            return success;
++        }
++
++        var entry = new RarResultsEntry(signature, observations, SerializeResultOutputs(), recorder.Messages.ToArray());
++        if (StoreResults(cachePath, entry))
++        {
++            _filesWritten.Add(new TaskItem(cachePath));
++        }
++        return success;
++    }
++
++    private bool CanUseResultsCache()
++    {
++        if (string.IsNullOrEmpty(StateFile) || FailIfNotIncremental || AllowOutOfProcNode ||
++            TargetFrameworkDirectories?.Length > 0 || InstalledAssemblyTables?.Length > 0 ||
++            InstalledAssemblySubsetTables?.Length > 0 || FullFrameworkAssemblyTables?.Length > 0 ||
++            FullFrameworkFolders?.Length > 0 || ResolvedSDKReferences?.Length > 0 ||
++            AssemblyInformationCachePaths?.Length > 0 || !string.IsNullOrEmpty(AssemblyInformationCacheOutputPath) ||
++            !string.IsNullOrEmpty(ProfileName) || SearchPaths is null || EnableCustomCulture)
++        {
++            return false;
++        }
++
++        foreach (string path in SearchPaths)
++        {
++            if (path.StartsWith('{') &&
++                !path.Equals("{CandidateAssemblyFiles}", StringComparison.OrdinalIgnoreCase) &&
++                !path.Equals("{HintPathFromItem}", StringComparison.OrdinalIgnoreCase) &&
++                !path.Equals("{RawFileName}", StringComparison.OrdinalIgnoreCase) &&
++                !path.Equals("{TargetFrameworkDirectory}", StringComparison.OrdinalIgnoreCase))
++            {
++                return false;
++            }
++        }
++        return true;
++    }
++
++    private string GetResultsSignature(IBuildEngine10 engine)
++    {
++        using var stream = new MemoryStream();
++        using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
++        {
++            writer.Write(typeof(ResolveAssemblyReference).Module.ModuleVersionId.ToString());
++            writer.Write(typeof(ITaskItem).Module.ModuleVersionId.ToString());
++            writer.Write(typeof(TaskItem).Module.ModuleVersionId.ToString());
++            writer.Write(TaskEnvironment.ProjectDirectory.Value);
++            writer.Write(_appConfigValueIsEmptyString);
++            writer.Write(CultureInfo.CurrentCulture.Name);
++            writer.Write(CultureInfo.CurrentUICulture.Name);
++            writer.Write(Environment.Version.ToString());
++            foreach (string option in new[] { "System.Globalization.Invariant", "System.Globalization.PredefinedCulturesOnly", "System.Globalization.UseNls" })
++            {
++                writer.Write(AppContext.TryGetSwitch(option, out bool enabled));
++                writer.Write(enabled);
++            }
++            writer.Write(engine.EngineServices.IsTaskInputLoggingEnabled);
++            writer.Write(engine.EngineServices.LogsMessagesOfImportance(MessageImportance.Low));
++            writer.Write(engine.EngineServices.LogsMessagesOfImportance(MessageImportance.Normal));
++            writer.Write(engine.LineNumberOfTaskNode);
++            writer.Write(engine.ColumnNumberOfTaskNode);
++            writer.Write(engine.ProjectFileOfTaskNode ?? "");
++            // Only the digest persists; environment values are never written to the cache.
++            IReadOnlyDictionary<string, string> environment = TaskEnvironment.GetEnvironmentVariables();
++            string[] names = new string[environment.Count];
++            int index = 0;
++            foreach (string name in environment.Keys) { names[index++] = name; }
++            Array.Sort(names, StringComparer.Ordinal);
++            foreach (string name in names)
++            {
++                writer.Write(name);
++                writer.Write(environment[name]);
++            }
++        }
++        using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
++        {
++            var inputs = RarTaskParameters.GetInputValues(this);
++            string[] names = new string[inputs.Count];
++            inputs.Keys.CopyTo(names, 0);
++            Array.Sort(names, StringComparer.Ordinal);
++            foreach (string name in names)
++            {
++                writer.Write(name);
++                WriteInput(writer, inputs[name]);
++            }
++        }
++        // App.config is parsed fresh by RAR, not through the timestamp-based assembly metadata cache.
++        // Its small semantic input must also invalidate when edited with preserved timestamps.
++        if (!string.IsNullOrEmpty(AppConfigFile))
++        {
++            string config = TaskEnvironment.GetAbsolutePath(AppConfigFile).Value;
++            if (File.Exists(config))
++            {
++                using FileStream file = File.OpenRead(config);
++                stream.Write(SHA256.HashData(file));
++            }
++        }
++        return Convert.ToHexString(SHA256.HashData(stream.ToArray()));
++    }
++
++    private static void WriteInput(BinaryWriter writer, object? value)
++    {
++        if (value is null) { writer.Write((byte)0); return; }
++        if (value is string text) { writer.Write((byte)1); writer.Write(text); return; }
++        if (value is Array array)
++        {
++            writer.Write((byte)2);
++            writer.Write(array.Length);
++            foreach (object? item in array) { WriteInput(writer, item); }
++            return;
++        }
++        if (value is ITaskItem itemValue)
++        {
++            writer.Write((byte)3);
++            var item = itemValue as ITaskItem2;
++            writer.Write(item?.EvaluatedIncludeEscaped ?? EscapingUtilities.Escape(itemValue.ItemSpec));
++            writer.Write(item?.GetMetadataValueEscaped(ItemSpecModifiers.DefiningProjectFullPath) ?? EscapingUtilities.Escape(itemValue.GetMetadata(ItemSpecModifiers.DefiningProjectFullPath)));
++            writer.Write(item?.GetMetadataValueEscaped(ItemSpecModifiers.RecursiveDir) ?? EscapingUtilities.Escape(itemValue.GetMetadata(ItemSpecModifiers.RecursiveDir)));
++            IDictionary metadata = item?.CloneCustomMetadataEscaped() ?? itemValue.CloneCustomMetadata();
++            string[] names = new string[metadata.Count];
++            metadata.Keys.CopyTo(names, 0);
++            Array.Sort(names, StringComparer.Ordinal);
++            writer.Write(names.Length);
++            foreach (string name in names)
++            {
++                writer.Write(name);
++                string metadataValue = (string?)metadata[name] ?? "";
++                writer.Write(item is null ? EscapingUtilities.Escape(metadataValue) : metadataValue);
++            }
++            return;
++        }
++        writer.Write((byte)4);
++        writer.Write(value.GetType().FullName ?? "");
++        writer.Write(Convert.ToString(value, CultureInfo.InvariantCulture) ?? "");
++    }
++
++    private void SeedResultInputs(RarResultsObservations observations)
++    {
++        ObserveItems(Assemblies ?? []);
++        ObserveItems(AssemblyFiles ?? []);
++        // Candidate names are part of the input fingerprint. Their contents matter only if a
++        // resolver probes them; those positive/negative probes are recorded by the delegates.
++        if (!string.IsNullOrEmpty(AppConfigFile))
++        {
++            observations.ObserveFile(AppConfigFile);
++        }
++
++        void ObserveItems(ITaskItem[] items)
++        {
++            foreach (ITaskItem item in items)
++            {
++                observations.ObserveFile(item.ItemSpec);
++                string hint = item.GetMetadata("HintPath");
++                if (hint.Length != 0) { observations.ObserveFile(hint); }
++            }
++        }
++    }
++
++    private byte[] SerializeResultOutputs()
++    {
++        var outputs = RarTaskParameters.Get(RarTaskParameters.ParameterType.Output, this);
++        outputs[nameof(CopyLocalFiles)] = new TaskParameter(CopyLocalFiles);
++        outputs[nameof(FilesWritten)] = new TaskParameter(FilesWritten);
++        var inputs = new Dictionary<string, (bool AssemblyFile, int Index, ITaskItem Item)>(StringComparer.Ordinal);
++        AddInputs(Assemblies, false);
++        AddInputs(AssemblyFiles, true);
++        var references = new List<(string Output, int Index, bool AssemblyFile, int Input, string[] Removed)>();
++        foreach (string name in new List<string>(outputs.Keys))
++        {
++            if (outputs[name].WrappedParameter is not ITaskItem[] items) { continue; }
++            var reduced = (ITaskItem[])MaterializeResult(items);
++            for (int i = 0; i < items.Length; i++)
++            {
++                string original = items[i].GetMetadata("OriginalItemSpec");
++                if (!inputs.TryGetValue(original, out var input) && !inputs.TryGetValue(items[i].ItemSpec, out input)) { continue; }
++                var basis = new TaskItem(input.Item);
++                if (basis.GetMetadata(ItemSpecModifiers.DefiningProjectFullPath) != items[i].GetMetadata(ItemSpecModifiers.DefiningProjectFullPath)) { continue; }
++                IDictionary baseline = ((ITaskItem2)basis).CloneCustomMetadataEscaped();
++                IDictionary actual = ((ITaskItem2)items[i]).CloneCustomMetadataEscaped();
++                var removed = new List<string>();
++                var unchanged = new List<string>();
++                foreach (DictionaryEntry entry in baseline)
++                {
++                    string key = (string)entry.Key;
++                    if (!actual.Contains(key)) { removed.Add(key); }
++                    else if (string.Equals((string?)actual[key], (string?)entry.Value, StringComparison.Ordinal))
++                    {
++                        unchanged.Add(key);
++                    }
++                }
++                // RecursiveDir is stored metadata but the public removal API rejects it.
++                ((IMetadataContainer)reduced[i]).RemoveMetadataRange(unchanged);
++                references.Add((name, i, input.AssemblyFile, input.Index, removed.ToArray()));
++            }
++            outputs[name] = new TaskParameter(reduced);
++        }
++        using var stream = new MemoryStream();
++        using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
++        {
++            writer.Write(references.Count);
++            foreach (var reference in references)
++            {
++                writer.Write(reference.Output); writer.Write(reference.Index);
++                writer.Write(reference.AssemblyFile); writer.Write(reference.Input);
++                writer.Write(reference.Removed.Length);
++                foreach (string key in reference.Removed) { writer.Write(key); }
++            }
++        }
++        BinaryTranslator.GetWriteTranslator(stream).TranslateDictionary(ref outputs, StringComparer.Ordinal, TaskParameter.FactoryForDeserialization);
++        return stream.ToArray();
++
++        void AddInputs(ITaskItem[]? items, bool assemblyFile)
++        {
++            if (items is null) { return; }
++            for (int i = 0; i < items.Length; i++)
++            {
++                inputs.TryAdd(items[i].ItemSpec, (assemblyFile, i, items[i]));
++            }
++        }
++    }
++
++    private void RestoreResultOutputs(RarResultsEntry entry)
++    {
++        Dictionary<string, object> prototypes = entry.GetOutputPrototypes(this);
++        var outputs = new Dictionary<string, object>(prototypes.Count, StringComparer.Ordinal);
++        foreach (var value in prototypes)
++        {
++            outputs.Add(value.Key, MaterializeResult(value.Value));
++        }
++        RarTaskParameters.SetOutputValues(this, outputs);
++        CopyLocalFiles = (ITaskItem[])outputs[nameof(CopyLocalFiles)];
++        _filesWritten.AddRange((ITaskItem[])outputs[nameof(FilesWritten)]);
++    }
++
++    private Dictionary<string, object> ReadOutputPrototypes(byte[] payload)
++    {
++        using var stream = new MemoryStream(payload, 0, payload.Length, writable: false, publiclyVisible: true);
++        var references = new List<(string Output, int Index, bool AssemblyFile, int Input, string[] Removed)>();
++        using (var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true))
++        {
++            int count = ReadCount(reader);
++            for (int i = 0; i < count; i++)
++            {
++                string name = reader.ReadString();
++                int output = reader.ReadInt32();
++                bool assemblyFile = reader.ReadBoolean();
++                int input = reader.ReadInt32();
++                string[] removed = new string[ReadCount(reader)];
++                for (int j = 0; j < removed.Length; j++) { removed[j] = reader.ReadString(); }
++                references.Add((name, output, assemblyFile, input, removed));
++            }
++        }
++        using var translator = BinaryTranslator.GetReadTranslator(stream, InterningBinaryReader.PoolingBuffer);
++        Dictionary<string, TaskParameter> outputs = null!;
++        translator.TranslateDictionary(ref outputs, StringComparer.Ordinal, TaskParameter.FactoryForDeserialization);
++        // The engine has a fast output-transfer path for TaskItem. Leaving the transport wrapper
++        // here forces per-metadata access and can make a cache hit slower than actual resolution.
++        var result = new Dictionary<string, object>(outputs.Count, StringComparer.Ordinal);
++        foreach (var output in outputs) { result.Add(output.Key, MaterializeResult(output.Value.WrappedParameter)); }
++        foreach (var reference in references)
++        {
++            ITaskItem[] inputs = (reference.AssemblyFile ? AssemblyFiles : Assemblies) ?? [];
++            if ((uint)reference.Input >= (uint)inputs.Length ||
++                !result.TryGetValue(reference.Output, out object? value) || value is not ITaskItem[] items ||
++                (uint)reference.Index >= (uint)items.Length)
++            {
++                throw new InvalidDataException("Invalid RAR input-metadata reference.");
++            }
++            var item = new TaskItem(inputs[reference.Input]);
++            item.ItemSpec = ((ITaskItem2)items[reference.Index]).EvaluatedIncludeEscaped;
++            ((IMetadataContainer)item).RemoveMetadataRange(reference.Removed);
++            foreach (DictionaryEntry metadata in ((ITaskItem2)items[reference.Index]).CloneCustomMetadataEscaped())
++            {
++                item.SetMetadata((string)metadata.Key, (string)metadata.Value!);
++            }
++            items[reference.Index] = item;
++        }
++        return result;
++    }
++
++    private static object MaterializeResult(object value)
++    {
++        if (value is ITaskItem[] items)
++        {
++            var result = new ITaskItem[items.Length];
++            for (int i = 0; i < items.Length; i++)
++            {
++                var item = new TaskItem(items[i]);
++                // CopyMetadataTo treats OriginalItemSpec specially. Restore the recorded value,
++                // not the normalized transport item's identity.
++                string original = ((ITaskItem2)items[i]).GetMetadataValueEscaped("OriginalItemSpec");
++                if (original.Length == 0) { item.RemoveMetadata("OriginalItemSpec"); }
++                else { item.SetMetadata("OriginalItemSpec", original); }
++                result[i] = item;
++            }
++            return result;
++        }
++        return value;
++    }
++
++    private RarResultsEntry? LoadResults(string path)
++    {
++        try
++        {
++            RarFileStamp stamp = RarFileStamp.Read(path);
++            if (!stamp.Exists)
++            {
++                s_resultsCache.TryRemove(path, out _);
++                return null;
++            }
++            if (s_resultsCache.TryGetValue(path, out RarResultsEntry? memory) && memory.CacheStamp == stamp)
++            {
++                return memory;
++            }
++            if (stamp.Length > 64 * 1024 * 1024)
++            {
++                throw new InvalidDataException("RAR result cache exceeds its size limit.");
++            }
++            using var file = File.OpenRead(path);
++            using var header = new BinaryReader(file, Encoding.UTF8, leaveOpen: true);
++            if (header.ReadInt32() != 0x52415243) { throw new InvalidDataException("Invalid RAR cache header."); }
++            int length = header.ReadInt32();
++            if (length is < 0 or > 64 * 1024 * 1024) { throw new InvalidDataException("Invalid decompressed RAR cache size."); }
++            byte[] expectedHash = header.ReadBytes(32);
++            byte[] bytes = new byte[length];
++            using (var compressed = new BrotliStream(file, CompressionMode.Decompress, leaveOpen: true))
++            {
++                compressed.ReadExactly(bytes);
++                if (compressed.ReadByte() != -1) { throw new InvalidDataException("RAR cache exceeds its declared size."); }
++            }
++            if (!expectedHash.AsSpan().SequenceEqual(SHA256.HashData(bytes))) { throw new InvalidDataException("RAR cache integrity check failed."); }
++            using var reader = new BinaryReader(new MemoryStream(bytes, writable: false));
++            RarResultsEntry entry = RarResultsEntry.Read(reader);
++            entry.CacheStamp = stamp;
++            RememberResult(path, entry);
++            return entry;
++        }
++        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException or InvalidOperationException or FormatException)
++        {
++            Log.LogMessageFromResources(MessageImportance.Low, "General.CouldNotReadStateFileMessage", path, e.Message);
++            s_resultsCache.TryRemove(path, out _);
++            return null;
++        }
++    }
++
++    private bool StoreResults(string path, RarResultsEntry entry)
++    {
++        string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
++        try
++        {
++            using var payload = new MemoryStream();
++            using (var writer = new BinaryWriter(payload, Encoding.UTF8, leaveOpen: true))
++            {
++                entry.Write(writer);
++            }
++            byte[] bytes = payload.ToArray();
++            if (bytes.Length > 64 * 1024 * 1024) { throw new InvalidDataException("RAR cache exceeds its size limit."); }
++            using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
++            {
++                using (var header = new BinaryWriter(file, Encoding.UTF8, leaveOpen: true))
++                {
++                    header.Write(0x52415243);
++                    header.Write(bytes.Length);
++                    header.Write(SHA256.HashData(bytes));
++                }
++                using var compressed = new BrotliStream(file, CompressionLevel.Fastest, leaveOpen: true);
++                compressed.Write(bytes);
++            }
++            File.Move(temporary, path, overwrite: true);
++            entry.CacheStamp = RarFileStamp.Read(path);
++            RememberResult(path, entry);
++            return true;
++        }
++        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException)
++        {
++            Log.LogMessageFromResources(MessageImportance.Low, "ResolveAssemblyReference.ResultsCacheStatus", "write-failed", path, e.Message);
++            return false;
++        }
++        finally
++        {
++            if (File.Exists(temporary))
++            {
++                try { File.Delete(temporary); }
++                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
++                {
++                    Log.LogMessageFromResources(MessageImportance.Low, "ResolveAssemblyReference.ResultsCacheStatus", "temporary-cleanup-failed", temporary, e.Message);
++                }
++            }
++        }
++    }
++
++    private static void RememberResult(string path, RarResultsEntry entry)
++    {
++        if (s_resultsCache.Count < 256 || s_resultsCache.ContainsKey(path))
++        {
++            s_resultsCache[path] = entry;
++        }
++    }
++
++    private void RemoveResults(string path)
++    {
++        s_resultsCache.TryRemove(path, out _);
++        try
++        {
++            File.Delete(path);
++        }
++        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
++        {
++            Log.LogMessageFromResources(MessageImportance.Low, "ResolveAssemblyReference.ResultsCacheStatus", "remove-failed", path, e.Message);
++        }
++    }
++
++    private readonly record struct RarFileStamp(bool Exists, long Ticks, long Length, int Attributes)
++    {
++        internal static RarFileStamp Read(string path)
++        {
++            var file = new FileInfo(path);
++            file.Refresh();
++            return Read(file);
++        }
++
++        internal static RarFileStamp Read(FileInfo file)
++        {
++            return file.Exists
++                ? new(true, file.LastWriteTimeUtc.Ticks, file.Length, (int)file.Attributes)
++                : new(false, 0, 0, 0);
++        }
++
++        internal void Write(BinaryWriter writer)
++        {
++            writer.Write(Exists);
++            writer.Write(Ticks);
++            writer.Write(Length);
++            writer.Write(Attributes);
++        }
++
++        internal static RarFileStamp Read(BinaryReader reader) =>
++            new(reader.ReadBoolean(), reader.ReadInt64(), reader.ReadInt64(), reader.ReadInt32());
++    }
++
++    private sealed class RarResultsObservations
++    {
++        internal readonly Dictionary<string, RarFileStamp> Files = new(s_resultPathComparer);
++        internal readonly Dictionary<string, bool> Directories = new(s_resultPathComparer);
++        internal readonly HashSet<string> RequiredFiles = new(s_resultPathComparer);
++        internal readonly Dictionary<(string Path, string Pattern), string[]> Enumerations = [];
++        internal bool Cacheable = true;
++        private readonly string _projectDirectory;
++        private readonly string _stateFile;
++        private readonly string _cacheFile;
++
++        internal RarResultsObservations(string projectDirectory, string stateFile, string cacheFile)
++        {
++            _projectDirectory = projectDirectory;
++            _stateFile = stateFile;
++            _cacheFile = cacheFile;
++        }
++
++        private string Absolute(string path) => new AbsolutePath(path, new AbsolutePath(_projectDirectory)).GetCanonicalForm().Value;
++
++        internal void ObserveFile(string path)
++        {
++            try
++            {
++                string absolute = Absolute(path);
++                if (s_resultPathComparer.Equals(absolute, _stateFile) || s_resultPathComparer.Equals(absolute, _cacheFile))
++                {
++                    return;
++                }
++                if (!Files.ContainsKey(absolute))
++                {
++                    RarFileStamp stamp = RarFileStamp.Read(absolute);
++                    if ((stamp.Attributes & (int)FileAttributes.ReparsePoint) != 0)
++                    {
++                        Cacheable = false;
++                    }
++                    Files.Add(absolute, stamp);
++                }
++            }
++            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
++            {
++                Cacheable = false;
++            }
++        }
++
++        internal void ObserveFinalFile(string path)
++        {
++            string absolute = Absolute(path);
++            if (s_resultPathComparer.Equals(absolute, _stateFile))
++            {
++                RequiredFiles.Add(absolute);
++            }
++            else if (!s_resultPathComparer.Equals(absolute, _cacheFile))
++            {
++                Files[absolute] = RarFileStamp.Read(absolute);
++            }
++        }
++
++        internal FileExists Wrap(FileExists original) => path =>
++        {
++            ObserveFile(path);
++            return original(path);
++        };
++
++        internal GetLastWriteTime Wrap(GetLastWriteTime original) => path =>
++        {
++            ObserveFile(path);
++            if (Files.TryGetValue(Absolute(path), out RarFileStamp stamp))
++            {
++                // NativeMethodsShared can itself memoize immutable-file timestamps. Cacheable
++                // resolution must consume the same real file generation that we validate.
++                return stamp.Exists ? new DateTime(stamp.Ticks, DateTimeKind.Utc) : DateTime.MinValue;
++            }
++            return original(path);
++        };
++
++        internal DirectoryExists Wrap(DirectoryExists original) => path =>
++        {
++            bool exists = original(path);
++            Directories.TryAdd(Absolute(path), exists);
++            return exists;
++        };
++
++        internal GetDirectories Wrap(GetDirectories original) => (path, pattern) =>
++        {
++            string[] result = original(path, pattern);
++            Enumerations.TryAdd((Absolute(path), pattern), (string[])result.Clone());
++            return result;
++        };
++
++        internal string? Difference()
++        {
++            try
++            {
++                return DifferenceCore();
++            }
++            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
++            {
++                return "filesystem-read: " + e.Message;
++            }
++        }
++
++        private string? DifferenceCore()
++        {
++            if (!Cacheable) { return "unobservable-path"; }
++            foreach (string required in RequiredFiles)
++            {
++                if (!File.Exists(required)) { return "required-output: " + required; }
++            }
++            var groups = new Dictionary<string, List<KeyValuePair<string, RarFileStamp>>>(s_resultPathComparer);
++            foreach (var file in Files)
++            {
++                string directory = Path.GetDirectoryName(file.Key)!;
++                if (!groups.TryGetValue(directory, out var group))
++                {
++                    group = [];
++                    groups.Add(directory, group);
++                }
++                group.Add(file);
++            }
++            foreach (var group in groups)
++            {
++                string? difference = CheckFiles(group.Key, group.Value);
++                if (difference is not null) { return difference; }
++            }
++            foreach (var directory in Directories)
++            {
++                if (Directory.Exists(directory.Key) != directory.Value) { return "directory: " + directory.Key; }
++            }
++            foreach (var enumeration in Enumerations)
++            {
++                if (!Directory.Exists(enumeration.Key.Path)) { return "directory-enumeration: " + enumeration.Key.Path; }
++                string[] current = Directory.GetDirectories(enumeration.Key.Path, enumeration.Key.Pattern);
++                Array.Sort(current, StringComparer.Ordinal);
++                if (!current.AsSpan().SequenceEqual(enumeration.Value)) { return "directory-enumeration: " + enumeration.Key.Path; }
++            }
++            return null;
++        }
++
++        private string? CheckFiles(string directory, List<KeyValuePair<string, RarFileStamp>> files)
++        {
++            // Directory enumeration supplies timestamps, sizes and attributes in a single OS batch.
++            // Only queried paths are compared; absent queried paths still invalidate when they appear.
++            if (files.Count >= 8 && Directory.Exists(directory))
++            {
++                try
++                {
++                    int remaining = 0;
++                    var expected = new Dictionary<string, RarFileStamp>(files.Count, s_resultPathComparer);
++                    foreach (var file in files)
++                    {
++                        expected.Add(file.Key, file.Value);
++                        if (file.Value.Exists) { remaining++; }
++                    }
++                    foreach (FileInfo file in new DirectoryInfo(directory).EnumerateFiles())
++                    {
++                        if (expected.TryGetValue(file.FullName, out RarFileStamp stamp))
++                        {
++                            if (RarFileStamp.Read(file) != stamp) { return "file: " + file.FullName; }
++                            if (stamp.Exists) { remaining--; }
++                        }
++                    }
++                    if (remaining == 0) { return null; }
++                }
++                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
++                {
++                    // Listing a directory can be forbidden while statting its known files is allowed.
++                    // Fall back to the original per-path checks rather than accepting an unverified hit.
++                }
++            }
++            foreach (var file in files)
++            {
++                if (RarFileStamp.Read(file.Key) != file.Value) { return "file: " + file.Key; }
++            }
++            return null;
++        }
++
++        internal void Write(BinaryWriter writer)
++        {
++            writer.Write(_projectDirectory);
++            writer.Write(_stateFile);
++            writer.Write(_cacheFile);
++            writer.Write(RequiredFiles.Count);
++            foreach (string required in RequiredFiles) { writer.Write(required); }
++            writer.Write(Files.Count);
++            foreach (var file in Files) { writer.Write(file.Key); file.Value.Write(writer); }
++            writer.Write(Directories.Count);
++            foreach (var directory in Directories) { writer.Write(directory.Key); writer.Write(directory.Value); }
++            writer.Write(Enumerations.Count);
++            foreach (var enumeration in Enumerations)
++            {
++                writer.Write(enumeration.Key.Path);
++                writer.Write(enumeration.Key.Pattern);
++                writer.Write(enumeration.Value.Length);
++                foreach (string path in enumeration.Value) { writer.Write(path); }
++            }
++        }
++
++        internal static RarResultsObservations Read(BinaryReader reader)
++        {
++            var result = new RarResultsObservations(reader.ReadString(), reader.ReadString(), reader.ReadString());
++            int required = ReadCount(reader);
++            for (int i = 0; i < required; i++) { result.RequiredFiles.Add(reader.ReadString()); }
++            int files = ReadCount(reader);
++            for (int i = 0; i < files; i++) { result.Files.Add(reader.ReadString(), RarFileStamp.Read(reader)); }
++            int directories = ReadCount(reader);
++            for (int i = 0; i < directories; i++) { result.Directories.Add(reader.ReadString(), reader.ReadBoolean()); }
++            int enumerations = ReadCount(reader);
++            for (int i = 0; i < enumerations; i++)
++            {
++                var key = (reader.ReadString(), reader.ReadString());
++                string[] paths = new string[ReadCount(reader)];
++                for (int j = 0; j < paths.Length; j++) { paths[j] = reader.ReadString(); }
++                result.Enumerations.Add(key, paths);
++            }
++            return result;
++        }
++    }
++
++    private sealed record RarCachedMessage(string? Message, string? Help, string? Sender, MessageImportance Importance,
++        string? Subcategory, string? Code, string? File, int Line, int Column, int EndLine, int EndColumn)
++    {
++        internal static RarCachedMessage From(BuildMessageEventArgs e) =>
++            new(e.Message, e.HelpKeyword, e.SenderName, e.Importance,
++                e.Subcategory, e.Code, e.File, e.LineNumber, e.ColumnNumber, e.EndLineNumber, e.EndColumnNumber);
++        internal BuildMessageEventArgs CreateEvent() =>
++            new(Subcategory, Code, File, Line, Column, EndLine, EndColumn, Message, Help, Sender, Importance);
++        internal void Write(BinaryWriter writer)
++        {
++            WriteString(writer, Message); WriteString(writer, Help); WriteString(writer, Sender); writer.Write((int)Importance);
++            WriteString(writer, Subcategory); WriteString(writer, Code); WriteString(writer, File);
++            writer.Write(Line); writer.Write(Column); writer.Write(EndLine); writer.Write(EndColumn);
++        }
++        internal static RarCachedMessage Read(BinaryReader reader) =>
++            new(ReadString(reader), ReadString(reader), ReadString(reader), (MessageImportance)reader.ReadInt32(),
++                ReadString(reader), ReadString(reader), ReadString(reader), reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32());
++        private static void WriteString(BinaryWriter writer, string? value)
++        {
++            writer.Write(value is not null);
++            if (value is not null) { writer.Write(value); }
++        }
++        private static string? ReadString(BinaryReader reader) => reader.ReadBoolean() ? reader.ReadString() : null;
++    }
++
++    private sealed class RarResultsEntry(string signature, RarResultsObservations observations, byte[] outputs, RarCachedMessage[] messages)
++    {
++        private readonly object _outputLock = new();
++        private Dictionary<string, object>? _outputPrototypes;
++        internal string Signature { get; } = signature;
++        internal RarResultsObservations Observations { get; } = observations;
++        internal byte[] Outputs { get; } = outputs;
++        internal RarCachedMessage[] Messages { get; } = messages;
++        internal RarFileStamp CacheStamp { get; set; }
++        internal Dictionary<string, object> GetOutputPrototypes(ResolveAssemblyReference task)
++        {
++            lock (_outputLock)
++            {
++                return _outputPrototypes ??= task.ReadOutputPrototypes(Outputs);
++            }
++        }
++        internal void Write(BinaryWriter writer)
++        {
++            writer.Write("MSBuild.RAR.Results");
++            writer.Write(5);
++            writer.Write(Signature);
++            Observations.Write(writer);
++            writer.Write(Outputs.Length);
++            writer.Write(SHA256.HashData(Outputs));
++            writer.Write(Outputs);
++            writer.Write(Messages.Length);
++            foreach (RarCachedMessage message in Messages) { message.Write(writer); }
++        }
++        internal static RarResultsEntry Read(BinaryReader reader)
++        {
++            if (reader.ReadString() != "MSBuild.RAR.Results" || reader.ReadInt32() != 5)
++            {
++                throw new InvalidDataException("Unsupported RAR result cache format.");
++            }
++            string key = reader.ReadString();
++            RarResultsObservations observations = RarResultsObservations.Read(reader);
++            int size = reader.ReadInt32();
++            if (size < 0 || size > 64 * 1024 * 1024) { throw new InvalidDataException("Invalid RAR output size."); }
++            byte[] checksum = reader.ReadBytes(32);
++            byte[] bytes = reader.ReadBytes(size);
++            if (bytes.Length != size) { throw new EndOfStreamException(); }
++            if (!checksum.AsSpan().SequenceEqual(SHA256.HashData(bytes))) { throw new InvalidDataException("Invalid RAR output checksum."); }
++            var messages = new RarCachedMessage[ReadCount(reader)];
++            for (int i = 0; i < messages.Length; i++) { messages[i] = RarCachedMessage.Read(reader); }
++            return new(key, observations, bytes, messages);
++        }
++    }
++
++    private static int ReadCount(BinaryReader reader)
++    {
++        int count = reader.ReadInt32();
++        return count is >= 0 and <= 1_000_000 ? count : throw new InvalidDataException("Invalid RAR cache collection size.");
++    }
++
++    private sealed class RarResultLoggingEngine(IBuildEngine10 inner) : IBuildEngine10
++    {
++        internal List<RarCachedMessage> Messages { get; } = [];
++        internal bool Cacheable { get; private set; } = true;
++        public EngineServices EngineServices => inner.EngineServices;
++        public bool ContinueOnError => inner.ContinueOnError;
++        public int LineNumberOfTaskNode => inner.LineNumberOfTaskNode;
++        public int ColumnNumberOfTaskNode => inner.ColumnNumberOfTaskNode;
++        public string ProjectFileOfTaskNode => inner.ProjectFileOfTaskNode;
++        public bool IsRunningMultipleNodes => inner.IsRunningMultipleNodes;
++        public bool AllowFailureWithoutError { get => inner.AllowFailureWithoutError; set => inner.AllowFailureWithoutError = value; }
++        public void LogErrorEvent(BuildErrorEventArgs e) { Cacheable = false; inner.LogErrorEvent(e); }
++        public void LogWarningEvent(BuildWarningEventArgs e) { Cacheable = false; inner.LogWarningEvent(e); }
++        public void LogCustomEvent(CustomBuildEventArgs e) { Cacheable = false; inner.LogCustomEvent(e); }
++        public void LogMessageEvent(BuildMessageEventArgs e)
++        {
++            if (e.GetType() == typeof(BuildMessageEventArgs)) { Messages.Add(RarCachedMessage.From(e)); }
++            else { Cacheable = false; }
++            inner.LogMessageEvent(e);
++        }
++        public bool ShouldTreatWarningAsError(string code) => inner.ShouldTreatWarningAsError(code);
++        public void LogTelemetry(string name, IDictionary<string, string> properties) => inner.LogTelemetry(name, properties);
++        public bool BuildProjectFile(string file, string[] targets, IDictionary properties, IDictionary outputs) => inner.BuildProjectFile(file, targets, properties, outputs);
++        public bool BuildProjectFile(string file, string[] targets, IDictionary properties, IDictionary outputs, string toolsVersion) => inner.BuildProjectFile(file, targets, properties, outputs, toolsVersion);
++        public bool BuildProjectFilesInParallel(string[] files, string[] targets, IDictionary[] properties, IDictionary[] outputs, string[] versions, bool cache, bool unload) =>
++            inner.BuildProjectFilesInParallel(files, targets, properties, outputs, versions, cache, unload);
++        public BuildEngineResult BuildProjectFilesInParallel(string[] files, string[] targets, IDictionary[] properties, IList<string>[] remove, string[] versions, bool returnOutputs) =>
++            inner.BuildProjectFilesInParallel(files, targets, properties, remove, versions, returnOutputs);
++        public object GetRegisteredTaskObject(object key, RegisteredTaskObjectLifetime lifetime) => inner.GetRegisteredTaskObject(key, lifetime);
++        public void RegisterTaskObject(object key, object obj, RegisteredTaskObjectLifetime lifetime, bool early) => inner.RegisterTaskObject(key, obj, lifetime, early);
++        public object UnregisterTaskObject(object key, RegisteredTaskObjectLifetime lifetime) => inner.UnregisterTaskObject(key, lifetime);
++        public void Yield() => inner.Yield();
++        public void Reacquire() => inner.Reacquire();
++        public int RequestCores(int count) => inner.RequestCores(count);
++        public void ReleaseCores(int count) => inner.ReleaseCores(count);
++        public IReadOnlyDictionary<string, string> GetGlobalProperties() => inner.GetGlobalProperties();
++    }
++#endif
++}
+diff --git a/src/msbuild/src/Tasks/AssemblyDependency/ResolveAssemblyReference.cs b/src/msbuild/src/Tasks/AssemblyDependency/ResolveAssemblyReference.cs
+index 52557b2a3..08f191f1e 100644
+--- a/src/msbuild/src/Tasks/AssemblyDependency/ResolveAssemblyReference.cs
++++ b/src/msbuild/src/Tasks/AssemblyDependency/ResolveAssemblyReference.cs
+@@ -34,7 +34,7 @@ namespace Microsoft.Build.Tasks
+     /// depend on those assemblyFiles including second and nth-order dependencies too.
+     /// </summary>
+     [MSBuildMultiThreadableTask]
+-    public class ResolveAssemblyReference : TaskExtension, IIncrementalTask, IMultiThreadableTask
++    public partial class ResolveAssemblyReference : TaskExtension, IIncrementalTask, IMultiThreadableTask
+     {
+         /// <summary>
+         /// key assembly used to trigger inclusion of facade references.
+@@ -2230,7 +2230,17 @@ namespace Microsoft.Build.Tasks
+         /// </summary>
+         internal void ReadStateFile(FileExists fileExists)
+         {
++#if NET
++            bool hadStateFile = _resultsCacheObservations is not null && _stateFile.Value is not null && File.Exists(_stateFile.Value);
++#endif
+             _cache = SystemState.DeserializeCache<SystemState>(_stateFile, Log);
++#if NET
++            if (hadStateFile && _cache is null)
++            {
++                // Recovery messages describe this attempt, not every future resolution.
++                _resultsCacheObservations!.Cacheable = false;
++            }
++#endif
+ 
+             // Construct the cache only if we can't find any caches.
+             if (_cache == null && AssemblyInformationCachePaths != null && AssemblyInformationCachePaths.Length > 0)
+@@ -2499,7 +2509,11 @@ namespace Microsoft.Build.Tasks
+                     // Wrap the GetLastWriteTime callback with a check for SDK/immutable files.
+                     _cache.SetGetLastWriteTime(path =>
+                     {
+-                        if (dependencyTable?.IsImmutableFile(path) == true)
++                        bool trustImmutableTimestamp = true;
++#if NET
++                        trustImmutableTimestamp = _resultsCacheObservations is null;
++#endif
++                        if (trustImmutableTimestamp && dependencyTable?.IsImmutableFile(path) == true)
+                         {
+                             // We don't want to perform I/O to see what the actual timestamp on disk is so we return a fixed made up value.
+                             // Note that this value makes the file exist per the check in SystemState.FileTimestampIndicatesFileExists.
+@@ -2510,22 +2524,44 @@ namespace Microsoft.Build.Tasks
+ 
+                     // Wrap the GetAssemblyName and GetRuntimeVersion callbacks with a check for SDK/immutable files.
+                     GetAssemblyName originalGetAssemblyName = getAssemblyName;
+-                    getAssemblyName = _cache.CacheDelegate(path =>
++#if NET
++                    if (_resultsCacheObservations is not null)
+                     {
+-                        AssemblyNameExtension assemblyName = dependencyTable?.GetImmutableFileAssemblyName(path);
+-                        return assemblyName ?? originalGetAssemblyName(path);
+-                    });
++                        // Synthetic framework identity belongs to this task's inputs, not the
++                        // process/disk cache of metadata read from the file's real generation.
++                        GetAssemblyName cachedFileName = _cache.CacheDelegate(originalGetAssemblyName);
++                        getAssemblyName = path => dependencyTable?.GetImmutableFileAssemblyName(path) ?? cachedFileName(path);
++                    }
++                    else
++#endif
++                    {
++                        getAssemblyName = _cache.CacheDelegate(path =>
++                        {
++                            AssemblyNameExtension assemblyName = dependencyTable?.GetImmutableFileAssemblyName(path);
++                            return assemblyName ?? originalGetAssemblyName(path);
++                        });
++                    }
+ 
+                     GetAssemblyRuntimeVersion originalGetRuntimeVersion = getRuntimeVersion;
+-                    getRuntimeVersion = _cache.CacheDelegate(path =>
++#if NET
++                    if (_resultsCacheObservations is not null)
+                     {
+-                        if (dependencyTable?.IsImmutableFile(path) == true)
++                        GetAssemblyRuntimeVersion cachedFileRuntime = _cache.CacheDelegate(originalGetRuntimeVersion);
++                        getRuntimeVersion = path => dependencyTable?.IsImmutableFile(path) == true ? DotNetAssemblyRuntimeVersion : cachedFileRuntime(path);
++                    }
++                    else
++#endif
++                    {
++                        getRuntimeVersion = _cache.CacheDelegate(path =>
+                         {
+-                            // There are no WinRT assemblies in the SDK, everything has the .NET metadata version.
+-                            return DotNetAssemblyRuntimeVersion;
+-                        }
+-                        return originalGetRuntimeVersion(path);
+-                    });
++                            if (dependencyTable?.IsImmutableFile(path) == true)
++                            {
++                                // There are no WinRT assemblies in the SDK, everything has the .NET metadata version.
++                                return DotNetAssemblyRuntimeVersion;
++                            }
++                            return originalGetRuntimeVersion(path);
++                        });
++                    }
+ 
+                     _projectTargetFramework = FrameworkVersionFromString(_projectTargetFrameworkAsString);
+ 
+@@ -3406,6 +3442,17 @@ namespace Microsoft.Build.Tasks
+         /// <returns>True if there was success.</returns>
+         public override bool Execute()
+         {
++#if NET
++            if (EnableResultsCache)
++            {
++                return ExecuteWithResultsCache();
++            }
++#endif
++            return ExecuteWithoutResultsCache();
++        }
++
++        private bool ExecuteWithoutResultsCache()
++        {
+             if (AllowOutOfProcNode
+                 && BuildEngine is IBuildEngine10 buildEngine10
+                 && buildEngine10.EngineServices.IsOutOfProcRarNodeEnabled)
+@@ -3447,12 +3494,25 @@ namespace Microsoft.Build.Tasks
+                 }
+             }
+ 
+-            return Execute(
+-                p => FileUtilities.FileExistsNoThrow(p),
+-                p => FileUtilities.DirectoryExistsNoThrow(p),
+-                (p, searchPattern) => FileSystems.Default.EnumerateDirectories(p, searchPattern)
++            FileExists fileExists = p => FileUtilities.FileExistsNoThrow(p);
++            DirectoryExists directoryExists = p => FileUtilities.DirectoryExistsNoThrow(p);
++            GetDirectories getDirectories = (p, searchPattern) => FileSystems.Default.EnumerateDirectories(p, searchPattern)
+                                         .OrderBy(path => path, StringComparer.Ordinal) // sort to ensure deterministic order
+-                                        .ToArray(),
++                                        .ToArray();
++            GetLastWriteTime getLastWriteTime = p => NativeMethodsShared.GetLastWriteFileUtcTime(p);
++#if NET
++            if (_resultsCacheObservations is not null)
++            {
++                fileExists = _resultsCacheObservations.Wrap(fileExists);
++                directoryExists = _resultsCacheObservations.Wrap(directoryExists);
++                getDirectories = _resultsCacheObservations.Wrap(getDirectories);
++                getLastWriteTime = _resultsCacheObservations.Wrap(getLastWriteTime);
++            }
++#endif
++            return Execute(
++                fileExists,
++                directoryExists,
++                getDirectories,
+                 p => AssemblyNameExtension.GetAssemblyNameEx(p),
+                 (string path, ConcurrentDictionary<string, AssemblyMetadata> assemblyMetadataCache, out AssemblyNameExtension[] dependencies, out string[] scatterFiles, out FrameworkNameVersioning frameworkName)
+                     => AssemblyInformation.GetAssemblyMetadata(path, assemblyMetadataCache, out dependencies, out scatterFiles, out frameworkName),
+@@ -3460,7 +3520,7 @@ namespace Microsoft.Build.Tasks
+                 (baseKey, subkey) => RegistryHelper.GetSubKeyNames(baseKey, subkey),
+                 (baseKey, subkey) => RegistryHelper.GetDefaultValue(baseKey, subkey),
+ #endif
+-                p => NativeMethodsShared.GetLastWriteFileUtcTime(p),
++                getLastWriteTime,
+                 p => AssemblyInformation.GetRuntimeVersion(p),
+ #if FEATURE_WIN32_REGISTRY
+                 (hive, view) => RegistryHelper.OpenBaseKey(hive, view),
+diff --git a/src/msbuild/src/Tasks/Microsoft.Build.Tasks.csproj b/src/msbuild/src/Tasks/Microsoft.Build.Tasks.csproj
+index 8f9f60476..928c4a917 100644
+--- a/src/msbuild/src/Tasks/Microsoft.Build.Tasks.csproj
++++ b/src/msbuild/src/Tasks/Microsoft.Build.Tasks.csproj
+@@ -138,6 +138,7 @@
+     <Compile Include="AssemblyDependency\ResolutionSearchLocation.cs" />
+     <Compile Include="AssemblyDependency\Resolver.cs" />
+     <Compile Include="AssemblyDependency\ResolveAssemblyReference.cs" />
++    <Compile Include="AssemblyDependency\ResolveAssemblyReference.ResultsCache.cs" />
+     <Compile Include="AssemblyDependency\TaskItemSpecFilenameComparer.cs" />
+     <Compile Include="AssemblyDependency\UnificationReason.cs" />
+     <Compile Include="AssemblyDependency\UnificationVersion.cs" />
+diff --git a/src/msbuild/src/Tasks/Resources/Strings.resx b/src/msbuild/src/Tasks/Resources/Strings.resx
+index 48ebcac99..e82a33741 100644
+--- a/src/msbuild/src/Tasks/Resources/Strings.resx
++++ b/src/msbuild/src/Tasks/Resources/Strings.resx
+@@ -1734,6 +1734,10 @@
+   <data name="ResolveAssemblyReference.ResolvedFrom">
+     <value>Reference found at search path location "{0}".</value>
+   </data>
++  <data name="ResolveAssemblyReference.ResultsCacheStatus" xml:space="preserve">
++    <value>RAR result cache {0}: "{1}" ({2}).</value>
++    <comment>{0} is a diagnostic state token, {1} is the cache path, {2} is diagnostic detail. RAR is a task name.</comment>
++  </data>
+   <data name="ResolveAssemblyReference.SearchPath">
+     <value>For SearchPath "{0}".</value>
+   </data>
+diff --git a/src/msbuild/src/Tasks/Resources/xlf/Strings.cs.xlf b/src/msbuild/src/Tasks/Resources/xlf/Strings.cs.xlf
+index fe0016953..89e02a617 100644
+--- a/src/msbuild/src/Tasks/Resources/xlf/Strings.cs.xlf
++++ b/src/msbuild/src/Tasks/Resources/xlf/Strings.cs.xlf
+@@ -1834,6 +1834,11 @@
+       LOCALIZATION: Please don't localize "CopyLocal" this is an item meta-data name.
+     </note>
+       </trans-unit>
++      <trans-unit id="ResolveAssemblyReference.ResultsCacheStatus">
++        <source>RAR result cache {0}: "{1}" ({2}).</source>
++        <target state="new">RAR result cache {0}: "{1}" ({2}).</target>
++        <note>{0} is a diagnostic state token, {1} is the cache path, {2} is diagnostic detail. RAR is a task name.</note>
++      </trans-unit>
+       <trans-unit id="ResolveAssemblyReference.SearchPathAddedByParentAssembly">
+         <source>For SearchPath "{0}" (added by referencing assembly "{1}").</source>
+         <target state="translated">Pro SearchPath „{0}“ (přidáno odkazem na sestavení „{1}“)</target>
+diff --git a/src/msbuild/src/Tasks/Resources/xlf/Strings.de.xlf b/src/msbuild/src/Tasks/Resources/xlf/Strings.de.xlf
+index e05328a5a..468bd09f0 100644
+--- a/src/msbuild/src/Tasks/Resources/xlf/Strings.de.xlf
++++ b/src/msbuild/src/Tasks/Resources/xlf/Strings.de.xlf
+@@ -1834,6 +1834,11 @@
+       LOCALIZATION: Please don't localize "CopyLocal" this is an item meta-data name.
+     </note>
+       </trans-unit>
++      <trans-unit id="ResolveAssemblyReference.ResultsCacheStatus">
++        <source>RAR result cache {0}: "{1}" ({2}).</source>
++        <target state="new">RAR result cache {0}: "{1}" ({2}).</target>
++        <note>{0} is a diagnostic state token, {1} is the cache path, {2} is diagnostic detail. RAR is a task name.</note>
++      </trans-unit>
+       <trans-unit id="ResolveAssemblyReference.SearchPathAddedByParentAssembly">
+         <source>For SearchPath "{0}" (added by referencing assembly "{1}").</source>
+         <target state="translated">Für SearchPath "{0}" (hinzugefügt durch Verweis auf Assembly "{1}").</target>
+diff --git a/src/msbuild/src/Tasks/Resources/xlf/Strings.es.xlf b/src/msbuild/src/Tasks/Resources/xlf/Strings.es.xlf
+index 29a5f2c9f..e340bfee0 100644
+--- a/src/msbuild/src/Tasks/Resources/xlf/Strings.es.xlf
++++ b/src/msbuild/src/Tasks/Resources/xlf/Strings.es.xlf
+@@ -1834,6 +1834,11 @@
+       LOCALIZATION: Please don't localize "CopyLocal" this is an item meta-data name.
+     </note>
+       </trans-unit>
++      <trans-unit id="ResolveAssemblyReference.ResultsCacheStatus">
++        <source>RAR result cache {0}: "{1}" ({2}).</source>
++        <target state="new">RAR result cache {0}: "{1}" ({2}).</target>
++        <note>{0} is a diagnostic state token, {1} is the cache path, {2} is diagnostic detail. RAR is a task name.</note>
++      </trans-unit>
+       <trans-unit id="ResolveAssemblyReference.SearchPathAddedByParentAssembly">
+         <source>For SearchPath "{0}" (added by referencing assembly "{1}").</source>
+         <target state="translated">Para SearchPath "{0}" (agregado por el ensamblado de referencia "{1}").</target>
+diff --git a/src/msbuild/src/Tasks/Resources/xlf/Strings.fr.xlf b/src/msbuild/src/Tasks/Resources/xlf/Strings.fr.xlf
+index 5bc859ab4..91eda59fa 100644
+--- a/src/msbuild/src/Tasks/Resources/xlf/Strings.fr.xlf
++++ b/src/msbuild/src/Tasks/Resources/xlf/Strings.fr.xlf
+@@ -1834,6 +1834,11 @@
+       LOCALIZATION: Please don't localize "CopyLocal" this is an item meta-data name.
+     </note>
+       </trans-unit>
++      <trans-unit id="ResolveAssemblyReference.ResultsCacheStatus">
++        <source>RAR result cache {0}: "{1}" ({2}).</source>
++        <target state="new">RAR result cache {0}: "{1}" ({2}).</target>
++        <note>{0} is a diagnostic state token, {1} is the cache path, {2} is diagnostic detail. RAR is a task name.</note>
++      </trans-unit>
+       <trans-unit id="ResolveAssemblyReference.SearchPathAddedByParentAssembly">
+         <source>For SearchPath "{0}" (added by referencing assembly "{1}").</source>
+         <target state="translated">Pour SearchPath « {0} » (ajouté en référençant l’assembly « {1} »).</target>
+diff --git a/src/msbuild/src/Tasks/Resources/xlf/Strings.it.xlf b/src/msbuild/src/Tasks/Resources/xlf/Strings.it.xlf
+index 42a8a6dc0..9e79de0f4 100644
+--- a/src/msbuild/src/Tasks/Resources/xlf/Strings.it.xlf
++++ b/src/msbuild/src/Tasks/Resources/xlf/Strings.it.xlf
+@@ -1834,6 +1834,11 @@
+       LOCALIZATION: Please don't localize "CopyLocal" this is an item meta-data name.
+     </note>
+       </trans-unit>
++      <trans-unit id="ResolveAssemblyReference.ResultsCacheStatus">
++        <source>RAR result cache {0}: "{1}" ({2}).</source>
++        <target state="new">RAR result cache {0}: "{1}" ({2}).</target>
++        <note>{0} is a diagnostic state token, {1} is the cache path, {2} is diagnostic detail. RAR is a task name.</note>
++      </trans-unit>
+       <trans-unit id="ResolveAssemblyReference.SearchPathAddedByParentAssembly">
+         <source>For SearchPath "{0}" (added by referencing assembly "{1}").</source>
+         <target state="translated">Per SearchPath "{0}" (aggiunto facendo riferimento all'assembly "{1}").</target>
+diff --git a/src/msbuild/src/Tasks/Resources/xlf/Strings.ja.xlf b/src/msbuild/src/Tasks/Resources/xlf/Strings.ja.xlf
+index 20496cd9f..db06cf7ee 100644
+--- a/src/msbuild/src/Tasks/Resources/xlf/Strings.ja.xlf
++++ b/src/msbuild/src/Tasks/Resources/xlf/Strings.ja.xlf
+@@ -1834,6 +1834,11 @@
+       LOCALIZATION: Please don't localize "CopyLocal" this is an item meta-data name.
+     </note>
+       </trans-unit>
++      <trans-unit id="ResolveAssemblyReference.ResultsCacheStatus">
++        <source>RAR result cache {0}: "{1}" ({2}).</source>
++        <target state="new">RAR result cache {0}: "{1}" ({2}).</target>
++        <note>{0} is a diagnostic state token, {1} is the cache path, {2} is diagnostic detail. RAR is a task name.</note>
++      </trans-unit>
+       <trans-unit id="ResolveAssemblyReference.SearchPathAddedByParentAssembly">
+         <source>For SearchPath "{0}" (added by referencing assembly "{1}").</source>
+         <target state="translated">SearchPath "{0}" の場合 (アセンブリ "{1}" を参照して追加)。</target>
+diff --git a/src/msbuild/src/Tasks/Resources/xlf/Strings.ko.xlf b/src/msbuild/src/Tasks/Resources/xlf/Strings.ko.xlf
+index 6962b2bcf..c6ddde05b 100644
+--- a/src/msbuild/src/Tasks/Resources/xlf/Strings.ko.xlf
++++ b/src/msbuild/src/Tasks/Resources/xlf/Strings.ko.xlf
+@@ -1834,6 +1834,11 @@
+       LOCALIZATION: Please don't localize "CopyLocal" this is an item meta-data name.
+     </note>
+       </trans-unit>
++      <trans-unit id="ResolveAssemblyReference.ResultsCacheStatus">
++        <source>RAR result cache {0}: "{1}" ({2}).</source>
++        <target state="new">RAR result cache {0}: "{1}" ({2}).</target>
++        <note>{0} is a diagnostic state token, {1} is the cache path, {2} is diagnostic detail. RAR is a task name.</note>
++      </trans-unit>
+       <trans-unit id="ResolveAssemblyReference.SearchPathAddedByParentAssembly">
+         <source>For SearchPath "{0}" (added by referencing assembly "{1}").</source>
+         <target state="translated">SearchPath "{0}"의 경우(어셈블리 "{1}"을(를) 참조하여 추가됨).</target>
+diff --git a/src/msbuild/src/Tasks/Resources/xlf/Strings.pl.xlf b/src/msbuild/src/Tasks/Resources/xlf/Strings.pl.xlf
+index 93d2ab06d..8badca735 100644
+--- a/src/msbuild/src/Tasks/Resources/xlf/Strings.pl.xlf
++++ b/src/msbuild/src/Tasks/Resources/xlf/Strings.pl.xlf
+@@ -1834,6 +1834,11 @@
+       LOCALIZATION: Please don't localize "CopyLocal" this is an item meta-data name.
+     </note>
+       </trans-unit>
++      <trans-unit id="ResolveAssemblyReference.ResultsCacheStatus">
++        <source>RAR result cache {0}: "{1}" ({2}).</source>
++        <target state="new">RAR result cache {0}: "{1}" ({2}).</target>
++        <note>{0} is a diagnostic state token, {1} is the cache path, {2} is diagnostic detail. RAR is a task name.</note>
++      </trans-unit>
+       <trans-unit id="ResolveAssemblyReference.SearchPathAddedByParentAssembly">
+         <source>For SearchPath "{0}" (added by referencing assembly "{1}").</source>
+         <target state="translated">Dla elementu SearchPath „{0}” (dodanego przez odwołanie do zestawu „{1}”).</target>
+diff --git a/src/msbuild/src/Tasks/Resources/xlf/Strings.pt-BR.xlf b/src/msbuild/src/Tasks/Resources/xlf/Strings.pt-BR.xlf
+index 919ca435d..6157c9de5 100644
+--- a/src/msbuild/src/Tasks/Resources/xlf/Strings.pt-BR.xlf
++++ b/src/msbuild/src/Tasks/Resources/xlf/Strings.pt-BR.xlf
+@@ -1834,6 +1834,11 @@
+       LOCALIZATION: Please don't localize "CopyLocal" this is an item meta-data name.
+     </note>
+       </trans-unit>
++      <trans-unit id="ResolveAssemblyReference.ResultsCacheStatus">
++        <source>RAR result cache {0}: "{1}" ({2}).</source>
++        <target state="new">RAR result cache {0}: "{1}" ({2}).</target>
++        <note>{0} is a diagnostic state token, {1} is the cache path, {2} is diagnostic detail. RAR is a task name.</note>
++      </trans-unit>
+       <trans-unit id="ResolveAssemblyReference.SearchPathAddedByParentAssembly">
+         <source>For SearchPath "{0}" (added by referencing assembly "{1}").</source>
+         <target state="translated">Para o SearchPath "{0}" (adicionado ao fazer referência ao assembly "{1}").</target>
+diff --git a/src/msbuild/src/Tasks/Resources/xlf/Strings.ru.xlf b/src/msbuild/src/Tasks/Resources/xlf/Strings.ru.xlf
+index 3bf40f021..8ca7f4c2d 100644
+--- a/src/msbuild/src/Tasks/Resources/xlf/Strings.ru.xlf
++++ b/src/msbuild/src/Tasks/Resources/xlf/Strings.ru.xlf
+@@ -1834,6 +1834,11 @@
+       LOCALIZATION: Please don't localize "CopyLocal" this is an item meta-data name.
+     </note>
+       </trans-unit>
++      <trans-unit id="ResolveAssemblyReference.ResultsCacheStatus">
++        <source>RAR result cache {0}: "{1}" ({2}).</source>
++        <target state="new">RAR result cache {0}: "{1}" ({2}).</target>
++        <note>{0} is a diagnostic state token, {1} is the cache path, {2} is diagnostic detail. RAR is a task name.</note>
++      </trans-unit>
+       <trans-unit id="ResolveAssemblyReference.SearchPathAddedByParentAssembly">
+         <source>For SearchPath "{0}" (added by referencing assembly "{1}").</source>
+         <target state="translated">Для SearchPath "{0}" (добавлено путем ссылки на сборку "{1}").</target>
+diff --git a/src/msbuild/src/Tasks/Resources/xlf/Strings.tr.xlf b/src/msbuild/src/Tasks/Resources/xlf/Strings.tr.xlf
+index 62da69a08..72f18776d 100644
+--- a/src/msbuild/src/Tasks/Resources/xlf/Strings.tr.xlf
++++ b/src/msbuild/src/Tasks/Resources/xlf/Strings.tr.xlf
+@@ -1834,6 +1834,11 @@
+       LOCALIZATION: Please don't localize "CopyLocal" this is an item meta-data name.
+     </note>
+       </trans-unit>
++      <trans-unit id="ResolveAssemblyReference.ResultsCacheStatus">
++        <source>RAR result cache {0}: "{1}" ({2}).</source>
++        <target state="new">RAR result cache {0}: "{1}" ({2}).</target>
++        <note>{0} is a diagnostic state token, {1} is the cache path, {2} is diagnostic detail. RAR is a task name.</note>
++      </trans-unit>
+       <trans-unit id="ResolveAssemblyReference.SearchPathAddedByParentAssembly">
+         <source>For SearchPath "{0}" (added by referencing assembly "{1}").</source>
+         <target state="translated">"{0}" SearchPath için ("{1}" başvuru derlemesi tarafından eklendi).</target>
+diff --git a/src/msbuild/src/Tasks/Resources/xlf/Strings.zh-Hans.xlf b/src/msbuild/src/Tasks/Resources/xlf/Strings.zh-Hans.xlf
+index 39f13aebf..8c32ccb25 100644
+--- a/src/msbuild/src/Tasks/Resources/xlf/Strings.zh-Hans.xlf
++++ b/src/msbuild/src/Tasks/Resources/xlf/Strings.zh-Hans.xlf
+@@ -1834,6 +1834,11 @@
+       LOCALIZATION: Please don't localize "CopyLocal" this is an item meta-data name.
+     </note>
+       </trans-unit>
++      <trans-unit id="ResolveAssemblyReference.ResultsCacheStatus">
++        <source>RAR result cache {0}: "{1}" ({2}).</source>
++        <target state="new">RAR result cache {0}: "{1}" ({2}).</target>
++        <note>{0} is a diagnostic state token, {1} is the cache path, {2} is diagnostic detail. RAR is a task name.</note>
++      </trans-unit>
+       <trans-unit id="ResolveAssemblyReference.SearchPathAddedByParentAssembly">
+         <source>For SearchPath "{0}" (added by referencing assembly "{1}").</source>
+         <target state="translated">对于 SearchPath“{0}”(通过引用程序集“{1}”添加)。</target>
+diff --git a/src/msbuild/src/Tasks/Resources/xlf/Strings.zh-Hant.xlf b/src/msbuild/src/Tasks/Resources/xlf/Strings.zh-Hant.xlf
+index 227999149..27bb75883 100644
+--- a/src/msbuild/src/Tasks/Resources/xlf/Strings.zh-Hant.xlf
++++ b/src/msbuild/src/Tasks/Resources/xlf/Strings.zh-Hant.xlf
+@@ -1834,6 +1834,11 @@
+       LOCALIZATION: Please don't localize "CopyLocal" this is an item meta-data name.
+     </note>
+       </trans-unit>
++      <trans-unit id="ResolveAssemblyReference.ResultsCacheStatus">
++        <source>RAR result cache {0}: "{1}" ({2}).</source>
++        <target state="new">RAR result cache {0}: "{1}" ({2}).</target>
++        <note>{0} is a diagnostic state token, {1} is the cache path, {2} is diagnostic detail. RAR is a task name.</note>
++      </trans-unit>
+       <trans-unit id="ResolveAssemblyReference.SearchPathAddedByParentAssembly">
+         <source>For SearchPath "{0}" (added by referencing assembly "{1}").</source>
+         <target state="translated">針對 SearchPath "{0}" (由參考組件 "{1}" 新增)。</target>

@@ -1,0 +1,24 @@
+<Project>
+  <ItemGroup>
+    <Reference Include="$(ProbeAssembly)">
+      <ExternallyResolved Condition="'$(Synthetic)' == 'true'">true</ExternallyResolved>
+      <FrameworkReferenceName Condition="'$(Synthetic)' == 'true'">Probe.Framework</FrameworkReferenceName>
+      <AssemblyVersion Condition="'$(Synthetic)' == 'true'">2.0.0.0</AssemblyVersion>
+      <PublicKeyToken Condition="'$(Synthetic)' == 'true'">b03f5f7f11d50a3a</PublicKeyToken>
+    </Reference>
+  </ItemGroup>
+  <Target Name="Resolve" Returns="@(_Resolved)">
+    <ResolveAssemblyReference Assemblies="@(Reference)" SearchPaths="{RawFileName}"
+                              FindDependencies="false" FindRelatedFiles="false" FindSatellites="false"
+                              StateFile="$(ProbeStateFile)" EnableResultsCache="$(UseResultCache)">
+      <Output TaskParameter="ResolvedFiles" ItemName="_Resolved" />
+      <Output TaskParameter="ResultsCacheHit" PropertyName="_Hit" />
+    </ResolveAssemblyReference>
+    <Error Condition="'@(_Resolved->Count())' != '1'" Text="Expected one reference." />
+    <Error Condition="!$([System.String]::Copy('%(_Resolved.FusionName)').Contains('Version=$(ExpectedVersion),'))"
+           Text="Synthetic and disk metadata collided: %(_Resolved.FusionName)" />
+    <Error Condition="'$(ExpectedHit)' != '' and '$(_Hit)' != '$(ExpectedHit)'"
+           Text="Unexpected cache hit state: $(_Hit)" />
+    <Message Importance="High" Text="RAR-METADATA phase=$(Phase) identity=%(_Resolved.FusionName) hit=$(_Hit)" />
+  </Target>
+</Project>

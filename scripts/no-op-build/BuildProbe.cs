@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Logging;
 
@@ -27,6 +28,9 @@ static int Analyze(string binlog, string output)
     var targetStarts = new Dictionary<(int, int, int), TargetStartedEventArgs>();
     var evaluationStarts = new Dictionary<(int, int), DateTime>();
     var projects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var rarCache = new Dictionary<string, int>(StringComparer.Ordinal);
+    var rarPhases = new Dictionary<string, Timing>(StringComparer.Ordinal);
+    var nullContextMessages = new List<string>();
     double evaluationMs = 0;
     int evaluations = 0, skippedTargets = 0, errors = 0, warnings = 0;
     DateTime start = default, finish = default;
@@ -36,6 +40,28 @@ static int Analyze(string binlog, string output)
     replay.ProjectStarted += (_, e) => projects.Add(e.ProjectFile ?? "");
     replay.ErrorRaised += (_, _) => errors++;
     replay.WarningRaised += (_, _) => warnings++;
+    replay.MessageRaised += (_, e) =>
+    {
+        if (e.BuildEventContext is null)
+        {
+            nullContextMessages.Add($"{e.GetType().Name}: {e.Message}");
+        }
+        const string prefix = "RAR result cache ";
+        if (e.Message is string message && message.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            int end = message.IndexOf(':', prefix.Length);
+            if (end > prefix.Length)
+            {
+                string status = message[prefix.Length..end];
+                rarCache[status] = rarCache.GetValueOrDefault(status) + 1;
+                foreach (Match phase in Regex.Matches(message, @"([a-z]+)-ms=([\d.]+)"))
+                {
+                    Add(rarPhases, phase.Groups[1].Value,
+                        double.Parse(phase.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture));
+                }
+            }
+        }
+    };
     replay.AnyEventRaised += (_, e) =>
     {
         if (e is ProjectEvaluationStartedEventArgs)
@@ -78,15 +104,19 @@ static int Analyze(string binlog, string output)
     var result = new
     {
         binlog, succeeded, errors, warnings,
-        buildSeconds = (finish - start).TotalSeconds,
+        buildSeconds = start == default || finish == default ? 0 : (finish - start).TotalSeconds,
+        hasBuildEvents = start != default && finish != default,
         projects = projects.Count, evaluations, evaluationCumulativeSeconds = evaluationMs / 1000,
         tasks = tasks.Values.Sum(t => t.Count), targets = targets.Values.Sum(t => t.Count), skippedTargets,
+        rarCache,
+        rarPhases,
+        nullContextMessages,
         nonOrchestrationTaskSeconds = tasks.Where(t => t.Key is not ("MSBuild" or "CallTarget")).Sum(t => t.Value.Milliseconds) / 1000,
         taskTimings = tasks.OrderByDescending(t => t.Value.Milliseconds).Select(t => new { name = t.Key, t.Value.Count, t.Value.Milliseconds }),
         targetTimings = targets.OrderByDescending(t => t.Value.Milliseconds).Select(t => new { name = t.Key, t.Value.Count, t.Value.Milliseconds }),
     };
     File.WriteAllText(output, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-    Console.WriteLine(JsonSerializer.Serialize(new { result.succeeded, result.buildSeconds, result.projects, result.evaluations, result.evaluationCumulativeSeconds, result.tasks, result.targets, result.skippedTargets, result.nonOrchestrationTaskSeconds }));
+    Console.WriteLine(JsonSerializer.Serialize(new { result.succeeded, result.buildSeconds, result.projects, result.evaluations, result.evaluationCumulativeSeconds, result.tasks, result.targets, result.skippedTargets, result.nonOrchestrationTaskSeconds, result.rarCache }));
     return succeeded ? 0 : 1;
 }
 

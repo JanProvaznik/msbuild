@@ -1,0 +1,16 @@
+{
+  "contractCases": 38,
+  "expectedFailedBuilds": 2,
+  "metadataIdentityPhases": 4,
+  "sourceTestsPassed": 37,
+  "solutionCount": 9,
+  "projects": 38,
+  "identicalBinOutputFiles": 541,
+  "fileReferenceRuntimeParity": true,
+  "platform": "Windows x64",
+  "peFreshness": "existence, UTC timestamp, length, attributes",
+  "appConfigFreshness": "SHA256 content",
+  "unsupportedResolverBehavior": "ordinary RAR fallback",
+  "publishPackTestedWithThisCache": false,
+  "crossPlatformExecutionTested": false
+}

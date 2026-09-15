@@ -1,0 +1,66 @@
+[
+  {
+    "run": "cache-fill",
+    "seconds": 28.7271697,
+    "projects": 202,
+    "evaluations": 404,
+    "tasks": 23697,
+    "targets": 31252,
+    "rar": {
+      "miss": 202
+    },
+    "rarPhases": {},
+    "rarMilliseconds": 19503.3999,
+    "compilerInvocations": 0,
+    "nullContextMessages": []
+  },
+  {
+    "run": "cache-hit",
+    "seconds": 28.658081,
+    "projects": 202,
+    "evaluations": 404,
+    "tasks": 23697,
+    "targets": 31252,
+    "rar": {
+      "hit": 202
+    },
+    "rarPhases": {
+      "signature": {
+        "Count": 202,
+        "Milliseconds": 574.7700000000003
+      },
+      "load": {
+        "Count": 202,
+        "Milliseconds": 1022.4040000000005
+      },
+      "validate": {
+        "Count": 202,
+        "Milliseconds": 2385.8499999999985
+      },
+      "restore": {
+        "Count": 202,
+        "Milliseconds": 1898.6260000000002
+      },
+      "total": {
+        "Count": 202,
+        "Milliseconds": 6994.023000000001
+      }
+    },
+    "rarMilliseconds": 7667.5338,
+    "compilerInvocations": 0,
+    "nullContextMessages": []
+  },
+  {
+    "run": "control",
+    "seconds": 28.6430118,
+    "projects": 202,
+    "evaluations": 404,
+    "tasks": 23697,
+    "targets": 31252,
+    "rar": {},
+    "rarPhases": {},
+    "rarMilliseconds": 7029.359300000004,
+    "compilerInvocations": 0,
+    "nullContextMessages": []
+  }
+]
