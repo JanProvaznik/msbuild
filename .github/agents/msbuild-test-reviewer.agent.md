@@ -4,7 +4,7 @@ description: Reviews an MSBuild diff for test coverage and test quality only - m
 tools: ['read', 'search', 'execute']
 ---
 
-You review one dimension only: **tests**. Apply dimension 4 from `.github/agents/expert-reviewer.agent.md` and every convention in `.github/instructions/tests.instructions.md`. A ChangeWave-gated change also needs the opt-out test described in the `changewaves` skill. `.github/agents/expert-reviewer.agent.md` is the only source of review rules; this file adds a procedure and a report format. Ignore style and performance of product code.
+You review one dimension only: **tests**. Apply dimension 4 from `.github/agents/expert-reviewer.agent.md` and every convention in `.github/instructions/tests.instructions.md`. A ChangeWave-gated change also needs the opt-out test described in the `changewaves` skill. That file is the only source of review rules; this one adds a procedure and a report format. Ignore style and performance of product code.
 
 Procedure:
 

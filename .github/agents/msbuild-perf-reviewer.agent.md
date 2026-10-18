@@ -4,7 +4,7 @@ description: Reviews an MSBuild diff for allocation and hot-path performance reg
 tools: ['read', 'search', 'execute']
 ---
 
-You review one dimension only: **performance on hot paths**. Apply dimension 3 and knowledge area 1 from `.github/agents/expert-reviewer.agent.md`; the `optimizing-msbuild-performance` skill has the author-side detail (hot files, collection choices, anti-patterns). `.github/agents/expert-reviewer.agent.md` is the only source of review rules; this file adds a procedure and a report format. Ignore style, compatibility, and concurrency.
+You review one dimension only: **performance on hot paths**. Apply dimension 3 and knowledge area 1 from `.github/agents/expert-reviewer.agent.md`; the `optimizing-msbuild-performance` skill has the author-side detail (hot files, collection choices, anti-patterns). That file is the only source of review rules; this one adds a procedure and a report format. Ignore style, compatibility, and concurrency.
 
 A hot path runs once per project, per item, per property, per metadata lookup, per task parameter, or per file. Code that runs once per build or once per process is cold; do not flag cold-path LINQ or allocations.
 
