@@ -21,15 +21,9 @@ Instructions for GitHub Copilot and other AI coding agents working with the MSBu
 
 ## Start Here: the Change Workflow
 
-Every code change follows `.github/skills/msbuild-change-workflow/SKILL.md` (also exposed to Claude Code as `/msbuild-change-workflow`). It has six phases with a hard gate each; the one that matters most is Phase 4: a change is done only when `.github/skills/verifying-changes/verify-change.sh` and `.github/skills/assessing-breaking-changes/compat-scan.sh` both end in `RESULT: PASS` (or `REVIEW` with every signal answered) and those lines are quoted in your report.
+Every code change follows `.github/skills/msbuild-change-workflow/SKILL.md`. Its Phase 4 defines when a change is done: `.github/skills/verifying-changes/verify-change.sh` and `.github/skills/assessing-breaking-changes/compat-scan.sh` both end in `RESULT: PASS` (or `REVIEW` with every signal answered), and those lines are quoted in your report.
 
-Rules of thumb that keep smaller models on track here:
-
-* Read the matching `.github/instructions/*.md` for every path you touch before editing it. They are not auto-loaded in Claude Code.
-* Load a skill whenever its description matches, even if you think you know the content. The skills carry the repo-specific commands.
-* Delegate exploration to the `Explore` subagent and review to the `msbuild-*-reviewer` agents under `.claude/agents/`. Do not let the agent that wrote the code be the only one that judged it.
-* Scripts decide, prose explains. When a skill offers a script, run the script and quote its verdict rather than reasoning about what it would say.
-* If a gate cannot be satisfied after two attempts, stop and report which gate and what you saw.
+Area rules live in `.github/instructions/*.instructions.md`, keyed by path. Not every agent host loads them automatically, so read the matching file before editing a path it covers; the workflow skill has the path-to-file table.
 
 ## General
 
@@ -235,11 +229,12 @@ See **Key Configuration Files** section for files that should not be modified wi
 
 | Location | Purpose |
 |----------|---------|
-| `AGENTS.md` (this file, symlinked as `.github/copilot-instructions.md`) | Always-loaded rules for every agent |
-| `.github/instructions/*.instructions.md` | Area-specific rules keyed by path (`applyTo`). Copilot loads them automatically; Claude Code agents read them when the workflow skill says to. |
-| `.github/skills/*/SKILL.md` | On-demand procedures. `.claude/skills/*` are symlinks to these so Claude Code discovers them. Scripts next to a SKILL.md are the authoritative version of the procedure. |
-| `.github/agents/expert-reviewer.agent.md` | Copilot reviewer with the full 24-dimension methodology |
-| `.claude/agents/msbuild-*.md` | Claude Code reviewer agents, one narrow dimension each, pinned to Sonnet. Orchestrated by the `reviewing-msbuild-code` skill. |
+| `AGENTS.md` (symlinked as `.github/copilot-instructions.md`) | Always-loaded rules for every agent |
+| `.github/instructions/*.instructions.md` | Area rules keyed by path (`applyTo`) |
+| `.github/skills/*/SKILL.md` | On-demand procedures; a script next to a SKILL.md is the authoritative form of that procedure |
+| `.claude/skills/*` | Symlinks to `.github/skills/*` so Claude Code discovers the skills |
+| `.github/agents/expert-reviewer.agent.md` | Full 24-dimension review methodology |
+| `.claude/agents/msbuild-*.md` | One narrow review dimension each, orchestrated by the `reviewing-msbuild-code` skill |
 
 ## Documentation
 

@@ -6,16 +6,16 @@ argument-hint: 'Describe the issue or change you are about to make.'
 
 # MSBuild Change Workflow
 
-Follow the phases in order. Do not skip a gate. Each gate names the exact output you must have before moving on. If a gate cannot be satisfied, stop and tell the user what is missing instead of continuing.
+Follow the phases in order. Each gate names the output you must have before moving on. If a gate cannot be satisfied, stop and tell the user what is missing instead of continuing.
 
-Scripts referenced here live in `.github/skills/*/` and print `RESULT: PASS` or `RESULT: FAIL` as their last line. Paste that last line, plus any `FAIL` detail, into your final message.
+Scripts referenced here live in `.github/skills/*/` and print `RESULT: PASS`, `RESULT: REVIEW`, or `RESULT: FAIL` as their last line. Quote that line, plus any `FAIL` detail, in your final message.
 
-## Phase 0: Classify (2 minutes, no edits)
+## Phase 0: Classify (no edits)
 
 Write one line for each:
 
 1. **Kind**: bug fix | new feature | refactor | perf | infra/CI | docs.
-2. **Area**: pick the first matching row and read its instruction file before editing anything in that path.
+2. **Area**: pick every matching row and read its instruction file before editing anything in that path. These files are keyed by path for GitHub Copilot; other agent hosts do not load them automatically.
 
 | Touched path | Read first |
 |--------------|------------|
@@ -31,25 +31,20 @@ Write one line for each:
 | `src/Tasks/**/*.targets`, `*.props` | `.github/instructions/targets.instructions.md` |
 | `src/*.UnitTests/**` | `.github/instructions/tests.instructions.md` |
 
-3. **Skills to load now** (load each that applies, even if you think you know the content):
-   - Any new or changed warning, error, or resource string: `authoring-errors-and-warnings`
-   - Any user-visible behavior change: `assessing-breaking-changes`, then `changewaves` if the scan says a wave is needed
-   - Anything in `Evaluator.cs`, `Expander.cs`, `LazyItemEvaluator.cs`, `TaskExecutionHost.cs`, `FileMatcher.cs`: `optimizing-msbuild-performance`
-   - Anything touching `BinaryLogger`, `BuildEventArgs`, `BuildEventArgsWriter/Reader`: `maintaining-binary-log-compatibility`
-   - Repro project to verify against the built MSBuild: `use-bootstrap-msbuild`
+Other skills in `.github/skills/` load from their own descriptions (diagnostics, compatibility, binary logs, performance, bootstrap testing); use whichever match the change.
 
-**Gate 0**: the three lines above are written out in your reply.
+**Gate 0**: the two lines above are written out in your reply.
 
 ## Phase 1: Locate (read only)
 
-1. Find the code. Use the `Explore` subagent with "very thorough" when the issue names a symptom rather than a file. Ask it for file paths and line ranges, not summaries.
+1. Find the code. When the issue names a symptom rather than a file, delegate the search to a read-only exploration subagent if your host has one (`Explore` in Claude Code). Ask for file paths and line ranges, not summaries.
 2. Find the existing tests for that code:
    ```bash
    grep -rl "ClassOrMethodName" src/*.UnitTests --include='*.cs'
    ```
    If there are none, note that; you will add a test file next to the closest related one.
 3. For a bug fix, find the original issue and the PR that introduced the code (`git log -S "snippet" --oneline -- path`). Read the PR discussion if it is linked. The fix must match the original design intent, not just make the symptom disappear.
-4. Check for `#if` guards in the file (`FEATURE_*`, `RUNTIME_TYPE_NETCORE`, `NET472`). Every branch you change must still compile on both net472 and net11.0.
+4. Check for `#if` guards in the file (`FEATURE_*`, `RUNTIME_TYPE_NETCORE`, `NET472`). Every branch you change must still compile on both `net472` and the current .NET TFM (`net11.0`).
 
 **Gate 1**: you can name the file and line range to change, the test project, and at least one existing test you will model yours on.
 
@@ -69,49 +64,35 @@ For a feature or anything touching more than four files, show this plan to the u
 
 ## Phase 3: Implement
 
-Rules that Sonnet-class agents most often get wrong here; check each one against your diff:
+Coding rules live in `AGENTS.md` (General, Formatting, Nullable Reference Types, Performance Best Practices) and in the instruction file you read in Phase 0; apply them to every hunk. Two rules belong to this workflow itself:
 
-- Smallest diff that fixes the problem. Do not reformat, rename, or reorder code you are not changing.
-- Match the file's nullable setting. A file with `#nullable disable` gets no `?` annotations. A new file has nullable enabled and no `#nullable disable`.
-- `is null` / `is not null`, never `== null`.
-- `MSBuildNameIgnoreCaseComparer` for property, item, target, and metadata names. `StringComparison.OrdinalIgnoreCase` for other identifiers. Never `ToLower()`/`ToUpper()` for comparison. Never `CurrentCulture`.
-- No LINQ in `Evaluator.cs`, `Expander.cs`, `LazyItemEvaluator.cs`, `TaskExecutionHost.cs`, `FileMatcher.cs`, or anything called per item or per property. Cold-path LINQ is fine.
-- Collection expressions (`[]`) for new collections. `ImmutableArray<T>` for build-once-read-many, never `ImmutableList<T>`.
-- Every user-facing string goes in the area's `Strings.resx` with an `MSBxxxx` code. Never a hardcoded message.
-- Shared mutable state needs a lock or a concurrent collection. Tasks run on many threads and in many processes at once.
-- Write the test first when fixing a bug: it must fail before the fix and pass after. Record both runs.
+- Smallest diff that fixes the problem. Do not reformat, rename, or reorder code you are not changing; list such temptations under "Not doing".
+- For a bug fix, write the test first. It must fail before the fix and pass after; record both runs.
 
-Test authoring: follow `.github/instructions/tests.instructions.md` exactly. `TestEnvironment.Create(_output)` with a `using` declaration, Shouldly assertions, `MockLogger(_output)` on every build, raw string literals for project XML, no English-string assertions.
+Test authoring follows `.github/instructions/tests.instructions.md`.
 
 ## Phase 4: Verify (the hard gate)
 
-Run the scoped verification script. It builds every project you touched with warnings as errors and runs the mapped test projects.
+This phase defines "done" for a change in this repo. Other skills point here rather than restating it.
 
-```bash
-.github/skills/verifying-changes/verify-change.sh --filter "*YourTestNamePattern*"
-```
+1. While iterating, run the scoped verification with a filter:
+   ```bash
+   .github/skills/verifying-changes/verify-change.sh --filter "*YourTestNamePattern*"
+   ```
+2. Before saying done, run it with no filter. It builds every project your diff maps to with warnings as errors and runs those test projects in full (`src/Shared/**` maps to Build, Tasks, and Utilities). That is the required local test run; the whole-repo `./build.sh --test` is what CI runs and is not a local gate. The `verifying-changes` skill explains the script's output and options.
+3. Run the compatibility scan:
+   ```bash
+   .github/skills/assessing-breaking-changes/compat-scan.sh
+   ```
+   If it prints any `SIGNAL` line, the `assessing-breaking-changes` skill decides, in writing, whether a ChangeWave is needed. `WAVE: REQUIRED` with no `ChangeWaves.AreFeaturesEnabled` check in your diff means you are not done.
 
-Drop `--filter` to run the whole mapped test projects (slower, required before you say done on an engine change). Never redirect build or test output to a file. The script writes its own log and tells you where it is.
-
-Then run the compatibility scan:
-
-```bash
-.github/skills/assessing-breaking-changes/compat-scan.sh
-```
-
-If it prints any `SIGNAL [...]` line, open the `assessing-breaking-changes` skill and decide, in writing, whether a ChangeWave is needed. If it prints `WAVE: REQUIRED` and there is no `ChangeWaves.AreFeaturesEnabled` check in your diff, you are not done.
+Never redirect build or test output to a file yourself; the script writes its own logs and tells you where they are.
 
 **Gate 4**: `verify-change.sh` ends with `RESULT: PASS`; `compat-scan.sh` ends with `RESULT: PASS`, or with `RESULT: REVIEW` and a one-line answer from you for every `SIGNAL`. Your reply quotes both result lines. A build warning is a failure. A skipped test count that went up unexpectedly is a failure. `RESULT: FAIL` from either script means you are not done.
 
 ## Phase 5: Review
 
-Run the review skill on your own diff before handing it to the user:
-
-```
-/reviewing-msbuild-code
-```
-
-It launches narrow reviewer agents in parallel and verifies each finding against the code. Fix every CONFIRMED finding with severity BLOCKING or MAJOR, re-run Phase 4, and list the rest in the PR description as open questions.
+Load the `reviewing-msbuild-code` skill and run it on your own diff before handing it to the user. It launches narrow reviewer agents in parallel and verifies each finding against the code. Fix every CONFIRMED finding with severity BLOCKING or MAJOR, re-run Phase 4, and list the rest in the PR description as open questions.
 
 ## Phase 6: Done criteria and PR text
 
@@ -144,8 +125,5 @@ PR description template (fill every line; delete none):
 
 ## When you are stuck
 
-- Build fails with "Could not resolve SDK": `source artifacts/sdk-build-env.sh` (after one full `./build.sh`).
-- Build fails with locked files: `./artifacts/bin/bootstrap/core/dotnet build-server shutdown`.
-- A test passes locally but you did not see it fail first: rerun it with the fix stashed. Do not trust a test you have not seen fail.
-- You changed `src/Shared/**`: the verify script maps that to Build, Tasks, and Utilities tests. Run all three.
+- A test passes but you never saw it fail: rerun it with the fix temporarily reverted. Do not trust a test you have not seen fail.
 - You cannot satisfy a gate after two attempts: stop, report exactly which gate and what you saw, and ask.

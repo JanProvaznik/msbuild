@@ -8,7 +8,7 @@ argument-hint: 'Describe the change and its potential compatibility impact.'
 
 Backward compatibility is the default — any change that could alter existing build behavior must be explicitly justified.
 
-This skill covers **how to evaluate compatibility risk**. For the mechanics of ChangeWave implementation, see the [changewaves skill](../changewaves/SKILL.md).
+This is the one place that decides whether a change is compatible and whether it needs a ChangeWave. Once the answer is "wave", the [changewaves skill](../changewaves/SKILL.md) has the mechanics; for the wording and severity of a new diagnostic, see `authoring-errors-and-warnings`.
 
 ## Core Philosophy
 
@@ -47,15 +47,6 @@ Before merging any behavioral change, evaluate:
 | Does this affect only internal code paths with no user-visible effect? | No ChangeWave needed |
 | Is this a pure bug fix restoring documented behavior? | Usually no ChangeWave; use judgment on blast radius |
 
-## When ChangeWave Is NOT Needed
-
-- Internal refactoring with no observable behavior change
-- Performance improvements that don't change semantics
-- New opt-in features gated by a new property or switch
-- Bug fixes that restore clearly-intended behavior with limited blast radius
-
-For detailed ChangeWave mechanics, see [ChangeWaves-Dev.md](../../../documentation/wiki/ChangeWaves-Dev.md) and [ChangeWaves.md](../../../documentation/wiki/ChangeWaves.md).
-
 ## The Warnings-as-Errors Rule
 
 This is the most commonly missed compatibility concern:
@@ -92,13 +83,14 @@ When testing backward compatibility, verify:
 
 ```
 Is the change user-visible?
-├── No → Ship it (no ChangeWave needed)
+├── No (internal refactor, perf work with identical semantics) → Ship it, no ChangeWave
 └── Yes
-    ├── Is it a new opt-in feature? → Ship it (no ChangeWave needed)
+    ├── Is it new behavior the user must opt into (new property, switch, or API)? → Ship it, no ChangeWave
     └── Does it change existing behavior?
-        ├── Bug fix with low blast radius? → Ship it, add regression test
-        └── Behavioral change or new warning?
-            └── Gate behind ChangeWave, test opt-out path
+        ├── Bug fix restoring clearly intended behavior, low blast radius → Ship it, add a regression test
+        └── Behavioral change or new warning → Gate behind a ChangeWave, test the opt-out path
 ```
 
-Document the compatibility decision in your PR description so reviewers can validate it.
+Write the decision and its reason in the PR's Compatibility section, one line per `SIGNAL` the scan printed, so reviewers can check it. The `changewaves` and `authoring-errors-and-warnings` checklists point back to this line.
+
+For detailed ChangeWave mechanics, see [ChangeWaves-Dev.md](../../../documentation/wiki/ChangeWaves-Dev.md) and [ChangeWaves.md](../../../documentation/wiki/ChangeWaves.md).

@@ -6,7 +6,7 @@ argument-hint: 'Optional: PR number, branch, or "working tree" (default).'
 
 # Reviewing MSBuild Code
 
-This skill is built for agents that do best with one narrow job at a time. Instead of one reviewer applying 24 dimensions, it runs five reviewers that each own a few dimensions, then a verifier per finding. The full 24-dimension methodology lives in `.github/agents/expert-reviewer.agent.md` and is the source of the rules the agents carry; consult it when a finding does not fit any of the five.
+Five reviewer agents under `.claude/agents/` each own a few of the repo's review dimensions; a verifier agent then checks every finding against the code. The full 24-dimension methodology lives in `.github/agents/expert-reviewer.agent.md` and is the source of the rules the agents carry; consult it when a finding does not fit any of the five.
 
 ## Step 1: Get the diff in the working tree
 
@@ -54,7 +54,7 @@ Verdict: REQUEST_CHANGES | COMMENT
 
 Any BLOCKING finding means REQUEST_CHANGES. Never say APPROVE; an agent review does not count as approval in this repo.
 
-If asked to post to a PR, post each confirmed finding as an inline comment on the exact diff line with `gh api` (`POST /repos/{owner}/{repo}/pulls/{number}/comments`) and the summary as a review with event `COMMENT` or `REQUEST_CHANGES`. Never resolve or dismiss threads opened by humans.
+If asked to post to a PR: write the report to a file, show it to the user, then post it with `gh pr review <number> --comment --body-file report.md` (or `--request-changes`). Never resolve or dismiss threads opened by humans.
 
 ## Step 6: If you are also the author
 

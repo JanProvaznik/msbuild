@@ -17,7 +17,7 @@ Rules:
 2. No `string.Format`, interpolation, `Substring`, `ToLower`, `ToUpper`, or `Split` where a `ReadOnlySpan<char>` comparison or slice works.
 3. Values computed in a loop that do not change must be hoisted. Reflection results (`GetMethod`, `GetProperty`, `Activator`) are computed once and cached, never per task instance.
 4. `MSBuildNameIgnoreCaseComparer` for MSBuild names; `StringComparer.OrdinalIgnoreCase` elsewhere. `CurrentCulture` is both a correctness and a perf bug.
-5. `ImmutableArray<T>` / `FrozenDictionary` for build-once-read-many. `ImmutableList<T>` is almost never right. `Dictionary` for fewer than ~8 items is slower than a linear scan.
+5. `ImmutableArray<T>` / `FrozenDictionary` for build-once-read-many. `ImmutableList<T>` is almost never right. `Dictionary` for fewer than ~5 items is slower than a linear scan over an array.
 6. `TryGetValue` instead of `ContainsKey` then indexer. `.Count` property instead of `Count()`.
 7. Performance claims in the PR need measurements. "Should be faster" without numbers is a finding.
 
