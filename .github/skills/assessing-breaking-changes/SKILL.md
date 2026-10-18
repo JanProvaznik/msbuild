@@ -22,7 +22,7 @@ This is the one place that decides whether a change is compatible and whether it
 Run this before forming an opinion. It reads the working-tree diff and prints one `SIGNAL` line per compatibility lead, a `WAVE:` verdict, and a `RESULT:` line.
 
 ```powershell
-.\.github\skills\assessing-breaking-changes\compat-scan.ps1   # pwsh on macOS/Linux
+.\.github\skills\assessing-breaking-changes\compat-scan.ps1   # pwsh .github/... on Linux/macOS, including the Copilot coding agent
 ```
 
 | It prints | You do |

@@ -75,7 +75,7 @@ Test authoring follows `.github/instructions/tests.instructions.md`.
 
 This phase defines "done" for a change in this repo. Other skills point here rather than restating it.
 
-1. While iterating, run the scoped verification with a filter (`pwsh` on macOS/Linux):
+1. While iterating, run the scoped verification with a filter (`pwsh .github/...` on Linux/macOS, including the Copilot coding agent):
    ```powershell
    .\.github\skills\verifying-changes\verify-change.ps1 -Filter "*YourTestNamePattern*"
    ```

@@ -9,7 +9,7 @@ argument-hint: 'Optional: a test name filter such as *MyFeature*.'
 One command, one verdict. When deciding whether a change builds and its tests pass, run this instead of ad-hoc `dotnet build` or `dotnet test` calls:
 
 ```powershell
-.\.github\skills\verifying-changes\verify-change.ps1 -Filter "*MyTest*"   # pwsh on macOS/Linux
+.\.github\skills\verifying-changes\verify-change.ps1 -Filter "*MyTest*"   # pwsh .github/... on Linux/macOS, including the Copilot coding agent
 ```
 
 Whether a change is *done* is defined in one place, Phase 4 of `msbuild-change-workflow`: this script with no `-Filter`, then `compat-scan.ps1`. This skill explains the script.
