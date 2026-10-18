@@ -1,0 +1,1009 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>How MSBuild works</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #070b18; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script>
+'use strict';
+const W = 1920, H = 1080, FPS = 30;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+// ---------- palette ----------
+const C = {
+  bg: '#070b18', ink: '#eef1ff', soft: '#c9d0f0', dim: '#8b93b8', faint: '#3a4370', line: '#262f57',
+  panel: 'rgba(18,25,54,0.88)', panel2: 'rgba(26,35,72,0.92)',
+  purple: '#a78bfa', violet: '#7c3aed', teal: '#2dd4bf', amber: '#fbbf24', pink: '#f472b6',
+  blue: '#60a5fa', green: '#4ade80', red: '#f87171', gray: '#6b7280'
+};
+const SANS = 'Inter', MONO = '"DejaVu Sans Mono"';
+
+// ---------- math ----------
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const eio = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const eout = x => 1 - Math.pow(1 - x, 3);
+const eback = x => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+const env = (t, a, b, f = 0.4) => clamp((t - a) / f) * clamp((b - t) / f);
+function rnd(seed) { let s = seed >>> 0; return () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function hexA(hex, a) { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; }
+
+// ---------- drawing primitives ----------
+function font(o) { return `${o.w || 400} ${o.s || 28}px ${o.mono ? MONO : SANS}`; }
+function txt(s, x, y, o = {}) {
+  ctx.save();
+  ctx.globalAlpha *= (o.a ?? 1);
+  ctx.font = font(o);
+  ctx.fillStyle = o.c || C.ink;
+  ctx.textAlign = o.al || 'left';
+  ctx.textBaseline = o.bl || 'middle';
+  ctx.letterSpacing = (o.ls || 0) + 'px';
+  if (o.glow) { ctx.shadowColor = o.glow; ctx.shadowBlur = o.gb || 18; }
+  ctx.fillText(s, x, y);
+  ctx.restore();
+}
+function tw(s, o = {}) { ctx.save(); ctx.font = font(o); ctx.letterSpacing = (o.ls || 0) + 'px'; const w = ctx.measureText(s).width; ctx.restore(); return w; }
+// segments: [[text, color], ...]
+function rich(segs, x, y, o = {}) {
+  let cx = x;
+  for (const [s, c, extra] of segs) { txt(s, cx, y, { ...o, ...(extra || {}), c }); cx += tw(s, { ...o, ...(extra || {}) }); }
+  return cx;
+}
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+function box(x, y, w, h, o = {}) {
+  ctx.save();
+  ctx.globalAlpha *= (o.a ?? 1);
+  rr(x, y, w, h, o.r ?? 18);
+  if (o.glow) { ctx.shadowColor = o.glow; ctx.shadowBlur = o.gb || 30; }
+  ctx.fillStyle = o.fill || C.panel; ctx.fill();
+  ctx.shadowBlur = 0;
+  if (o.stroke !== null) { ctx.lineWidth = o.lw || 1.5; ctx.strokeStyle = o.stroke || 'rgba(167,139,250,0.28)'; ctx.stroke(); }
+  ctx.restore();
+}
+function pill(label, x, y, o = {}) {
+  const s = o.s || 22, padX = o.px || 16, h = o.h || s + 20;
+  const w = tw(label, { s, w: o.w || 500, mono: o.mono }) + padX * 2;
+  const bx = o.al === 'center' ? x - w / 2 : x;
+  box(bx, y - h / 2, w, h, { r: h / 2, fill: o.fill || hexA(o.c || C.purple, 0.16), stroke: o.stroke ?? hexA(o.c || C.purple, 0.6), a: o.a, glow: o.glow, gb: o.gb });
+  txt(label, bx + padX, y + 1, { s, w: o.w || 500, c: o.tc || o.c || C.ink, mono: o.mono, a: o.a });
+  return w;
+}
+function qpt(x1, y1, cx, cy, x2, y2, t) { const u = 1 - t; return [u * u * x1 + 2 * u * t * cx + t * t * x2, u * u * y1 + 2 * u * t * cy + t * t * y2]; }
+function curve(x1, y1, cx, cy, x2, y2, p, o = {}) {
+  if (p <= 0) return;
+  ctx.save();
+  ctx.globalAlpha *= (o.a ?? 1);
+  ctx.strokeStyle = o.c || C.faint; ctx.lineWidth = o.lw || 2.5; ctx.lineCap = 'round';
+  if (o.dash) { ctx.setLineDash(o.dash); ctx.lineDashOffset = o.off || 0; }
+  ctx.beginPath(); ctx.moveTo(x1, y1);
+  const N = 40; let last = [x1, y1], prev = [x1, y1];
+  for (let i = 1; i <= N; i++) { const tt = (i / N) * p; prev = last; last = qpt(x1, y1, cx, cy, x2, y2, tt); ctx.lineTo(last[0], last[1]); }
+  ctx.stroke();
+  if (o.head !== false && p > 0.05) {
+    ctx.setLineDash([]);
+    const a = Math.atan2(last[1] - prev[1], last[0] - prev[0]), L = o.hl || 14;
+    ctx.fillStyle = o.c || C.faint; ctx.beginPath();
+    ctx.moveTo(last[0], last[1]);
+    ctx.lineTo(last[0] - L * Math.cos(a - 0.45), last[1] - L * Math.sin(a - 0.45));
+    ctx.lineTo(last[0] - L * Math.cos(a + 0.45), last[1] - L * Math.sin(a + 0.45));
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+function line(x1, y1, x2, y2, p, o = {}) { curve(x1, y1, (x1 + x2) / 2, (y1 + y2) / 2, x2, y2, p, o); }
+function dot(x, y, r, c, o = {}) { ctx.save(); ctx.globalAlpha *= (o.a ?? 1); ctx.fillStyle = c; if (o.glow !== false) { ctx.shadowColor = c; ctx.shadowBlur = o.gb || 16; } ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.restore(); }
+function check(x, y, s, c, a = 1) { ctx.save(); ctx.globalAlpha *= a; ctx.strokeStyle = c; ctx.lineWidth = s * 0.18; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath(); ctx.moveTo(x - s * 0.35, y); ctx.lineTo(x - s * 0.08, y + s * 0.28); ctx.lineTo(x + s * 0.4, y - s * 0.3); ctx.stroke(); ctx.restore(); }
+function withAlpha(a, fn) { ctx.save(); ctx.globalAlpha *= a; fn(); ctx.restore(); }
+function scaled(cx, cy, k, fn) { ctx.save(); ctx.translate(cx, cy); ctx.scale(k, k); ctx.translate(-cx, -cy); fn(); ctx.restore(); }
+function token(label, x, y, c, a = 1, s = 22) {
+  pill(label, x, y, { al: 'center', c, s, w: 600, fill: hexA(c, 0.22), stroke: c, glow: c, gb: 18, a, tc: C.ink });
+}
+function codeColor(seg) { return seg; }
+// Simple XML highlighter -> segments
+function xmlSegs(line) {
+  const segs = []; let i = 0;
+  const re = /(<\/?)([\w.]+)|([\w.:]+)(=)("[^"]*")|(\/?>)|([^<"=\/>]+)|(.)/g;
+  let m;
+  while ((m = re.exec(line))) {
+    if (m[2]) { segs.push([m[1], C.dim]); segs.push([m[2], C.blue]); }
+    else if (m[3]) { segs.push([m[3], C.pink]); segs.push([m[4], C.dim]); segs.push([m[5], C.amber]); }
+    else if (m[6]) segs.push([m[6], C.dim]);
+    else if (m[7]) segs.push([m[7], C.ink]);
+    else segs.push([m[8], C.ink]);
+  }
+  return segs;
+}
+
+// ---------- background ----------
+const STARS = (() => { const r = rnd(7); return Array.from({ length: 90 }, () => ({ x: r() * W, y: r() * H, z: 0.3 + r() * 0.7, ph: r() * 6.28 })); })();
+function background(t) {
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+  const g1 = ctx.createRadialGradient(W * 0.25 + Math.sin(t * 0.1) * 80, H * 0.2, 0, W * 0.25, H * 0.2, 900);
+  g1.addColorStop(0, 'rgba(124,58,237,0.20)'); g1.addColorStop(1, 'rgba(124,58,237,0)');
+  ctx.fillStyle = g1; ctx.fillRect(0, 0, W, H);
+  const g2 = ctx.createRadialGradient(W * 0.8, H * 0.85 + Math.cos(t * 0.08) * 60, 0, W * 0.8, H * 0.85, 1000);
+  g2.addColorStop(0, 'rgba(45,212,191,0.10)'); g2.addColorStop(1, 'rgba(45,212,191,0)');
+  ctx.fillStyle = g2; ctx.fillRect(0, 0, W, H);
+  // dot grid
+  ctx.fillStyle = 'rgba(120,135,200,0.07)';
+  const off = (t * 6) % 48;
+  for (let y = -48 + off; y < H; y += 48) for (let x = 0; x < W; x += 48) ctx.fillRect(x, y, 2, 2);
+  for (const s of STARS) {
+    const y = (s.y - t * 8 * s.z + H * 10) % H;
+    dot(s.x, y, 1.2 * s.z, '#b9c3ff', { a: 0.25 + 0.25 * Math.sin(t * 1.3 + s.ph), glow: false });
+  }
+  const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.4, W / 2, H / 2, H * 1.05);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+}
+
+// ---------- chrome: chapter, file ref, caption ----------
+function chapter(n, title, file, lt) {
+  const a = prog(lt, 0.1, 0.7);
+  const x = 120 - (1 - eout(a)) * 30;
+  txt(n, x, 92, { s: 22, w: 700, c: C.teal, ls: 3, a });
+  txt(title.toUpperCase(), x + 46, 92, { s: 22, w: 600, c: C.soft, ls: 5, a });
+  ctx.save(); ctx.globalAlpha *= a; ctx.fillStyle = C.teal; ctx.fillRect(x, 116, 36 * eout(a), 3); ctx.restore();
+  if (file) {
+    const fa = prog(lt, 0.6, 1.3);
+    const w = tw(file, { s: 19, mono: true });
+    box(W - 120 - w - 52, 72, w + 52, 40, { r: 20, fill: 'rgba(20,28,58,0.7)', stroke: 'rgba(139,147,184,0.25)', a: fa });
+    // tiny file glyph
+    withAlpha(fa, () => { ctx.strokeStyle = C.dim; ctx.lineWidth = 1.5; rr(W - 120 - w - 36, 82, 14, 18, 3); ctx.stroke(); });
+    txt(file, W - 120 - w - 14, 93, { s: 19, mono: true, c: C.dim, a: fa });
+  }
+}
+function captions(list, lt) {
+  for (const [a, b, s] of list) {
+    const al = env(lt, a, b, 0.45);
+    if (al <= 0) continue;
+    const y = 1000 + (1 - eout(clamp((lt - a) / 0.45))) * 12;
+    ctx.save(); ctx.globalAlpha *= al;
+    const w = tw(s, { s: 31, w: 500 });
+    const g = ctx.createLinearGradient(0, 940, 0, 1080);
+    g.addColorStop(0, 'rgba(7,11,24,0)'); g.addColorStop(1, 'rgba(7,11,24,0.85)');
+    ctx.fillStyle = g; ctx.fillRect(0, 930, W, 150);
+    ctx.restore();
+    txt(s, W / 2, y, { s: 31, w: 500, c: C.soft, al: 'center', a: al });
+  }
+}
+function heading(s, lt, y = 170, sub) {
+  const a = prog(lt, 0.2, 0.9);
+  txt(s, 120, y - (1 - eout(a)) * 16, { s: 52, w: 700, c: C.ink, a });
+  if (sub) txt(sub, 120, y + 48, { s: 26, c: C.dim, a: prog(lt, 0.5, 1.2) });
+}
+
+// =====================================================================
+// SCENES
+// =====================================================================
+const PIPE = [['Parse', C.blue], ['Evaluate', C.purple], ['Schedule', C.teal], ['Targets', C.amber], ['Tasks', C.pink], ['Log', C.green]];
+
+// ---- 0. Title ----
+function sTitle(lt) {
+  const title = 'How MSBuild works';
+  const s = 128, o = { s, w: 800 };
+  const total = tw(title, o);
+  const x0 = W / 2 - total / 2;
+  const grad = ctx.createLinearGradient(x0, 0, x0 + total, 0);
+  grad.addColorStop(0, '#c4b5fd'); grad.addColorStop(0.5, '#a78bfa'); grad.addColorStop(1, '#5eead4');
+  for (let i = 0; i < title.length; i++) {
+    const p = eout(prog(lt, 0.3 + i * 0.045, 0.9 + i * 0.045));
+    const px = x0 + tw(title.slice(0, i), o);
+    ctx.save(); ctx.globalAlpha *= p;
+    ctx.font = font(o); ctx.textBaseline = 'middle'; ctx.fillStyle = grad;
+    ctx.shadowColor = 'rgba(167,139,250,0.55)'; ctx.shadowBlur = 40;
+    ctx.fillText(title[i], px, 440 + (1 - p) * 40);
+    ctx.restore();
+  }
+  txt('A tour of the build engine, read straight from its source code', W / 2, 560, { s: 36, c: C.dim, al: 'center', a: prog(lt, 1.5, 2.3) });
+  const n = PIPE.length, gap = 230, sx = W / 2 - (gap * (n - 1)) / 2, y = 740;
+  const lp = eio(prog(lt, 2.2, 3.8));
+  ctx.save(); ctx.strokeStyle = 'rgba(139,147,184,0.35)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(sx, y); ctx.lineTo(sx + gap * (n - 1) * lp, y); ctx.stroke(); ctx.restore();
+  PIPE.forEach(([l, c], i) => {
+    const p = eback(prog(lt, 2.3 + i * 0.25, 2.8 + i * 0.25));
+    if (p <= 0) return;
+    dot(sx + i * gap, y, 11 * p, c, { gb: 24 });
+    txt(l, sx + i * gap, y + 46, { s: 24, w: 600, c: C.soft, al: 'center', a: clamp(p) });
+  });
+  // travelling spark
+  const sp = prog(lt, 4.0, 6.2);
+  if (sp > 0 && sp < 1) dot(sx + gap * (n - 1) * eio(sp), y, 6, '#fff', { gb: 30 });
+}
+
+// ---- 1. Command line ----
+function sCLI(lt) {
+  chapter('01', 'The command line', 'src/MSBuild/XMake.cs', lt);
+  const tx = 120, ty = 220, twd = 880, th = 470;
+  const a = prog(lt, 0.2, 0.8);
+  box(tx, ty + (1 - eout(a)) * 30, twd, th, { r: 20, fill: 'rgba(10,14,32,0.95)', stroke: 'rgba(139,147,184,0.3)', a, glow: 'rgba(124,58,237,0.25)', gb: 60 });
+  withAlpha(a, () => {
+    [C.red, C.amber, C.green].forEach((c, i) => dot(tx + 32 + i * 26, ty + 30, 7, c, { glow: false }));
+    txt('zsh — App', tx + twd / 2, ty + 30, { s: 19, c: C.dim, al: 'center' });
+    ctx.fillStyle = 'rgba(139,147,184,0.15)'; ctx.fillRect(tx, ty + 58, twd, 1);
+  });
+  const cmd = 'dotnet build App.csproj -m -bl';
+  const n = Math.floor(cmd.length * prog(lt, 0.9, 2.9));
+  const ly = ty + 110;
+  if (a > 0) {
+    let x = rich([['~/src/App ', C.teal], ['$ ', C.dim]], tx + 36, ly, { s: 27, mono: true, a });
+    x = rich([[cmd.slice(0, n), C.ink]], x, ly, { s: 27, mono: true, a });
+    if (lt < 3.6 && Math.floor(lt * 2.2) % 2 === 0) { ctx.fillStyle = C.ink; ctx.fillRect(x + 2, ly - 16, 14, 32); }
+  }
+  const outs = [
+    [3.3, [['# the dotnet CLI forwards to MSBuild', C.dim]]],
+    [3.9, [['MSBuild.dll ', C.purple], ['-restore -maxcpucount -bl', C.amber]]],
+    [4.3, [['            ', C.ink], ['-consoleloggerparameters:Summary', C.amber]]],
+    [4.7, [['            ', C.ink], ['App.csproj', C.ink]]],
+  ];
+  outs.forEach(([t0, segs], i) => rich(segs, tx + 36, ly + 70 + i * 46, { s: 23, mono: true, a: prog(lt, t0, t0 + 0.4) }));
+
+  // flow on the right
+  const rx = 1150, rw = 650;
+  const b1 = eback(prog(lt, 5.0, 5.6));
+  if (b1 > 0) scaled(rx + rw / 2, 290, 0.9 + 0.1 * b1, () => {
+    box(rx, 230, rw, 120, { a: clamp(b1), stroke: hexA(C.blue, 0.6), glow: hexA(C.blue, 0.25) });
+    txt('XMake.Main(args)', rx + 32, 275, { s: 34, w: 700, mono: false, a: clamp(b1) });
+    txt('entry point · parses switches & response files', rx + 32, 316, { s: 21, c: C.dim, a: clamp(b1) });
+  });
+  curve(tx + twd - 10, ly + 116, 1060, 260, rx - 8, 280, eio(prog(lt, 4.6, 5.3)), { c: hexA(C.blue, 0.7), lw: 3 });
+
+  line(rx + rw / 2, 352, rx + rw / 2, 410, eio(prog(lt, 5.8, 6.2)), { c: C.faint });
+  const pa = prog(lt, 6.1, 6.6);
+  box(rx, 418, rw, 300, { a: pa });
+  txt('Command-line switches → BuildParameters', rx + 32, 456, { s: 22, w: 600, c: C.soft, a: pa });
+  const rows = [['-m', 'MaxNodeCount = cores'], ['-bl', 'BinaryLogger (.binlog)'], ['-restore', 'run Restore first'], ['-p:Configuration=Release', 'global property']];
+  rows.forEach(([k, v], i) => {
+    const p = eout(prog(lt, 6.6 + i * 0.4, 7.1 + i * 0.4));
+    const y = 512 + i * 52;
+    txt(k, rx + 32 + (1 - p) * 20, y, { s: 22, mono: true, c: C.amber, a: p });
+    txt('→', rx + 360, y, { s: 22, c: C.dim, a: p });
+    txt(v, rx + 400, y, { s: 21, c: C.ink, a: p });
+  });
+  line(rx + rw / 2, 720, rx + rw / 2, 776, eio(prog(lt, 8.4, 8.8)), { c: C.faint });
+  const b3 = eback(prog(lt, 8.7, 9.3));
+  if (b3 > 0) scaled(rx + rw / 2, 840, 0.9 + 0.1 * b3, () => {
+    const pulse = 0.5 + 0.5 * Math.sin(lt * 3);
+    box(rx, 784, rw, 116, { a: clamp(b3), fill: 'rgba(76,29,149,0.45)', stroke: C.purple, glow: hexA(C.violet, 0.4 + 0.3 * pulse), gb: 50 });
+    txt('BuildManager', rx + 32, 826, { s: 36, w: 700, a: clamp(b3) });
+    txt('BeginBuild → BuildSubmission → EndBuild', rx + 32, 868, { s: 21, c: C.soft, mono: true, a: clamp(b3) });
+  });
+  captions([
+    [0.3, 5.8, 'It starts with a command: dotnet build forwards its arguments to MSBuild’s entry point, XMake.Main.'],
+    [6.0, 11.7, 'Switches become BuildParameters (node count, loggers, global properties). Then the BuildManager takes over.'],
+  ], lt);
+}
+
+// ---- 2. Project file & imports ----
+const CSPROJ = [
+  '<Project Sdk="Microsoft.NET.Sdk">',
+  '  <PropertyGroup>',
+  '    <TargetFramework>net10.0</TargetFramework>',
+  '    <Nullable>enable</Nullable>',
+  '  </PropertyGroup>',
+  '  <ItemGroup>',
+  '    <PackageReference Include="Humanizer" />',
+  '    <ProjectReference Include="../Lib/Lib.csproj" />',
+  '  </ItemGroup>',
+  '</Project>',
+];
+function sProject(lt) {
+  chapter('02', 'The project file', 'src/Build/Construction/ProjectRootElement.cs', lt);
+  const px = 120, py = 170, pw = 880, ph = 530;
+  const a = prog(lt, 0.2, 0.7);
+  box(px, py, pw, ph, { a, fill: 'rgba(10,14,32,0.94)' });
+  withAlpha(a, () => {
+    box(px + 20, py + 16, 200, 40, { r: 10, fill: 'rgba(96,165,250,0.12)', stroke: hexA(C.blue, 0.5) });
+    txt('App.csproj', px + 40, py + 37, { s: 20, mono: true, c: C.blue });
+  });
+  CSPROJ.forEach((l, i) => {
+    const p = eout(prog(lt, 0.5 + i * 0.2, 0.9 + i * 0.2));
+    txt(String(i + 1).padStart(2, ' '), px + 26, py + 100 + i * 43, { s: 20, mono: true, c: C.faint, a: p });
+    rich(xmlSegs(l), px + 74 + (1 - p) * 16, py + 100 + i * 43, { s: 23, mono: true, a: p });
+  });
+  // Sdk highlight
+  const hp = prog(lt, 3.4, 3.9);
+  if (hp > 0) {
+    const sx = px + 74 + tw('<Project ', { s: 23, mono: true });
+    const sw = tw('Sdk="Microsoft.NET.Sdk"', { s: 23, mono: true });
+    const pulse = 0.5 + 0.5 * Math.sin(lt * 4);
+    box(sx - 8, py + 80, sw + 16, 40, { r: 8, fill: 'rgba(244,114,182,0.10)', stroke: C.pink, lw: 2, a: hp, glow: hexA(C.pink, 0.3 + 0.3 * pulse) });
+  }
+  // SDK resolver pill + tree
+  const rx = 1100;
+  curve(px + 520, py + 80, 950, 150, rx - 10, 220, eio(prog(lt, 3.9, 4.6)), { c: hexA(C.pink, 0.8), lw: 3 });
+  const rp = eback(prog(lt, 4.4, 4.9));
+  if (rp > 0) pill('SdkResolverService  →  Microsoft.NET.Sdk/Sdk', rx, 220, { c: C.pink, s: 22, a: clamp(rp), mono: false });
+
+  const tree = [
+    [0, 'App.csproj', C.ink, '', 700],
+    [1, 'Sdk.props', C.pink, 'implicit import'],
+    [2, 'Microsoft.Common.props', C.blue, '145 lines'],
+    [3, 'Directory.Build.props', C.amber, 'yours, if present'],
+    [1, 'your PropertyGroups & ItemGroups', C.teal, '10 lines'],
+    [1, 'Sdk.targets', C.pink, 'implicit import'],
+    [2, 'Microsoft.CSharp.targets', C.blue, ''],
+    [3, 'Microsoft.Common.CurrentVersion.targets', C.blue, '7,144 lines'],
+  ];
+  const ty0 = 300, rh = 66, ind = 44;
+  const parentOf = i => { for (let j = i - 1; j >= 0; j--) if (tree[j][0] < tree[i][0]) return j; return -1; };
+  tree.forEach(([lvl, name, c, note, w], i) => {
+    const p = eout(prog(lt, 5.0 + i * 0.42, 5.5 + i * 0.42));
+    if (p <= 0) return;
+    const x = rx + lvl * ind, y = ty0 + i * rh;
+    const par = parentOf(i);
+    if (par >= 0) {
+      const pxx = rx + tree[par][0] * ind + 10, pyy = ty0 + par * rh + 18;
+      ctx.save(); ctx.globalAlpha *= p; ctx.strokeStyle = 'rgba(139,147,184,0.35)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(pxx, pyy); ctx.lineTo(pxx, y); ctx.lineTo(x - 6, y); ctx.stroke(); ctx.restore();
+    }
+    dot(x + 4, y, 6, c, { a: p, gb: 10 });
+    txt(name, x + 22 + (1 - p) * 20, y, { s: 25, w: w || 500, c: lvl === 0 ? C.ink : C.soft, a: p, mono: false });
+    if (note) {
+      const big = note.includes('7,144');
+      if (big) pill(note, x + 22, y + 52, { s: 20, w: 700, c: C.amber, a: p, glow: hexA(C.amber, 0.4) });
+      else txt(note, W - 120, y, { s: 19, c: C.dim, al: 'right', a: p });
+    }
+  });
+  // ProjectRootElement
+  const ea = prog(lt, 10.4, 11.0);
+  box(px, 724, pw, 206, { a: ea, fill: 'rgba(76,29,149,0.30)', stroke: hexA(C.purple, 0.6) });
+  txt('ProjectRootElement', px + 30, 764, { s: 30, w: 700, a: ea });
+  txt('the parsed XML: one per file, cached in ProjectRootElementCache', px + 30, 802, { s: 20, c: C.dim, a: ea });
+  let chx = px + 30, chy = 846;
+  [['ProjectPropertyGroupElement', C.purple], ['ProjectItemGroupElement', C.teal], ['ProjectImportElement', C.pink], ['ProjectTargetElement', C.amber]].forEach(([l, c], i) => {
+    const p = eout(prog(lt, 11.0 + i * 0.3, 11.5 + i * 0.3));
+    const w = tw(l, { s: 16, mono: true, w: 500 }) + 24;
+    if (chx + w > px + pw - 20) { chx = px + 30; chy += 44; }
+    pill(l, chx, chy, { s: 16, mono: true, c, a: p, px: 12, h: 36 });
+    chx += w + 10;
+  });
+  captions([
+    [0.3, 4.4, 'A project is just XML. MSBuild parses it into a ProjectRootElement: the construction object model.'],
+    [4.6, 10.2, 'The Sdk attribute is resolved by SDK resolvers into implicit imports, before and after your own lines.'],
+    [10.4, 15.6, 'Your ten lines get wrapped by thousands. Microsoft.Common.CurrentVersion.targets alone is 7,144 lines.'],
+  ], lt);
+}
+
+// ---- 3. Evaluation ----
+const PASSES = [
+  ['Initial properties', C.blue], ['Properties & imports', C.purple], ['Item definitions', C.teal],
+  ['Items', C.green], ['UsingTasks', C.amber], ['Targets', C.pink]
+];
+const PSTART = i => 1.2 + i * 3.4;
+function sEval(lt) {
+  chapter('03', 'Evaluation', 'src/Build/Evaluation/Evaluator.cs', lt);
+  const k = eio(prog(lt, 21.8, 23.2));
+  // pass cards
+  const cw = 255, cg = 22, cx0 = (W - (cw * 6 + cg * 5)) / 2, cy = 160, ch = 118;
+  withAlpha(1 - k, () => {
+    PASSES.forEach(([name, c], i) => {
+      const a = eout(prog(lt, 0.3 + i * 0.1, 0.8 + i * 0.1));
+      const s = PSTART(i), e = PSTART(i + 1);
+      const active = lt >= s && lt < e, done = lt >= e;
+      const x = cx0 + i * (cw + cg), y = cy + (1 - a) * 20;
+      const pulse = 0.5 + 0.5 * Math.sin(lt * 5);
+      box(x, y, cw, ch, { a, r: 16, fill: active ? hexA(c, 0.16) : 'rgba(18,25,54,0.8)', stroke: active ? c : done ? hexA(c, 0.45) : 'rgba(139,147,184,0.18)', lw: active ? 2.5 : 1.5, glow: active ? hexA(c, 0.25 + 0.2 * pulse) : null, gb: 34 });
+      txt('PASS ' + i, x + 22, y + 34, { s: 17, w: 700, c: active || done ? c : C.faint, ls: 3, a });
+      txt(name, x + 22, y + 76, { s: 23, w: 600, c: active ? C.ink : done ? C.soft : C.dim, a });
+      if (done) check(x + cw - 32, y + 34, 22, c, a);
+      if (active) { const pp = prog(lt, s, e); ctx.save(); ctx.globalAlpha *= a; ctx.fillStyle = c; ctx.fillRect(x + 16, y + ch - 10, (cw - 32) * pp, 3); ctx.restore(); }
+    });
+  });
+  // data panels
+  const PX = 150, PY = 330, PH = 560;
+  scaled(W / 2, 600, 1 - 0.8 * k, () => withAlpha(1 - k, () => {
+    const a = prog(lt, 0.9, 1.5);
+    box(PX, PY, 560, PH, { a });
+    box(PX + 590, PY, 560, PH, { a });
+    box(PX + 1180, PY, 440, 260, { a });
+    box(PX + 1180, PY + 290, 440, 270, { a });
+    txt('Properties', PX + 28, PY + 38, { s: 24, w: 700, c: C.purple, a });
+    txt('Items', PX + 618, PY + 38, { s: 24, w: 700, c: C.green, a });
+    txt('Task registry', PX + 1208, PY + 38, { s: 24, w: 700, c: C.amber, a });
+    txt('Targets', PX + 1208, PY + 328, { s: 24, w: 700, c: C.pink, a });
+    // properties
+    const props = [
+      [PSTART(0) + 0.5, 'MSBuildProjectName', 'App', 'reserved', C.blue],
+      [PSTART(0) + 1.1, 'HOME', '/home/dev', 'env', C.dim],
+      [PSTART(0) + 1.7, 'Configuration', 'Release', 'global', C.amber],
+      [PSTART(1) + 0.3, 'TargetFramework', 'net10.0', '', C.purple],
+      [PSTART(1) + 0.9, 'AssemblyName', ['$(MSBuildProjectName)', 'App'], '', C.purple],
+      [PSTART(1) + 1.6, 'OutputPath', ['bin/$(Configuration)/', 'bin/Release/'], '', C.purple],
+    ];
+    props.forEach(([t0, key, val, tag, tc], i) => {
+      const p = eout(prog(lt, t0, t0 + 0.4));
+      if (p <= 0) return;
+      const y = PY + 100 + i * 60;
+      txt(key, PX + 28 + (1 - p) * 20, y, { s: 21, mono: true, c: C.soft, a: p });
+      let v = val;
+      if (Array.isArray(val)) {
+        const ex = prog(lt, t0 + 0.6, t0 + 1.0);
+        v = ex < 0.5 ? val[0] : val[1];
+        const ea = ex < 0.5 ? 1 - ex * 2 : (ex - 0.5) * 2;
+        txt('= ' + v, PX + 300, y, { s: 21, mono: true, c: ex < 0.5 ? C.amber : C.ink, a: p * (0.3 + 0.7 * ea) });
+        if (ex > 0 && ex < 1) dot(PX + 300 + 30, y, 4 + 8 * Math.sin(ex * Math.PI), C.purple, { a: 0.8 });
+      } else txt('= ' + v, PX + 300, y, { s: 21, mono: true, c: C.ink, a: p });
+      if (tag) pill(tag, PX + 560 - 24 - tw(tag, { s: 16, w: 600 }) - 20, y, { s: 16, w: 600, c: tc === C.dim ? C.gray : tc, a: p, px: 10, h: 28 });
+    });
+    // precedence demo
+    const gt = PSTART(1) + 2.3;
+    const gp = eout(prog(lt, gt, gt + 0.4)), gs = prog(lt, gt + 0.7, gt + 1.1), gf = 1 - prog(lt, gt + 2.2, gt + 2.7);
+    if (gp > 0 && gf > 0) {
+      const y = PY + 100 + 6 * 60;
+      withAlpha(gp * gf, () => {
+        txt('Configuration', PX + 28, y, { s: 21, mono: true, c: C.dim });
+        txt('= Debug', PX + 300, y, { s: 21, mono: true, c: C.dim });
+        ctx.fillStyle = C.red; ctx.fillRect(PX + 24, y, (tw('Configuration = Debug   ', { s: 21, mono: true }) + 40) * gs, 2.5);
+        if (gs > 0.9) txt('global property wins', PX + 536, y, { s: 17, w: 600, c: C.amber, al: 'right' });
+      });
+    }
+    // item definitions
+    const idt = PSTART(2) + 0.4, idp = eout(prog(lt, idt, idt + 0.5));
+    if (idp > 0) {
+      box(PX + 618, PY + 72, 504, 74, { r: 12, fill: hexA(C.teal, 0.10), stroke: hexA(C.teal, 0.5), a: idp });
+      txt('ItemDefinitionGroup · ProjectReference', PX + 638, PY + 96, { s: 18, w: 600, c: C.teal, a: idp });
+      txt('ReferenceSourceTarget = ProjectReference', PX + 638, PY + 124, { s: 18, mono: true, c: C.soft, a: idp });
+    }
+    // items
+    const it = PSTART(3);
+    const gpp = eout(prog(lt, it + 0.2, it + 0.6));
+    rich([['<Compile ', C.blue], ['Include', C.pink], ['="**/*.cs"', C.amber], [' />', C.dim]], PX + 618, PY + 186, { s: 20, mono: true, a: gpp });
+    txt('implicit, from the SDK', PX + 618, PY + 216, { s: 16, c: C.dim, a: gpp });
+    const files = ['Program.cs', 'Greeter.cs', 'Models/User.cs', 'Services/Clock.cs'];
+    files.forEach((f, i) => {
+      const p = eback(prog(lt, it + 0.8 + i * 0.22, it + 1.2 + i * 0.22));
+      if (p <= 0) return;
+      const col = i % 2, row = Math.floor(i / 2);
+      const x = lerp(PX + 700, PX + 618 + col * 254, clamp(p)), y = lerp(PY + 186, PY + 262 + row * 52, clamp(p));
+      pill(f, x, y, { s: 18, mono: true, c: C.green, a: clamp(p), px: 12, h: 38 });
+    });
+    const ex = eout(prog(lt, it + 1.8, it + 2.2)), exs = prog(lt, it + 2.3, it + 2.7);
+    if (ex > 0) {
+      const y = PY + 370;
+      const w = pill('obj/App.AssemblyInfo.cs', PX + 618, y, { s: 18, mono: true, c: C.gray, a: ex * (1 - 0.5 * exs), px: 12, h: 38 });
+      withAlpha(ex, () => { ctx.fillStyle = C.red; ctx.fillRect(PX + 618, y, w * exs, 2.5); });
+      txt('DefaultItemExcludes', PX + 1122, y, { s: 16, c: C.red, al: 'right', a: exs });
+    }
+    const prp = eout(prog(lt, it + 2.6, it + 3.0));
+    if (prp > 0) {
+      pill('ProjectReference  ../Lib/Lib.csproj', PX + 618, PY + 438, { s: 18, mono: true, c: C.blue, a: prp, px: 12, h: 38 });
+      // metadata copied from definition
+      const mp = eio(prog(lt, it + 3.0, it + 3.6));
+      if (mp > 0) {
+        const [mx, my] = qpt(PX + 860, PY + 140, PX + 1150, PY + 300, PX + 900, PY + 475, mp);
+        if (mp < 1) dot(mx, my, 6, C.teal);
+        withAlpha(prog(mp, 0.85, 1), () => txt('+ ReferenceSourceTarget', PX + 640, PY + 488, { s: 17, mono: true, c: C.teal }));
+      }
+    }
+    // task registry
+    const ut = PSTART(4);
+    [['Csc', 'Microsoft.Build.Tasks.CodeAnalysis.dll'], ['Copy', 'Microsoft.Build.Tasks.Core.dll'], ['Message', 'Microsoft.Build.Tasks.Core.dll']].forEach(([n, asm], i) => {
+      const p = eout(prog(lt, ut + 0.3 + i * 0.5, ut + 0.7 + i * 0.5));
+      const y = PY + 96 + i * 56;
+      txt(n, PX + 1208 + (1 - p) * 16, y, { s: 20, mono: true, w: 700, c: C.amber, a: p });
+      txt(asm, PX + 1208 + 112, y, { s: 15, mono: true, c: C.dim, a: p });
+    });
+    // targets
+    const tt = PSTART(5);
+    const tnames = ['Build', 'CoreBuild', 'ResolveReferences', 'CoreCompile', 'CopyFilesToOutputDirectory'];
+    // targets layout as wrapped chips
+    let xx = PX + 1208, yy = PY + 384;
+    tnames.forEach((n, i) => {
+      const p = eout(prog(lt, tt + 0.3 + i * 0.3, tt + 0.7 + i * 0.3));
+      const w = tw(n, { s: 17, mono: true, w: 500 }) + 24;
+      if (xx + w > PX + 1600) { xx = PX + 1208; yy += 50; }
+      pill(n, xx, yy, { s: 17, mono: true, c: C.pink, a: p, px: 12, h: 36 });
+      xx += w + 10;
+    });
+    txt('+163 more in Microsoft.Common.CurrentVersion.targets alone', PX + 1208, yy + 62, { s: 16, c: C.dim, a: prog(lt, tt + 2.0, tt + 2.5) });
+    txt('read, not run: target bodies are evaluated at build time', PX + 1208, yy + 92, { s: 16, c: C.pink, a: prog(lt, tt + 2.4, tt + 2.9) });
+  }));
+  // ProjectInstance
+  const pp = eback(prog(lt, 22.8, 23.6));
+  if (pp > 0) scaled(W / 2, 560, 0.6 + 0.4 * pp, () => {
+    const pulse = 0.5 + 0.5 * Math.sin(lt * 3);
+    box(W / 2 - 520, 430, 1040, 260, { r: 28, a: clamp(pp), fill: 'rgba(76,29,149,0.42)', stroke: C.purple, lw: 2, glow: hexA(C.violet, 0.45 + 0.25 * pulse), gb: 80 });
+    txt('ProjectInstance', W / 2, 525, { s: 72, w: 800, al: 'center', a: clamp(pp) });
+    txt('properties · items · item definitions · task registry · targets', W / 2, 610, { s: 26, c: C.soft, al: 'center', a: clamp(pp) });
+  });
+  captions([
+    [0.3, 4.4, 'Evaluation turns XML into data, in six ordered passes over the project and all of its imports.'],
+    [4.6, 8.0, 'Properties are evaluated first, in file order. Global properties override anything the project sets.'],
+    [8.0, 11.4, 'Pass 2 records item definitions: default metadata that every item of that type inherits.'],
+    [11.4, 14.8, 'Items are evaluated lazily. Include globs hit the file system; Remove and Update apply in order.'],
+    [14.8, 18.2, 'UsingTask elements fill the task registry: which assembly implements each task name.'],
+    [18.2, 21.8, 'Targets are read, but not run. Conditions inside them wait until build time.'],
+    [22.0, 26.8, 'The result is a ProjectInstance: an evaluated snapshot, ready to be built.'],
+  ], lt);
+}
+
+// ---- 4. Scheduling ----
+function sSched(lt) {
+  chapter('04', 'Scheduling across nodes', 'src/Build/BackEnd/Components/Scheduler/Scheduler.cs', lt);
+  const BM = [110, 470, 330, 140], SC = [610, 380, 380, 170], RC = [610, 700, 380, 130];
+  const NX = 1250, NW = 560, NH = 122, NY = [200, 360, 520, 680];
+  const a0 = eback(prog(lt, 0.2, 0.8)), a1 = eback(prog(lt, 0.6, 1.2)), a2 = eback(prog(lt, 1.0, 1.6));
+  // pipes
+  NY.forEach((ny, i) => {
+    const p = eio(prog(lt, 4.0 + i * 0.5, 4.6 + i * 0.5));
+    curve(SC[0] + SC[2], SC[1] + 85, NX - 150, ny + 61, NX, ny + 61, p, { c: 'rgba(139,147,184,0.30)', lw: 2, head: false, dash: i ? [10, 10] : null, off: -lt * 30 });
+  });
+  line(BM[0] + BM[2], BM[1] + 70, SC[0], SC[1] + 85, eio(prog(lt, 1.0, 1.5)), { c: 'rgba(139,147,184,0.3)', head: false });
+  line(SC[0] + SC[2] / 2, SC[1] + SC[3], RC[0] + RC[2] / 2, RC[1], eio(prog(lt, 1.4, 1.9)), { c: 'rgba(139,147,184,0.3)', head: false });
+  if (a0 > 0) scaled(BM[0] + BM[2] / 2, BM[1] + 70, 0.9 + 0.1 * a0, () => {
+    box(...BM, { a: clamp(a0), fill: 'rgba(76,29,149,0.40)', stroke: C.purple });
+    txt('BuildManager', BM[0] + 28, BM[1] + 52, { s: 30, w: 700, a: clamp(a0) });
+    txt('main node', BM[0] + 28, BM[1] + 94, { s: 20, c: C.soft, a: clamp(a0) });
+  });
+  if (a1 > 0) scaled(SC[0] + SC[2] / 2, SC[1] + 85, 0.9 + 0.1 * a1, () => {
+    box(...SC, { a: clamp(a1), stroke: C.teal, glow: hexA(C.teal, 0.2) });
+    txt('Scheduler', SC[0] + 28, SC[1] + 56, { s: 32, w: 700, a: clamp(a1) });
+    txt('assigns requests to idle nodes,', SC[0] + 28, SC[1] + 102, { s: 20, c: C.soft, a: clamp(a1) });
+    txt('tracks who is blocked on whom', SC[0] + 28, SC[1] + 132, { s: 20, c: C.soft, a: clamp(a1) });
+  });
+  if (a2 > 0) scaled(RC[0] + RC[2] / 2, RC[1] + 65, 0.9 + 0.1 * a2, () => {
+    box(...RC, { a: clamp(a2) });
+    txt('ConfigCache · ResultsCache', RC[0] + 28, RC[1] + 48, { s: 24, w: 700, c: C.green, a: clamp(a2) });
+    txt('every (project, target) is built only once', RC[0] + 28, RC[1] + 88, { s: 18, c: C.dim, a: clamp(a2) });
+  });
+  // nodes state
+  const nodeState = i => {
+    if (i === 0) {
+      if (lt < 8.6) return ['idle', C.faint];
+      if (lt < 10.3) return ['App.csproj  ·  ResolveProjectReferences', C.blue];
+      if (lt < 20.8) return ['App.csproj  ·  blocked on references', C.amber];
+      if (lt < 23.2) return ['App.csproj  ·  CoreCompile', C.blue];
+      return ['idle  ·  done', C.green];
+    }
+    if (i === 1) { if (lt < 13.4) return ['idle', C.faint]; if (lt < 17.6) return ['Lib.csproj  ·  Build', C.blue]; return ['idle', C.faint]; }
+    if (i === 2) { if (lt < 13.8) return ['idle', C.faint]; if (lt < 18.4) return ['Core.csproj  ·  Build', C.blue]; return ['idle', C.faint]; }
+    return ['idle  ·  kept alive for reuse', C.faint];
+  };
+  NY.forEach((ny, i) => {
+    const p = eback(prog(lt, 4.3 + i * 0.5, 4.9 + i * 0.5));
+    if (p <= 0) return;
+    const [st, sc] = nodeState(i);
+    const busy = sc === C.blue, blocked = sc === C.amber;
+    scaled(NX + NW / 2, ny + NH / 2, 0.9 + 0.1 * p, () => {
+      box(NX, ny, NW, NH, { a: clamp(p), stroke: busy ? C.blue : blocked ? C.amber : sc === C.green ? hexA(C.green, 0.7) : 'rgba(139,147,184,0.25)', lw: busy || blocked ? 2.2 : 1.5, glow: busy ? hexA(C.blue, 0.3) : blocked ? hexA(C.amber, 0.25) : null });
+      txt(`Node ${i + 1}`, NX + 26, ny + 40, { s: 26, w: 700, a: clamp(p) });
+      txt(i === 0 ? 'in-proc, inside the main process' : 'worker process · MSBuild.exe /nodemode:1', NX + 140, ny + 41, { s: 17, c: C.dim, a: clamp(p) });
+      dot(NX + 34, ny + 86, 6, sc, { a: clamp(p), glow: busy || blocked });
+      txt(st, NX + 54, ny + 86, { s: 20, mono: true, c: busy ? C.ink : blocked ? C.amber : sc === C.green ? C.green : C.dim, a: clamp(p) });
+      if (busy) { // shimmer
+        const sx = NX + ((lt * 400) % (NW + 200)) - 100;
+        ctx.save(); rr(NX, ny, NW, NH, 18); ctx.clip();
+        const g = ctx.createLinearGradient(sx - 100, 0, sx + 100, 0);
+        g.addColorStop(0, 'rgba(96,165,250,0)'); g.addColorStop(0.5, 'rgba(96,165,250,0.10)'); g.addColorStop(1, 'rgba(96,165,250,0)');
+        ctx.fillStyle = g; ctx.fillRect(NX, ny, NW, NH); ctx.restore();
+      }
+    });
+  });
+  // tokens
+  const S = [SC[0] + SC[2], SC[1] + 85];
+  const nIn = i => [NX, NY[i] + 61];
+  const travel = (label, c, t0, t1, path) => {
+    const p = prog(lt, t0, t1); if (p <= 0 || p >= 1) return;
+    const [x, y] = qpt(...path, eio(p)); token(label, x, y, c, clamp(p * 6) * clamp((1 - p) * 6), 19);
+  };
+  const SCC = [SC[0] + SC[2] / 2, SC[1] + 85];
+  travel('App.csproj', C.purple, 2.2, 3.6, [BM[0] + BM[2] / 2, BM[1] + 70, 520, 380, ...SCC]);
+  travel('App.csproj', C.purple, 7.2, 8.6, [...SCC, NX - 200, NY[0] + 20, ...nIn(0)]);
+  travel('Lib.csproj', C.blue, 10.3, 11.8, [...nIn(0), 1080, 300, ...SCC]);
+  travel('Core.csproj', C.blue, 10.6, 12.1, [...nIn(0), 1060, 240, ...SCC]);
+  travel('Lib.csproj', C.blue, 12.2, 13.4, [...SCC, NX - 150, NY[1] + 61, ...nIn(1)]);
+  travel('Core.csproj', C.blue, 12.6, 13.8, [...SCC, NX - 150, NY[2] + 61, ...nIn(2)]);
+  const RCC = [RC[0] + RC[2] / 2, RC[1] + 65];
+  travel('✓ Lib results', C.green, 17.6, 18.9, [...nIn(1), 1050, 760, ...RCC]);
+  travel('✓ Core results', C.green, 18.4, 19.7, [...nIn(2), 1080, 800, ...RCC]);
+  travel('✓ results', C.green, 19.6, 20.8, [...RCC, 1150, 300, ...nIn(0)]);
+  travel('✓ App built', C.green, 23.2, 24.6, [...nIn(0), 700, 250, BM[0] + BM[2] / 2, BM[1] + 70]);
+  captions([
+    [0.3, 4.0, 'The BuildManager wraps the project in a BuildRequest and gives it to the Scheduler.'],
+    [4.0, 7.2, 'With -m, MSBuild launches worker nodes: separate processes, talking over named pipes.'],
+    [7.4, 12.1, 'App’s targets call the MSBuild task on its ProjectReferences. That submits new requests and blocks App.'],
+    [12.2, 17.6, 'The Scheduler hands the new requests to idle nodes, and they build in parallel.'],
+    [17.7, 21.6, 'Results land in the results cache, so no project and target is ever built twice.'],
+    [21.8, 25.8, 'Unblocked, App resumes exactly where it left off. Idle workers stay alive for the next build.'],
+  ], lt);
+}
+
+// ---- 5. Targets ----
+const TROWS = [
+  [0, 'Build'], [1, 'BeforeBuild'], [1, 'CoreBuild'], [2, 'PrepareForBuild'], [2, 'ResolveReferences'], [2, 'Compile'],
+  [3, 'ResolveReferences'], [3, 'MyCodeGen', 'BeforeTargets="CoreCompile"'], [3, 'CoreCompile'], [2, 'CopyFilesToOutputDirectory'],
+  [1, 'AfterBuild'], [0, 'ZipOutput', 'AfterTargets="Build"'],
+];
+const TEV = (() => {
+  const ev = []; let t = 2.4;
+  const push = (ids, parent, why) => { ev.push({ t, type: 'push', ids, parent, why }); t += 0.75; };
+  const run = (id, d = 0.6) => { ev.push({ t, type: 'run', id, d }); t += d + 0.3; };
+  const cached = id => { ev.push({ t, type: 'cached', id, d: 0.8 }); t += 1.1; };
+  push([0], null);
+  push([10, 2, 1], 0, 'DependsOnTargets');
+  run(1);
+  push([9, 5, 4, 3], 2, 'DependsOnTargets');
+  run(3); run(4);
+  push([8, 6], 5, 'DependsOnTargets');
+  cached(6);
+  push([7], 8, 'BeforeTargets');
+  run(7); run(8, 1.0); run(5, 0.4); run(9); run(2, 0.4); run(10, 0.4); run(0, 0.4);
+  push([11], null, 'AfterTargets');
+  run(11);
+  ev.end = t;
+  return ev;
+})();
+function targetSim(lt) {
+  const status = TROWS.map(() => 'pending');
+  let stack = []; const leaving = []; const entering = {};
+  let note = null;
+  for (const e of TEV) {
+    if (lt < e.t) break;
+    if (e.type === 'push') {
+      e.ids.forEach((id, j) => { stack.push(id); status[id] = 'queued'; entering[id] = e.t + j * 0.09; });
+      if (e.parent !== null) status[e.parent] = 'deps';
+      if (e.why) note = [e.why, e.t, e.parent];
+    } else {
+      status[e.id] = e.type === 'cached' ? 'cachedrun' : 'running';
+      if (lt >= e.t + e.d) {
+        status[e.id] = e.type === 'cached' ? 'cached' : 'done';
+        stack = stack.filter(x => x !== e.id);
+        leaving.push([e.id, prog(lt, e.t + e.d, e.t + e.d + 0.35), stack.length]);
+      }
+    }
+  }
+  return { status, stack, leaving, entering, note };
+}
+function sTargets(lt) {
+  chapter('05', 'Targets', 'src/Build/BackEnd/Components/RequestBuilder/TargetBuilder.cs', lt);
+  const st = lt < 2.4 ? lt : 2.4 + (lt - 2.4) / 1.25;
+  const { status, stack, leaving, entering, note } = targetSim(st);
+  const X0 = 130, Y0 = 200, RH = 57, IND = 46;
+  const a = prog(lt, 0.3, 0.9);
+  TROWS.forEach(([lvl, name, hook], i) => {
+    const p = eout(prog(lt, 0.4 + i * 0.07, 0.9 + i * 0.07));
+    const st = status[i];
+    const x = X0 + lvl * IND, y = Y0 + i * RH;
+    const c = { pending: C.faint, queued: C.blue, deps: C.amber, running: C.blue, done: C.green, cached: C.gray, cachedrun: C.gray }[st];
+    const isHook = !!hook;
+    const w = tw(name, { s: 23, w: 600, mono: true }) + 44;
+    const run = st === 'running';
+    const pulse = 0.5 + 0.5 * Math.sin(lt * 8);
+    box(x, y - 22, w, 44, { r: 12, a: p, fill: run ? hexA(C.blue, 0.25) : st === 'done' ? hexA(C.green, 0.10) : 'rgba(18,25,54,0.85)', stroke: isHook ? C.pink : st === 'pending' ? 'rgba(139,147,184,0.2)' : c, lw: run ? 2.5 : 1.5, glow: run ? hexA(C.blue, 0.3 + 0.3 * pulse) : null, gb: 24 });
+    txt(name, x + 22, y, { s: 23, w: 600, mono: true, c: st === 'pending' ? C.dim : st === 'cached' ? C.gray : C.ink, a: p });
+    let sx = x + w + 18;
+    if (hook) { txt(hook, sx, y, { s: 18, mono: true, c: C.pink, a: p }); sx += tw(hook, { s: 18, mono: true }) + 18; }
+    const label = { queued: 'on stack', deps: 'waiting on dependencies', running: 'executing tasks…', done: '✓', cached: '↺ already built, skipped', cachedrun: '↺ already built, skipped' }[st];
+    if (label) txt(label, sx, y, { s: st === 'done' ? 24 : 18, w: 600, c: st === 'done' ? C.green : c, a: p });
+  });
+  // stack
+  const SX = 1290, SW = 500, EH = 54, BASE = 900;
+  txt('TargetBuilder stack', SX, 200, { s: 26, w: 700, c: C.soft, a });
+  txt('of TargetEntry, top runs next', SX, 236, { s: 19, c: C.dim, a });
+  withAlpha(a, () => { ctx.fillStyle = 'rgba(139,147,184,0.35)'; ctx.fillRect(SX - 10, BASE + 8, SW + 20, 3); });
+  stack.forEach((id, j) => {
+    const ep = eout(prog(st, entering[id] ?? 0, (entering[id] ?? 0) + 0.35));
+    const y = BASE - (j + 1) * (EH + 8) - (1 - ep) * 60;
+    const ss = status[id];
+    const run = ss === 'running' || ss === 'cachedrun';
+    const c = run ? (ss === 'cachedrun' ? C.gray : C.blue) : ss === 'deps' ? C.amber : TROWS[id][2] ? C.pink : C.purple;
+    box(SX, y, SW, EH, { r: 12, a: ep, fill: hexA(c, run ? 0.28 : 0.13), stroke: c, lw: run ? 2.5 : 1.5, glow: run ? hexA(c, 0.4) : null });
+    txt(TROWS[id][1], SX + 22, y + EH / 2, { s: 22, w: 600, mono: true, a: ep });
+    const tag = ss === 'deps' ? 'Dependencies' : run ? 'Execution' : '';
+    if (tag) txt(tag, SX + SW - 20, y + EH / 2, { s: 17, w: 600, c, al: 'right', a: ep });
+  });
+  leaving.forEach(([id, lp, j]) => {
+    if (lp >= 1) return;
+    const y = BASE - (j + 1) * (EH + 8) - 0;
+    box(SX + lp * 120, y - lp * 20, SW, EH, { r: 12, a: 1 - lp, fill: hexA(C.green, 0.2), stroke: C.green });
+    txt(TROWS[id][1], SX + 22 + lp * 120, y + EH / 2 - lp * 20, { s: 22, w: 600, mono: true, a: 1 - lp });
+  });
+  if (note) {
+    const [why, t0] = note;
+    const na = env(st, t0, t0 + 1.6, 0.25);
+    const c = why === 'DependsOnTargets' ? C.amber : C.pink;
+    if (na > 0) pill('push ← ' + why, SX, 300, { s: 20, mono: true, c, a: na });
+  }
+  const done = prog(st, TEV.end + 0.1, TEV.end + 0.6);
+  if (done > 0) pill('✓  stack empty, request complete', SX, 300, { s: 22, w: 700, c: C.green, a: done, glow: hexA(C.green, 0.4) });
+  captions([
+    [0.3, 3.3, 'Executing a request means running targets. The TargetBuilder keeps a stack of TargetEntry objects.'],
+    [3.4, 9.4, 'Before a target runs, its DependsOnTargets are pushed on top of it, so they run first.'],
+    [9.5, 12.6, 'A target runs at most once per build. Asking for it again just reuses its result.'],
+    [12.7, 18.9, 'BeforeTargets and AfterTargets let any project hook into the chain without editing it.'],
+    [19.0, 23.6, 'When the stack is empty, the request is done and its results go back to the Scheduler.'],
+  ], lt);
+}
+
+// ---- 6. Incremental ----
+function sIncr(lt) {
+  chapter('06', 'Incremental builds', 'src/Build/BackEnd/Components/RequestBuilder/TargetUpToDateChecker.cs', lt);
+  const a = prog(lt, 0.2, 0.8);
+  box(120, 160, W - 240, 92, { a, fill: 'rgba(10,14,32,0.9)' });
+  rich([['<Target ', C.blue], ['Name', C.pink], ['="CoreCompile" ', C.amber], ['Inputs', C.pink], ['="@(Compile);@(ReferencePath)" ', C.amber], ['Outputs', C.pink], ['="@(IntermediateAssembly)"', C.amber], ['>', C.dim]], 150, 206, { s: 24, mono: true, a });
+  const edited = prog(lt, 7.0, 7.5);
+  const rebuilt = prog(lt, 10.6, 11.1);
+  const inputs = [['Program.cs', '10:02'], ['Greeter.cs', edited > 0.5 ? '10:12' : '10:05'], ['Models/User.cs', '09:58'], ['Lib.dll', '10:01']];
+  txt('Inputs', 160, 310, { s: 22, w: 700, c: C.dim, ls: 2, a });
+  inputs.forEach(([f, ts], i) => {
+    const p = eout(prog(lt, 0.6 + i * 0.2, 1.0 + i * 0.2));
+    const y = 370 + i * 74;
+    const hot = i === 1 && edited > 0;
+    box(160, y - 28, 620, 56, { r: 12, a: p, stroke: hot ? C.red : 'rgba(139,147,184,0.22)', glow: hot ? hexA(C.red, 0.35 * (0.6 + 0.4 * Math.sin(lt * 6))) : null });
+    txt(f, 186, y, { s: 22, mono: true, a: p });
+    txt(ts, 760, y, { s: 22, mono: true, c: hot ? C.red : C.soft, al: 'right', a: p });
+    if (i === 1 && edited > 0 && edited < 1) txt('✎ edited', 640, y - 40, { s: 18, w: 700, c: C.red, a: Math.sin(edited * Math.PI) });
+  });
+  txt('Outputs', 1140, 310, { s: 22, w: 700, c: C.dim, ls: 2, a });
+  const op = eout(prog(lt, 1.2, 1.6));
+  const flash = rebuilt > 0 && rebuilt < 1 ? Math.sin(rebuilt * Math.PI) : 0;
+  box(1140, 342, 640, 56, { r: 12, a: op, stroke: flash ? C.green : 'rgba(139,147,184,0.22)', glow: flash ? hexA(C.green, 0.6 * flash) : null });
+  txt('obj/Release/net10.0/App.dll', 1166, 370, { s: 22, mono: true, a: op });
+  txt(rebuilt > 0.5 ? '10:13' : '10:07', 1760, 370, { s: 22, mono: true, c: rebuilt > 0.5 ? C.green : C.soft, al: 'right', a: op });
+  // comparison
+  const cmpA = prog(lt, 2.0, 2.6);
+  const stale = edited > 0.5 && rebuilt < 0.5;
+  const cc = stale ? C.red : C.green;
+  const CX = 1460;
+  txt('newest input', CX - 110, 480, { s: 20, c: C.dim, al: 'center', a: cmpA });
+  txt('oldest output', CX + 110, 480, { s: 20, c: C.dim, al: 'center', a: cmpA });
+  txt(stale ? '10:12  >  10:07' : rebuilt > 0.5 ? '10:12  <  10:13' : '10:05  <  10:07', CX, 535, { s: 44, w: 700, mono: true, c: cc, al: 'center', a: cmpA, glow: hexA(cc, 0.5) });
+  txt(stale ? 'out of date' : 'up to date', CX, 595, { s: 22, w: 700, c: cc, al: 'center', a: cmpA, ls: 2 });
+  // verdict
+  const res = ['SkipUpToDate', 'SkipNoInputs', 'SkipNoOutputs', 'IncrementalBuild', 'FullBuild'];
+  const cur = lt < 7.4 ? 0 : lt < 10.6 ? 4 : 0;
+  const va = prog(lt, 2.8, 3.3);
+  txt('DependencyAnalysisResult', 160, 680, { s: 20, w: 700, c: C.dim, ls: 2, a: va });
+  let x = 160;
+  res.forEach((r, i) => {
+    const on = i === cur && (lt < 7.4 ? lt > 3.0 : true);
+    const c = i === 0 ? C.green : i === 4 ? C.amber : C.purple;
+    const w = pill(r, x, 735, { s: 22, mono: true, w: 600, c: on ? c : C.gray, a: va * (on ? 1 : 0.55), glow: on ? hexA(c, 0.5) : null, gb: 24 });
+    x += w + 16;
+  });
+  const msgA = env(lt, 3.4, 7.2, 0.3), runA = env(lt, 7.8, 10.6, 0.3), msgB = prog(lt, 11.2, 11.6);
+  txt('Skipping target "CoreCompile" because all output files are up-to-date with respect to the input files.', 160, 830, { s: 21, mono: true, c: C.green, a: Math.max(msgA, msgB) });
+  if (runA > 0) {
+    rich([['Building target "CoreCompile" completely.  ', C.amber], ['Input file "Greeter.cs" is newer than output file "App.dll".', C.soft]], 160, 830, { s: 21, mono: true, a: runA });
+    // progress
+    const rp = prog(lt, 8.4, 10.6);
+    box(160, 870, 1600, 10, { r: 5, fill: 'rgba(139,147,184,0.15)', stroke: null, a: runA });
+    box(160, 870, 1600 * rp, 10, { r: 5, fill: C.amber, stroke: null, a: runA, glow: C.amber, gb: 14 });
+  }
+  captions([
+    [0.3, 6.9, 'Targets that declare Inputs and Outputs are checked before they run, by comparing file timestamps.'],
+    [7.0, 10.6, 'Edit one source file and its timestamp is newer than the output, so the target runs again.'],
+    [10.7, 13.8, 'When inputs map 1:1 to outputs, IncrementalBuild reruns the target only for the stale items.'],
+  ], lt);
+}
+
+// ---- 7. Tasks ----
+function sTasks(lt) {
+  chapter('07', 'Tasks', 'src/Build/BackEnd/TaskExecutionHost/TaskExecutionHost.cs', lt);
+  const a = prog(lt, 0.2, 0.8);
+  box(120, 160, 800, 230, { a, fill: 'rgba(10,14,32,0.92)' });
+  const code = [
+    '<Target Name="CoreCompile">',
+    '  <Csc Sources="@(Compile)"',
+    '       References="@(ReferencePath)"',
+    '       OutputAssembly="@(IntermediateAssembly)" />',
+    '</Target>'];
+  code.forEach((l, i) => rich(xmlSegs(l), 150, 205 + i * 38, { s: 21, mono: true, a: prog(lt, 0.4 + i * 0.12, 0.8 + i * 0.12) }));
+  // pipeline
+  const PX = 1000, PW = 800;
+  const hA = prog(lt, 1.4, 1.9);
+  txt('TaskExecutionHost', PX, 182, { s: 28, w: 700, c: C.pink, a: hA });
+  const steps = [
+    ['Find', '“Csc” in the TaskRegistry'],
+    ['Load', 'Microsoft.Build.Tasks.CodeAnalysis.dll'],
+    ['Create', 'instance, give it an IBuildEngine'],
+    ['Bind', 'parameters from expanded @(Compile)'],
+    ['Execute()', 'returns true → outputs flow back as items'],
+  ];
+  const cur = Math.floor((lt - 2.0) / 1.0);
+  steps.forEach(([k, v], i) => {
+    const t0 = 2.0 + i * 1.0;
+    const p = eout(prog(lt, t0, t0 + 0.4));
+    const on = cur === i && lt < 7.5;
+    const y = 240 + i * 62;
+    box(PX, y - 26, PW, 52, { r: 12, a: p, fill: on ? hexA(C.pink, 0.18) : 'rgba(18,25,54,0.85)', stroke: on ? C.pink : 'rgba(139,147,184,0.22)', glow: on ? hexA(C.pink, 0.35) : null });
+    txt(String(i + 1), PX + 24, y, { s: 20, w: 700, c: C.pink, a: p });
+    txt(k, PX + 56, y, { s: 22, w: 700, mono: true, a: p });
+    txt(v, PX + 230, y, { s: 19, c: C.soft, a: p });
+    if (lt > t0 + 1.0) check(PX + PW - 30, y, 20, C.green, p);
+  });
+  // flow line from code to pipeline
+  curve(920, 250, 960, 240, PX - 6, 240, eio(prog(lt, 1.6, 2.1)), { c: hexA(C.pink, 0.6), lw: 3 });
+  const dll = eback(prog(lt, 7.2, 7.8));
+  if (dll > 0) token('obj/Release/net10.0/App.dll', 520, 440, C.green, clamp(dll), 21);
+  // batching
+  const bA = prog(lt, 8.6, 9.1);
+  box(120, 490, 800, 420, { a: bA });
+  txt('Batching on %(metadata)', 150, 530, { s: 24, w: 700, c: C.amber, a: bA });
+  rich([['<Copy ', C.blue], ['SourceFiles', C.pink], ['="@(Strings)" ', C.amber], ['DestinationFolder', C.pink], ['="bin/%(Culture)"', C.amber], [' />', C.dim]], 150, 576, { s: 18, mono: true, a: bA });
+  const items = [['strings.en.resx', 0], ['strings.de.resx', 1], ['help.de.resx', 1], ['strings.fr.resx', 2]];
+  const cult = ['en', 'de', 'fr'], cc = [C.blue, C.amber, C.pink];
+  const sp = eio(prog(lt, 10.0, 11.0));
+  items.forEach(([n, b], i) => {
+    const p = eout(prog(lt, 9.2 + i * 0.15, 9.6 + i * 0.15));
+    const cnt = items.filter(x => x[1] === b).findIndex(x => x[0] === n);
+    const x0 = 150 + (i % 2) * 330, y0 = 636 + Math.floor(i / 2) * 50;
+    const x1 = 150 + b * 260, y1 = 700 + cnt * 48;
+    pill(n, lerp(x0, x1, sp), lerp(y0, y1, sp), { s: 16, mono: true, c: cc[b], a: p * (sp > 0 ? 1 : 1), px: 10, h: 36 });
+  });
+  cult.forEach((c, b) => {
+    const p = prog(lt, 10.8, 11.2);
+    box(140 + b * 260, 670, 240, 140, { r: 14, a: p * 0.9, fill: 'rgba(0,0,0,0)', stroke: hexA(cc[b], 0.5) });
+    txt('Culture = ' + c, 160 + b * 260, 840, { s: 17, mono: true, c: cc[b], a: p });
+    const rp = prog(lt, 11.4 + b * 0.5, 11.9 + b * 0.5);
+    if (rp > 0) pill(rp < 1 ? 'Copy · running' : 'Copy ✓', 160 + b * 260, 878, { s: 15, w: 700, c: rp < 1 ? C.blue : C.green, a: prog(lt, 11.4 + b * 0.5, 11.6 + b * 0.5), px: 10, h: 30 });
+  });
+  // TaskHost
+  const hX = 1000, hY = 610;
+  const tA = prog(lt, 12.8, 13.3);
+  box(hX, hY, 800, 300, { a: tA });
+  txt('Out-of-proc TaskHost', hX + 30, hY + 42, { s: 24, w: 700, c: C.teal, a: tA });
+  rich([['<UsingTask ', C.blue], ['Runtime', C.pink], ['="CLR4" ', C.amber], ['Architecture', C.pink], ['="x86"', C.amber], [' … />', C.dim]], hX + 30, hY + 86, { s: 18, mono: true, a: tA });
+  const b1 = eback(prog(lt, 13.4, 13.9)), b2 = eback(prog(lt, 13.9, 14.4));
+  if (b1 > 0) { box(hX + 30, hY + 130, 300, 130, { a: clamp(b1), stroke: C.blue }); txt('Worker node', hX + 54, hY + 175, { s: 22, w: 700, a: clamp(b1) }); txt('.NET 10 · x64', hX + 54, hY + 214, { s: 18, mono: true, c: C.dim, a: clamp(b1) }); }
+  if (b2 > 0) { box(hX + 470, hY + 130, 300, 130, { a: clamp(b2), stroke: C.teal, glow: hexA(C.teal, 0.25) }); txt('MSBuildTaskHost', hX + 494, hY + 175, { s: 22, w: 700, a: clamp(b2) }); txt('.NET Framework · x86', hX + 494, hY + 214, { s: 18, mono: true, c: C.dim, a: clamp(b2) }); }
+  const lp = eio(prog(lt, 14.3, 14.8));
+  line(hX + 334, hY + 195, hX + 466, hY + 195, lp, { c: 'rgba(139,147,184,0.4)', head: false, dash: [8, 8], off: -lt * 30 });
+  for (let k = 0; k < 3; k++) {
+    const pp = ((lt - 14.8 - k * 0.4) / 1.2) % 2;
+    if (lt > 14.8 + k * 0.4 && pp >= 0) {
+      const fwd = pp < 1, q = fwd ? pp : pp - 1;
+      dot(lerp(hX + 340, hX + 460, fwd ? eio(q) : 1 - eio(q)), hY + 195, 6, fwd ? C.amber : C.green, { a: Math.sin(q * Math.PI) });
+    }
+  }
+  captions([
+    [0.3, 4.4, 'A target is a list of tasks. Each one is handed to the TaskExecutionHost.'],
+    [4.5, 8.5, 'The host finds the task in the registry, loads its assembly, binds parameters and calls Execute().'],
+    [8.6, 12.7, '%(Metadata) splits items into buckets, and the task runs once per bucket.'],
+    [12.8, 16.8, 'Tasks that need another runtime or architecture run in a separate TaskHost process.'],
+  ], lt);
+}
+
+// ---- 8. Logging ----
+const EVN = ['ProjectStarted', 'TargetStarted', 'TaskStarted', 'Message', 'TaskFinished', 'Warning', 'TargetFinished', 'ProjectFinished'];
+const EVC = { ProjectStarted: C.purple, TargetStarted: C.amber, TaskStarted: C.pink, Message: C.soft, TaskFinished: C.pink, Warning: C.amber, TargetFinished: C.amber, ProjectFinished: C.purple };
+function sLog(lt) {
+  chapter('08', 'Logging', 'src/Build/BackEnd/Components/Logging/LoggingService.cs', lt);
+  const NY = [290, 470, 650];
+  const HX = 720, HY = 400, HW = 380, HH = 200;
+  const sinks = [[1300, 180, 500, 260], [1300, 470, 500, 120], [1300, 620, 500, 120], [1300, 770, 500, 100]];
+  NY.forEach((y, i) => {
+    const p = eback(prog(lt, 0.3 + i * 0.2, 0.8 + i * 0.2));
+    if (p <= 0) return;
+    box(120, y - 50, 320, 100, { a: clamp(p), stroke: hexA(C.blue, 0.5) });
+    txt(`Node ${i + 1}`, 150, y - 12, { s: 24, w: 700, a: clamp(p) });
+    txt(['App.csproj', 'Lib.csproj', 'Core.csproj'][i], 150, y + 22, { s: 18, mono: true, c: C.dim, a: clamp(p) });
+  });
+  const ha = eback(prog(lt, 1.0, 1.6));
+  if (ha > 0) scaled(HX + HW / 2, HY + HH / 2, 0.85 + 0.15 * ha, () => {
+    const pulse = 0.5 + 0.5 * Math.sin(lt * 4);
+    box(HX, HY, HW, HH, { r: 100, a: clamp(ha), fill: 'rgba(20,83,45,0.35)', stroke: C.green, lw: 2, glow: hexA(C.green, 0.25 + 0.2 * pulse), gb: 50 });
+    txt('LoggingService', HX + HW / 2, HY + 86, { s: 32, w: 700, al: 'center', a: clamp(ha) });
+    txt('on the main node', HX + HW / 2, HY + 126, { s: 19, c: C.soft, al: 'center', a: clamp(ha) });
+  });
+  // sinks
+  const names = [['Terminal Logger', C.teal], ['Binary Logger  -bl', C.amber], ['BuildCheck', C.pink], ['your ILogger', C.blue]];
+  sinks.forEach(([x, y, w, h], i) => {
+    const p = eback(prog(lt, 5.0 + i * 0.35, 5.5 + i * 0.35));
+    if (p <= 0) return;
+    box(x, y, w, h, { a: clamp(p), stroke: hexA(names[i][1], 0.6) });
+    txt(names[i][0], x + 24, y + 34, { s: 22, w: 700, c: names[i][1], a: clamp(p) });
+    line(HX + HW, HY + HH / 2, x, y + h / 2, eio(prog(lt, 5.0 + i * 0.35, 5.6 + i * 0.35)), { c: 'rgba(139,147,184,0.25)', head: false });
+  });
+  // terminal logger body
+  const tA = prog(lt, 5.3, 5.8);
+  if (tA > 0) {
+    const tl = Math.max(0, lt - 5.6);
+    const rows = [
+      ['App ', lt < 13 ? `CoreCompile (${(tl * 0.7 + 0.2).toFixed(1)}s)` : `succeeded (${(7.4 * 0.7).toFixed(1)}s) → bin/App.dll`, lt < 13 ? C.blue : C.green],
+      ['Lib ', lt < 8 ? `Build (${(tl * 0.6 + 0.4).toFixed(1)}s)` : 'succeeded (1.8s) → bin/Lib.dll', lt < 8 ? C.blue : C.green],
+      ['Core', lt < 9.5 ? `ResolveAssemblyReferences (${(tl * 0.5).toFixed(1)}s)` : 'succeeded (2.2s) → bin/Core.dll', lt < 9.5 ? C.blue : C.green],
+    ];
+    rows.forEach(([p, s, c], i) => rich([['  ' + p + '  ', C.ink], [s, c]], 1324, 262 + i * 46, { s: 18, mono: true, a: tA }));
+    // spinner
+    const sp = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'[Math.floor(lt * 12) % 10];
+    if (lt < 13) txt(sp, 1316, 262, { s: 18, mono: true, c: C.teal, a: tA });
+  }
+  // binlog
+  const bA = prog(lt, 5.6, 6.1);
+  const size = Math.max(0, (lt - 5.6) * 0.37 + 0.1);
+  txt(`msbuild.binlog · ${size.toFixed(1)} MB · replayable`, 1324, 560, { s: 18, mono: true, c: C.soft, a: bA });
+  const cA = prog(lt, 6.0, 6.5);
+  txt(lt > 9 ? 'BC0102  Two tasks should not write the same file.' : 'analyzing the same event stream…', 1324, 710, { s: 15, mono: true, c: lt > 9 ? C.amber : C.dim, a: cA });
+  txt('anything implementing ILogger', 1324, 840, { s: 18, c: C.dim, a: prog(lt, 6.4, 6.9) });
+  // events
+  for (let k = 0; k < 44; k++) {
+    const t0 = 1.6 + k * 0.32; const p = prog(lt, t0, t0 + 1.5);
+    if (p <= 0 || p >= 1) continue;
+    const n = k % 3; const name = EVN[(k * 5 + n) % EVN.length];
+    const [x, y] = qpt(440, NY[n], 600, NY[n] + (500 - NY[n]) * 0.2, HX + 10, HY + HH / 2, eio(p));
+    if (lt < 4.6 || k % 2 === 0) token(name, x, y, EVC[name], clamp(p * 5) * clamp((1 - p) * 5), 15);
+    else dot(x, y, 5, EVC[name], { a: clamp(p * 5) * clamp((1 - p) * 5) });
+    // fan out
+  }
+  for (let k = 0; k < 44; k++) {
+    const t0 = 3.1 + k * 0.32;
+    sinks.forEach(([x, y, w, h], i) => {
+      if (t0 < 5.3 + i * 0.35) return;
+      const p = prog(lt, t0, t0 + 0.9);
+      if (p <= 0 || p >= 1) return;
+      const name = EVN[(k * 5 + (k % 3)) % EVN.length];
+      dot(lerp(HX + HW, x, eio(p)), lerp(HY + HH / 2, y + h / 2, eio(p)), 4.5, EVC[name], { a: Math.sin(p * Math.PI) });
+    });
+  }
+  captions([
+    [0.3, 4.8, 'Nodes don’t print. They raise events: project, target and task started and finished, messages, warnings.'],
+    [4.9, 10.6, 'The LoggingService collects them on the main node and fans them out to every registered logger.'],
+    [10.7, 16.6, 'Terminal Logger draws live progress, -bl records everything to a .binlog, BuildCheck spots problems.'],
+  ], lt);
+}
+
+// ---- 9. Outro ----
+function sOutro(lt) {
+  const n = PIPE.length, gap = 280, sx = W / 2 - (gap * (n - 1)) / 2, y = 380;
+  const subs = ['XMake · ProjectRootElement', 'Evaluator · 6 passes', 'BuildManager · Scheduler', 'TargetBuilder', 'TaskExecutionHost', 'LoggingService'];
+  const lp = eio(prog(lt, 0.3, 1.8));
+  ctx.save(); ctx.strokeStyle = 'rgba(139,147,184,0.35)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(sx, y); ctx.lineTo(sx + gap * (n - 1) * lp, y); ctx.stroke(); ctx.restore();
+  PIPE.forEach(([l, c], i) => {
+    const p = eback(prog(lt, 0.3 + i * 0.25, 0.8 + i * 0.25));
+    if (p <= 0) return;
+    const glow = Math.max(0, 1 - Math.abs((lt - 2.2) * 1.6 - i) * 0.8);
+    dot(sx + i * gap, y, (14 + 8 * glow) * p, c, { gb: 24 + 30 * glow });
+    txt(l, sx + i * gap, y + 58, { s: 30, w: 700, c: C.ink, al: 'center', a: clamp(p) });
+    txt(subs[i], sx + i * gap, y + 98, { s: 18, c: C.dim, al: 'center', a: clamp(p) });
+  });
+  const sp = prog(lt, 2.0, 4.0);
+  if (sp > 0 && sp < 1) dot(sx + gap * (n - 1) * eio(sp), y, 7, '#fff', { gb: 30 });
+  const ba = prog(lt, 4.2, 4.8);
+  box(W / 2 - 420, 600, 840, 190, { a: ba, fill: 'rgba(10,14,32,0.94)', stroke: 'rgba(74,222,128,0.4)' });
+  txt('Build succeeded.', W / 2 - 380, 650, { s: 32, mono: true, w: 700, c: C.green, a: ba, glow: hexA(C.green, 0.5) });
+  txt('    0 Warning(s)', W / 2 - 380, 698, { s: 24, mono: true, c: C.soft, a: prog(lt, 4.8, 5.1) });
+  txt('    0 Error(s)', W / 2 - 380, 738, { s: 24, mono: true, c: C.soft, a: prog(lt, 5.1, 5.4) });
+  txt('Read the source: github.com/JanProvaznik/msbuild', W / 2, 900, { s: 28, w: 500, c: C.dim, al: 'center', a: prog(lt, 5.8, 6.6) });
+}
+
+// =====================================================================
+const SCENES = [
+  [sTitle, 7], [sCLI, 12], [sProject, 16], [sEval, 27], [sSched, 26], [sTargets, 24], [sIncr, 14], [sTasks, 17], [sLog, 17], [sOutro, 10]
+];
+let acc = 0; for (const s of SCENES) { s.push(acc); acc += s[1]; }
+const DURATION = acc;
+window.DURATION = DURATION; window.FPS = FPS;
+
+function renderFrame(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  background(t);
+  for (const [fn, d, s] of SCENES) {
+    if (t < s || t >= s + d) continue;
+    const lt = t - s;
+    const last = fn === sOutro;
+    const al = clamp(lt / 0.6) * (last ? clamp((d - lt) / 1.2) : clamp((d - lt) / 0.6));
+    ctx.save(); ctx.globalAlpha = al; fn(lt); ctx.restore();
+  }
+  // top progress line
+  ctx.fillStyle = 'rgba(167,139,250,0.55)'; ctx.fillRect(0, 0, W * (t / DURATION), 3);
+}
+window.renderFrame = renderFrame;
+window.ready = document.fonts.load('700 20px Inter').then(() => document.fonts.load('20px "DejaVu Sans Mono"')).then(() => { renderFrame(0); return true; });
+// preview mode
+if (location.hash.startsWith('#t=')) { window.ready.then(() => renderFrame(parseFloat(location.hash.slice(3)))); }
+else if (location.hash === '#play') { const st = performance.now(); const loop = () => { renderFrame(((performance.now() - st) / 1000) % DURATION); requestAnimationFrame(loop); }; window.ready.then(loop); }
+</script>
+</body>
+</html>
