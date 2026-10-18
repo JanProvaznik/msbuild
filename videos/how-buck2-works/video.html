@@ -1,0 +1,1320 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>How Buck2 works</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #160e2e; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script>
+'use strict';
+const W = 1920, H = 1080, FPS = 30;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+// ---------- palette (candy) ----------
+const C = {
+  bg: '#160e2e', ink: '#fff6ea', soft: '#e9def7', dim: '#a99cc8', faint: '#4d3f78', line: '#2f2556',
+  panel: 'rgba(36,24,72,0.9)', dark: '#2a1640',
+  orange: '#ff9f43', pink: '#ff6b9d', yellow: '#ffd93d', mint: '#5eead4', sky: '#7cc4ff', lilac: '#c4b5fd',
+  coral: '#ff7a6b', green: '#7ee787', red: '#ff6b6b', tan: '#f6d7a7'
+};
+const SANS = 'Inter', DISP = '"Inter Display"', MONO = '"DejaVu Sans Mono"';
+
+// ---------- math ----------
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const eio = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const eout = x => 1 - Math.pow(1 - x, 3);
+const eback = x => { const c1 = 2.2, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+// springy overshoot that wobbles a couple of times before settling
+const spring = x => x <= 0 ? 0 : x >= 1 ? 1 : 1 - Math.cos(x * Math.PI * 2.5) * Math.exp(-x * 5.5);
+const env = (t, a, b, f = 0.4) => clamp((t - a) / f) * clamp((b - t) / f);
+function rnd(seed) { let s = seed >>> 0; return () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const hash01 = n => rnd(n * 7919 + 13)();
+function hexA(hex, a) { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; }
+function shade(hex, k) { const n = parseInt(hex.slice(1), 16); const f = v => Math.round(clamp(v * k, 0, 255)); return `rgb(${f(n >> 16)},${f((n >> 8) & 255)},${f(n & 255)})`; }
+
+// ---------- drawing primitives ----------
+function font(o) { return `${o.w || 400} ${o.s || 28}px ${o.mono ? MONO : (o.disp ? DISP : SANS)}`; }
+function txt(s, x, y, o = {}) {
+  ctx.save();
+  ctx.globalAlpha *= (o.a ?? 1);
+  ctx.font = font(o);
+  ctx.fillStyle = o.c || C.ink;
+  ctx.textAlign = o.al || 'left';
+  ctx.textBaseline = o.bl || 'middle';
+  ctx.letterSpacing = (o.ls || 0) + 'px';
+  if (o.glow) { ctx.shadowColor = o.glow; ctx.shadowBlur = o.gb || 18; }
+  if (o.rot) { ctx.translate(x, y); ctx.rotate(o.rot); ctx.fillText(s, 0, 0); } else ctx.fillText(s, x, y);
+  ctx.restore();
+}
+function tw(s, o = {}) { ctx.save(); ctx.font = font(o); ctx.letterSpacing = (o.ls || 0) + 'px'; const w = ctx.measureText(s).width; ctx.restore(); return w; }
+function rich(segs, x, y, o = {}) {
+  let cx = x;
+  for (const [s, c, extra] of segs) { txt(s, cx, y, { ...o, ...(extra || {}), c }); cx += tw(s, { ...o, ...(extra || {}) }); }
+  return cx;
+}
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+function box(x, y, w, h, o = {}) {
+  ctx.save();
+  ctx.globalAlpha *= (o.a ?? 1);
+  rr(x, y, w, h, o.r ?? 22);
+  if (o.glow) { ctx.shadowColor = o.glow; ctx.shadowBlur = o.gb || 30; }
+  ctx.fillStyle = o.fill || C.panel; ctx.fill();
+  ctx.shadowBlur = 0;
+  if (o.dash) ctx.setLineDash(o.dash);
+  if (o.stroke !== null) { ctx.lineWidth = o.lw || 2; ctx.strokeStyle = o.stroke || 'rgba(196,181,253,0.3)'; ctx.stroke(); }
+  ctx.restore();
+}
+function pill(label, x, y, o = {}) {
+  const s = o.s || 22, padX = o.px || 18, h = o.h || s + 22;
+  const w = tw(label, { s, w: o.w || 600, mono: o.mono }) + padX * 2;
+  const bx = o.al === 'center' ? x - w / 2 : x;
+  box(bx, y - h / 2, w, h, { r: h / 2, fill: o.fill || hexA(o.c || C.lilac, 0.18), stroke: o.stroke ?? hexA(o.c || C.lilac, 0.7), a: o.a, glow: o.glow, gb: o.gb, lw: 2 });
+  txt(label, bx + padX, y + 1, { s, w: o.w || 600, c: o.tc || o.c || C.ink, mono: o.mono, a: o.a });
+  return w;
+}
+function qpt(x1, y1, cx, cy, x2, y2, t) { const u = 1 - t; return [u * u * x1 + 2 * u * t * cx + t * t * x2, u * u * y1 + 2 * u * t * cy + t * t * y2]; }
+function curve(x1, y1, cx, cy, x2, y2, p, o = {}) {
+  if (p <= 0) return;
+  ctx.save();
+  ctx.globalAlpha *= (o.a ?? 1);
+  ctx.strokeStyle = o.c || C.faint; ctx.lineWidth = o.lw || 3; ctx.lineCap = 'round';
+  if (o.dash) { ctx.setLineDash(o.dash); ctx.lineDashOffset = o.off || 0; }
+  ctx.beginPath(); ctx.moveTo(x1, y1);
+  const N = 40; let last = [x1, y1], prev = [x1, y1];
+  for (let i = 1; i <= N; i++) { const tt = (i / N) * p; prev = last; last = qpt(x1, y1, cx, cy, x2, y2, tt); ctx.lineTo(last[0], last[1]); }
+  ctx.stroke();
+  if (o.head !== false && p > 0.05) {
+    ctx.setLineDash([]);
+    const a = Math.atan2(last[1] - prev[1], last[0] - prev[0]), L = o.hl || 15;
+    ctx.fillStyle = o.c || C.faint; ctx.beginPath();
+    ctx.moveTo(last[0], last[1]);
+    ctx.lineTo(last[0] - L * Math.cos(a - 0.5), last[1] - L * Math.sin(a - 0.5));
+    ctx.lineTo(last[0] - L * Math.cos(a + 0.5), last[1] - L * Math.sin(a + 0.5));
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+function line(x1, y1, x2, y2, p, o = {}) { curve(x1, y1, (x1 + x2) / 2, (y1 + y2) / 2, x2, y2, p, o); }
+function dot(x, y, r, c, o = {}) { if (r <= 0) return; ctx.save(); ctx.globalAlpha *= (o.a ?? 1); ctx.fillStyle = c; if (o.glow !== false) { ctx.shadowColor = c; ctx.shadowBlur = o.gb || 16; } ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.restore(); }
+function check(x, y, s, c, a = 1) { if (a <= 0) return; ctx.save(); ctx.globalAlpha *= a; ctx.strokeStyle = c; ctx.lineWidth = s * 0.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath(); ctx.moveTo(x - s * 0.35, y); ctx.lineTo(x - s * 0.08, y + s * 0.28); ctx.lineTo(x + s * 0.4, y - s * 0.3); ctx.stroke(); ctx.restore(); }
+function cross(x, y, s, c, a = 1) { if (a <= 0) return; ctx.save(); ctx.globalAlpha *= a; ctx.strokeStyle = c; ctx.lineWidth = s * 0.2; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x - s * 0.3, y - s * 0.3); ctx.lineTo(x + s * 0.3, y + s * 0.3); ctx.moveTo(x + s * 0.3, y - s * 0.3); ctx.lineTo(x - s * 0.3, y + s * 0.3); ctx.stroke(); ctx.restore(); }
+function withAlpha(a, fn) { if (a <= 0) return; ctx.save(); ctx.globalAlpha *= a; fn(); ctx.restore(); }
+function scaled(cx, cy, k, fn, ky) { ctx.save(); ctx.translate(cx, cy); ctx.scale(k, ky ?? k); ctx.translate(-cx, -cy); fn(); ctx.restore(); }
+function rotated(cx, cy, r, fn) { ctx.save(); ctx.translate(cx, cy); ctx.rotate(r); ctx.translate(-cx, -cy); fn(); ctx.restore(); }
+function badge(label, x, y, c, a, s = 18) { if (a > 0) scaled(x, y, 0.7 + 0.3 * spring(clamp(a * 1.0)), () => pill(label, x, y, { al: 'center', c, s, w: 600, a: clamp(a * 1.5), mono: true })); }
+function star(x, y, r, c, a = 1, rot = 0) {
+  if (a <= 0 || r <= 0) return;
+  ctx.save(); ctx.globalAlpha *= a; ctx.translate(x, y); ctx.rotate(rot); ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 12;
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) { const rr2 = i % 2 ? r * 0.45 : r, an = -Math.PI / 2 + i * Math.PI / 5; ctx.lineTo(Math.cos(an) * rr2, Math.sin(an) * rr2); }
+  ctx.closePath(); ctx.fill(); ctx.restore();
+}
+
+// ---------- whimsy: faces, critters, bubbles, confetti, dice ----------
+function blink(t, seed) { const p = ((t + seed * 1.37) % 4.1 + 4.1) % 4.1; return p < 0.14 ? 0.12 : 1; }
+function eyes(x, y, s, t, o = {}) {
+  const [lx, ly] = o.look || [0, 0];
+  const b = o.closed ? 0 : blink(t, o.seed || 0);
+  for (const d of [-1, 1]) {
+    const ex = x + d * s;
+    ctx.save();
+    if (b === 0) {
+      ctx.strokeStyle = C.dark; ctx.lineWidth = Math.max(2, s * 0.22); ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(ex, y - s * 0.15, s * 0.42, 0.25, Math.PI - 0.25); ctx.stroke();
+    } else {
+      ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(ex, y, s * 0.58, s * 0.66 * b, 0, 0, Math.PI * 2); ctx.fill();
+      if (b > 0.3) {
+        const px = ex + lx * s * 0.22, py = y + ly * s * 0.22;
+        ctx.fillStyle = C.dark; ctx.beginPath(); ctx.arc(px, py, s * 0.34, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(px + s * 0.11, py - s * 0.13, s * 0.11, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+}
+function mouth(x, y, s, mood) {
+  ctx.save(); ctx.strokeStyle = C.dark; ctx.fillStyle = C.dark; ctx.lineWidth = Math.max(2, s * 0.2); ctx.lineCap = 'round';
+  if (mood === 'o') { ctx.beginPath(); ctx.ellipse(x, y + s * 0.1, s * 0.28, s * 0.36, 0, 0, Math.PI * 2); ctx.fill(); }
+  else if (mood === 'flat') { ctx.beginPath(); ctx.moveTo(x - s * 0.35, y + s * 0.05); ctx.lineTo(x + s * 0.35, y + s * 0.05); ctx.stroke(); }
+  else if (mood === 'sad') { ctx.beginPath(); ctx.arc(x, y + s * 0.55, s * 0.45, Math.PI + 0.5, -0.5); ctx.stroke(); }
+  else if (mood === 'grin') { ctx.beginPath(); ctx.arc(x, y - s * 0.12, s * 0.6, 0.15, Math.PI - 0.15); ctx.closePath(); ctx.fill(); ctx.fillStyle = '#ff8fab'; ctx.beginPath(); ctx.arc(x, y + s * 0.3, s * 0.22, 0, Math.PI); ctx.fill(); }
+  else { ctx.beginPath(); ctx.arc(x, y - s * 0.3, s * 0.5, 0.4, Math.PI - 0.4); ctx.stroke(); }
+  ctx.restore();
+}
+function face(x, y, s, t, o = {}) {
+  eyes(x, y, s, t, o);
+  if (o.cheeks !== false) { dot(x - s * 1.75, y + s * 0.9, s * 0.42, 'rgba(255,120,160,0.45)', { glow: false }); dot(x + s * 1.75, y + s * 0.9, s * 0.42, 'rgba(255,120,160,0.45)', { glow: false }); }
+  mouth(x, y + s * 1.15, s, o.mood || 'smile');
+}
+// A round little creature. o: a, mood, closed, look, run (leg speed), hop, seed, hat, antlers, glasses, cap, label
+function critter(x, y, r, c, t, o = {}) {
+  const a = o.a ?? 1; if (a <= 0) return;
+  const seed = o.seed || 0;
+  const hop = o.hop ? Math.abs(Math.sin(t * o.hop + seed)) * r * 0.28 : 0;
+  const breathe = 0.03 * Math.sin(t * 3 + seed);
+  const sq = (o.squash || 0) + breathe;
+  ctx.save(); ctx.globalAlpha *= a;
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.28)'; ctx.beginPath(); ctx.ellipse(x, y + r * 1.02, r * (0.8 - hop / r * 0.6), r * 0.16, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.translate(x, y - hop);
+  if (o.tilt) ctx.rotate(o.tilt);
+  ctx.scale(1 + sq, 1 - sq);
+  // feet
+  const run = o.run || 0;
+  for (const d of [-1, 1]) {
+    const ph = run ? Math.sin(t * run + (d > 0 ? Math.PI : 0)) : 0;
+    ctx.fillStyle = shade(c, 0.7);
+    ctx.beginPath(); ctx.ellipse(d * r * 0.42 + ph * r * 0.22, r * 0.9 - Math.max(0, ph) * r * 0.18, r * 0.28, r * 0.16, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  // antlers (Bucky)
+  if (o.antlers) {
+    ctx.strokeStyle = C.tan; ctx.lineWidth = r * 0.13; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const d of [-1, 1]) {
+      ctx.save(); ctx.rotate(d * 0.06 * Math.sin(t * 2.2 + seed));
+      ctx.beginPath(); ctx.moveTo(d * r * 0.32, -r * 0.75); ctx.quadraticCurveTo(d * r * 0.5, -r * 1.25, d * r * 0.85, -r * 1.55); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(d * r * 0.46, -r * 1.15); ctx.lineTo(d * r * 0.2, -r * 1.48); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(d * r * 0.66, -r * 1.38); ctx.lineTo(d * r * 1.08, -r * 1.25); ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = shade(c, 0.85); ctx.beginPath(); ctx.ellipse(d * r * 0.88, -r * 0.5, r * 0.3, r * 0.14, d * -0.6, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  // body
+  const g = ctx.createLinearGradient(0, -r, 0, r);
+  g.addColorStop(0, o.c2 || shade(c, 1.15)); g.addColorStop(1, shade(c, 0.82));
+  ctx.fillStyle = g; ctx.shadowColor = hexA(c, 0.5); ctx.shadowBlur = o.gb ?? 26;
+  ctx.beginPath(); ctx.ellipse(0, 0, r, r * 0.94, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.beginPath(); ctx.ellipse(-r * 0.35, -r * 0.5, r * 0.28, r * 0.16, -0.6, 0, Math.PI * 2); ctx.fill();
+  // face
+  const fs = r * 0.25;
+  face(0, -r * 0.12, fs, t, { look: o.look, closed: o.closed, mood: o.mood, seed });
+  if (o.glasses) {
+    ctx.strokeStyle = C.dark; ctx.lineWidth = r * 0.06;
+    for (const d of [-1, 1]) { ctx.beginPath(); ctx.arc(d * fs, -r * 0.12, fs * 0.95, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.beginPath(); ctx.moveTo(-fs * 0.1, -r * 0.14); ctx.lineTo(fs * 0.1, -r * 0.14); ctx.stroke();
+  }
+  if (o.binoculars) {
+    for (const d of [-1, 1]) { ctx.fillStyle = '#3a2d5c'; ctx.beginPath(); ctx.arc(d * fs * 1.1, -r * 0.14, fs * 1.0, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = hexA(C.sky, 0.8); ctx.beginPath(); ctx.arc(d * fs * 1.1, -r * 0.14, fs * 0.6, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(d * fs * 1.1 + fs * 0.2, -r * 0.24, fs * 0.18, 0, Math.PI * 2); ctx.fill(); }
+  }
+  if (o.hat) { // little top hat
+    ctx.fillStyle = o.hat; ctx.fillRect(-r * 0.55, -r * 0.98, r * 1.1, r * 0.12);
+    rr(-r * 0.36, -r * 1.5, r * 0.72, r * 0.56, r * 0.08); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fillRect(-r * 0.36, -r * 1.1, r * 0.72, r * 0.08);
+  }
+  if (o.cap) { // courier cap
+    ctx.fillStyle = o.cap; ctx.beginPath(); ctx.ellipse(0, -r * 0.78, r * 0.62, r * 0.3, 0, Math.PI, 0); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(r * 0.45, -r * 0.76, r * 0.42, r * 0.09, 0.1, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+function bucky(x, y, r, t, o = {}) { critter(x, y, r, C.orange, t, { antlers: true, c2: '#ffc27a', ...o }); }
+// speech bubble whose tail points at (x, y); bubble centred at (x+dx, y+dy)
+function say(x, y, text, lt, t0, t1, o = {}) {
+  const a = env(lt, t0, t1, 0.3); if (a <= 0) return;
+  const s = o.s || 26, p = spring(prog(lt, t0, t0 + 0.7));
+  const w = tw(text, { s, w: 700 }) + 48, h = s + 38;
+  const bx = x + (o.dx ?? 0), by = y + (o.dy ?? -110);
+  const n = Math.floor(text.length * prog(lt, t0 + 0.15, t0 + 0.15 + text.length * 0.035));
+  ctx.save(); ctx.globalAlpha *= a;
+  ctx.translate(bx, by); ctx.scale(0.4 + 0.6 * p, 0.4 + 0.6 * p); ctx.translate(-bx, -by);
+  ctx.fillStyle = '#fff8ee'; ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = 20;
+  rr(bx - w / 2, by - h / 2, w, h, h / 2); ctx.fill();
+  // tail
+  const tx = clamp(x, bx - w / 2 + 30, bx + w / 2 - 30), ty = y > by ? by + h / 2 - 2 : by - h / 2 + 2;
+  ctx.beginPath(); ctx.moveTo(tx - 16, ty); ctx.lineTo(tx + 16, ty); ctx.lineTo(lerp(tx, x, 0.6), lerp(ty, y, 0.6)); ctx.closePath(); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.restore();
+  withAlpha(a * clamp(p), () => txt(text.slice(0, n), bx - w / 2 + 24, by + 1, { s, w: 700, c: C.dark }));
+}
+const CONF = [C.yellow, C.pink, C.mint, C.sky, C.orange, C.lilac];
+function confetti(cx, cy, lt, t0, o = {}) {
+  const tt = lt - t0; if (tt < 0 || tt > 3.2) return;
+  const R = rnd(o.seed || 1), n = o.n || 60;
+  for (let i = 0; i < n; i++) {
+    const an = -Math.PI / 2 + (R() - 0.5) * (o.spread || 2.4), sp = (o.speed || 620) * (0.5 + R());
+    const x = cx + Math.cos(an) * sp * tt + Math.sin(tt * 6 + i) * 10, y = cy + Math.sin(an) * sp * tt + 520 * tt * tt;
+    const c = CONF[i % CONF.length], rot = tt * (4 + R() * 6) + i;
+    ctx.save(); ctx.globalAlpha *= clamp((3.2 - tt) / 1.0); ctx.translate(x, y); ctx.rotate(rot); ctx.fillStyle = c;
+    if (i % 3 === 0) { ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.fill(); } else ctx.fillRect(-8, -4, 16 * Math.abs(Math.cos(tt * 8 + i)) + 2, 8);
+    ctx.restore();
+  }
+}
+const PIPS = { 1: [[0, 0]], 2: [[-1, -1], [1, 1]], 3: [[-1, -1], [0, 0], [1, 1]], 4: [[-1, -1], [1, -1], [-1, 1], [1, 1]], 5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]], 6: [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]] };
+// a die: state 'roll' tumbles with random pips, 'happy'/'sleep'/'sad' shows a face, otherwise shows o.n pips
+function die(x, y, s, c, lt, o = {}) {
+  const a = o.a ?? 1; if (a <= 0) return;
+  const st = o.state || 'pips';
+  const rolling = st === 'roll';
+  const rot = rolling ? lt * 7 + (o.seed || 0) : (o.rot || 0) + Math.sin(lt * 1.6 + (o.seed || 0)) * 0.05;
+  const jump = rolling ? Math.abs(Math.sin(lt * 7 + (o.seed || 0))) * s * 0.18 : 0;
+  ctx.save(); ctx.globalAlpha *= a; ctx.translate(x, y - jump); ctx.rotate(rot);
+  ctx.shadowColor = hexA(c, 0.6); ctx.shadowBlur = o.gb ?? 18;
+  const g = ctx.createLinearGradient(-s / 2, -s / 2, s / 2, s / 2);
+  g.addColorStop(0, shade(c, 1.12)); g.addColorStop(1, shade(c, 0.78));
+  ctx.fillStyle = g; rr(-s / 2, -s / 2, s, s, s * 0.24); ctx.fill(); ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(255,255,255,0.25)'; rr(-s / 2 + s * 0.1, -s / 2 + s * 0.08, s * 0.5, s * 0.14, s * 0.07); ctx.fill();
+  if (st === 'happy' || st === 'sleep' || st === 'sad' || st === 'o') {
+    ctx.rotate(-rot * 0.85);
+    face(0, -s * 0.08, s * 0.13, lt, { closed: st === 'sleep', mood: st === 'happy' ? 'smile' : (st === 'sad' ? 'sad' : (st === 'o' ? 'o' : 'flat')), seed: o.seed || 0, cheeks: false });
+  } else {
+    const n = rolling ? 1 + Math.floor(hash01(Math.floor(lt * 9) + (o.seed || 0) * 31) * 6) : (o.n || 5);
+    ctx.fillStyle = '#fff';
+    for (const [px, py] of PIPS[n]) { ctx.beginPath(); ctx.arc(px * s * 0.24, py * s * 0.24, s * 0.085, 0, Math.PI * 2); ctx.fill(); }
+  }
+  ctx.restore();
+}
+function envelope(x, y, s, a = 1, rot = 0) {
+  if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha *= a; ctx.translate(x, y); ctx.rotate(rot);
+  ctx.fillStyle = '#fff8ee'; ctx.shadowColor = 'rgba(255,107,157,0.6)'; ctx.shadowBlur = 18;
+  rr(-s, -s * 0.66, s * 2, s * 1.32, s * 0.18); ctx.fill(); ctx.shadowBlur = 0;
+  ctx.strokeStyle = C.pink; ctx.lineWidth = s * 0.12; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(-s * 0.9, -s * 0.55); ctx.lineTo(0, s * 0.1); ctx.lineTo(s * 0.9, -s * 0.55); ctx.stroke();
+  dot(0, s * 0.12, s * 0.2, C.pink, { glow: false });
+  ctx.restore();
+}
+function gift(x, y, s, c, lt, o = {}) {
+  const a = o.a ?? 1; if (a <= 0) return;
+  const open = o.open || 0;
+  ctx.save(); ctx.globalAlpha *= a; ctx.translate(x, y); ctx.rotate(o.rot || 0);
+  ctx.fillStyle = c; ctx.shadowColor = hexA(c, 0.6); ctx.shadowBlur = 18;
+  rr(-s / 2, -s * 0.3, s, s * 0.8, s * 0.1); ctx.fill(); ctx.shadowBlur = 0;
+  ctx.fillStyle = C.yellow; ctx.fillRect(-s * 0.08, -s * 0.3, s * 0.16, s * 0.8);
+  // lid
+  ctx.save(); ctx.translate(-s * 0.55, -s * 0.3); ctx.rotate(-open * 1.1); ctx.translate(0, -open * s * 0.3);
+  ctx.fillStyle = shade(c, 1.15); rr(0, -s * 0.2, s * 1.1, s * 0.22, s * 0.06); ctx.fill();
+  ctx.fillStyle = C.yellow; ctx.fillRect(s * 0.47, -s * 0.2, s * 0.16, s * 0.22);
+  ctx.strokeStyle = C.yellow; ctx.lineWidth = s * 0.08; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.ellipse(s * 0.4, -s * 0.3, s * 0.14, s * 0.09, -0.5, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(s * 0.7, -s * 0.3, s * 0.14, s * 0.09, 0.5, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
+  ctx.restore();
+}
+function ghost(x, y, s, lt, o = {}) {
+  const a = o.a ?? 1; if (a <= 0) return;
+  const solid = o.solid || 0, seed = o.seed || 0;
+  const bob = Math.sin(lt * 2 + seed) * 6 * (1 - solid);
+  ctx.save(); ctx.globalAlpha *= a; ctx.translate(x, y + bob);
+  ctx.beginPath();
+  ctx.moveTo(-s / 2, s * 0.55); ctx.lineTo(-s / 2, -s * 0.15); ctx.arc(0, -s * 0.15, s / 2, Math.PI, 0); ctx.lineTo(s / 2, s * 0.55);
+  for (let i = 0; i < 4; i++) { const x0 = s / 2 - (i + 1) * s / 4; ctx.quadraticCurveTo(x0 + s / 8, s * 0.55 - (i % 2 ? -1 : 1) * s * 0.12 * (1 - solid) - s * 0.02 + Math.sin(lt * 5 + i + seed) * 4 * (1 - solid), x0, s * 0.55); }
+  ctx.closePath();
+  ctx.fillStyle = solid > 0 ? `rgba(${lerp(220, 126, solid)},${lerp(220, 231, solid)},${lerp(255, 135, solid)},${0.25 + 0.7 * solid})` : 'rgba(225,220,255,0.22)';
+  ctx.fill();
+  ctx.setLineDash(solid > 0.5 ? [] : [8, 6]); ctx.lineDashOffset = -lt * 20; ctx.lineWidth = 2.5; ctx.strokeStyle = solid > 0.5 ? C.green : 'rgba(225,220,255,0.7)'; ctx.stroke();
+  ctx.setLineDash([]);
+  face(0, -s * 0.12, s * 0.1, lt, { mood: solid > 0.5 ? 'grin' : 'o', seed, cheeks: solid > 0.5 });
+  ctx.restore();
+}
+function cloud(x, y, w, h, o = {}) {
+  const a = o.a ?? 1; if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha *= a;
+  ctx.fillStyle = o.fill || 'rgba(124,196,255,0.16)'; ctx.strokeStyle = o.stroke || hexA(C.sky, 0.7); ctx.lineWidth = 2.5;
+  ctx.shadowColor = hexA(C.sky, 0.4); ctx.shadowBlur = 40;
+  const bumps = [[0.18, 0.35, 0.22], [0.4, 0.18, 0.28], [0.65, 0.22, 0.25], [0.85, 0.42, 0.2]];
+  ctx.beginPath();
+  rr(x, y + h * 0.3, w, h * 0.7, h * 0.3);
+  for (const [bx, by, br] of bumps) { ctx.moveTo(x + bx * w + br * w, y + by * h + br * w * 0.6); ctx.arc(x + bx * w, y + by * h + br * w * 0.6, br * w, 0, Math.PI * 2); }
+  ctx.fill(); ctx.shadowBlur = 0;
+  ctx.restore();
+}
+// file icon with dog-ear
+function fileIcon(x, y, s, c, a = 1) {
+  if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha *= a; ctx.translate(x, y);
+  ctx.fillStyle = '#fff8ee'; ctx.beginPath(); ctx.moveTo(-s * 0.4, -s * 0.5); ctx.lineTo(s * 0.18, -s * 0.5); ctx.lineTo(s * 0.4, -s * 0.28); ctx.lineTo(s * 0.4, s * 0.5); ctx.lineTo(-s * 0.4, s * 0.5); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = c; for (let i = 0; i < 3; i++) ctx.fillRect(-s * 0.26, -s * 0.12 + i * s * 0.18, s * (i === 2 ? 0.32 : 0.52), s * 0.07);
+  ctx.restore();
+}
+
+// ---------- background ----------
+const BLOBS = (() => { const r = rnd(5); return Array.from({ length: 6 }, (_, i) => ({ x: r() * W, y: r() * H, rad: 380 + r() * 300, c: [C.pink, C.orange, C.sky, C.lilac, C.mint, C.yellow][i], sp: 0.04 + r() * 0.05, ph: r() * 6.28 })); })();
+const BUBS = (() => { const r = rnd(9); return Array.from({ length: 46 }, () => ({ x: r() * W, y: r() * H, z: 0.3 + r() * 0.7, ph: r() * 6.28, c: CONF[Math.floor(r() * 6)] })); })();
+function background(t) {
+  const g0 = ctx.createLinearGradient(0, 0, 0, H);
+  g0.addColorStop(0, '#1d1240'); g0.addColorStop(1, '#130b28');
+  ctx.fillStyle = g0; ctx.fillRect(0, 0, W, H);
+  for (const b of BLOBS) {
+    const x = b.x + Math.sin(t * b.sp + b.ph) * 160, y = b.y + Math.cos(t * b.sp * 1.3 + b.ph) * 110;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, b.rad);
+    g.addColorStop(0, hexA(b.c, 0.09)); g.addColorStop(1, hexA(b.c, 0));
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  // wavy dot grid
+  ctx.fillStyle = 'rgba(200,180,255,0.07)';
+  for (let y = 24; y < H; y += 48) for (let x = 24; x < W; x += 48) ctx.fillRect(x, y + Math.sin(x * 0.01 + t * 0.8) * 4, 3, 3);
+  // floating bubbles
+  for (const s of BUBS) {
+    const y = ((s.y - t * 22 * s.z) % (H + 40) + H + 40) % (H + 40) - 20;
+    const x = s.x + Math.sin(t * 0.9 * s.z + s.ph) * 18;
+    ctx.save(); ctx.globalAlpha = 0.12 + 0.12 * Math.sin(t * 1.4 + s.ph); ctx.strokeStyle = s.c; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(x, y, 3 + 6 * s.z, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+  }
+  const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.45, W / 2, H / 2, H * 1.05);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(5,0,15,0.5)');
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+}
+
+// ---------- chrome: chapter, file ref, captions ----------
+function chapter(n, title, file, lt) {
+  const a = prog(lt, 0.1, 0.7);
+  const x = 120 - (1 - eout(a)) * 30;
+  die(x + 18, 92, 34, C.yellow, lt, { a, n: +n > 6 ? ((+n - 1) % 6) + 1 : +n, gb: 10, rot: (1 - spring(a)) * 2 });
+  txt(title.toUpperCase(), x + 56, 93, { s: 23, w: 800, c: C.soft, ls: 5, a });
+  ctx.save(); ctx.globalAlpha *= a; ctx.fillStyle = C.pink; rr(x + 56, 116, 60 * eout(a), 5, 3); ctx.fill(); ctx.restore();
+  if (file) {
+    const fa = prog(lt, 0.6, 1.3);
+    const w = tw(file, { s: 19, mono: true });
+    box(W - 120 - w - 56, 72, w + 56, 42, { r: 21, fill: 'rgba(36,24,72,0.75)', stroke: 'rgba(196,181,253,0.3)', a: fa });
+    withAlpha(fa, () => { ctx.strokeStyle = C.dim; ctx.lineWidth = 1.5; rr(W - 120 - w - 38, 83, 14, 19, 3); ctx.stroke(); });
+    txt(file, W - 120 - w - 16, 94, { s: 19, mono: true, c: C.dim, a: fa });
+  }
+}
+function captions(list, lt) {
+  for (const [a, b, s] of list) {
+    const al = env(lt, a, b, 0.5);
+    if (al <= 0) continue;
+    const y = 1004 + (1 - eout(clamp((lt - a) / 0.5))) * 14;
+    const w = tw(s, { s: 31, w: 600 });
+    ctx.save(); ctx.globalAlpha *= al;
+    const g = ctx.createLinearGradient(0, 940, 0, 1080);
+    g.addColorStop(0, 'rgba(19,11,40,0)'); g.addColorStop(1, 'rgba(19,11,40,0.85)');
+    ctx.fillStyle = g; ctx.fillRect(0, 930, W, 150);
+    ctx.restore();
+    box(W / 2 - w / 2 - 30, y - 30, w + 60, 60, { r: 30, fill: 'rgba(30,18,60,0.72)', stroke: 'rgba(196,181,253,0.18)', a: al });
+    txt(s, W / 2, y + 1, { s: 31, w: 600, c: C.ink, al: 'center', a: al });
+  }
+}
+// heading with optional bouncy highlighted letter indices
+function heading(s, lt, y = 180, sub, hi) {
+  const a = prog(lt, 0.2, 0.9), o = { s: 54, w: 800, disp: true };
+  let x = 120;
+  for (let i = 0; i < s.length; i++) {
+    const p = spring(prog(lt, 0.2 + i * 0.02, 0.9 + i * 0.02));
+    const isHi = hi && hi.includes(i);
+    const bob = isHi ? Math.sin(lt * 3 + i) * 5 : 0;
+    txt(s[i], x, y + (1 - p) * 30 + bob, { ...o, c: isHi ? C.yellow : C.ink, a: clamp(p), glow: isHi ? hexA(C.yellow, 0.5) : null });
+    x += tw(s[i], o);
+  }
+  if (sub) txt(sub, 120, y + 52, { s: 26, c: C.dim, a: prog(lt, 0.7, 1.4) });
+}
+
+// ---------- code highlighting (Starlark / Rust / ini) ----------
+const KW = new Set(['load', 'def', 'return', 'if', 'for', 'in', 'pub', 'trait', 'type', 'async', 'fn', 'self', 'mut', 'impl', 'let', 'await', 'select']);
+function codeSegs(line) {
+  if (/^\s*\[[\w.]+\]\s*$/.test(line)) return [[line, C.pink]];
+  const ini = line.match(/^(\s*)([\w.]+)(\s*=\s*)([^"(\[{]*)$/);
+  if (ini && !/[(){}]/.test(line)) return [[ini[1], C.ink], [ini[2], C.mint], [ini[3], C.dim], [ini[4], C.yellow]];
+  const segs = [];
+  const re = /(#.*$|\/\/ .*$|\/\/\/.*$)|("[^"]*")|([A-Za-z_][\w]*)(?=\s*\()|([A-Za-z_][\w]*)(?=\s*=[^=])|([A-Za-z_][\w.]*)|(\s+)|(.)/g;
+  let m;
+  while ((m = re.exec(line))) {
+    if (m[1]) segs.push([m[1], C.dim]);
+    else if (m[2]) segs.push([m[2], C.yellow]);
+    else if (m[3]) segs.push([m[3], KW.has(m[3]) ? C.pink : C.sky]);
+    else if (m[4]) segs.push([m[4], C.orange]);
+    else if (m[5]) segs.push([m[5], KW.has(m[5]) ? C.pink : (/^[A-Z]/.test(m[5]) ? C.mint : C.ink)]);
+    else segs.push([m[6] || m[7], C.soft]);
+  }
+  return segs;
+}
+function codePanel(x, y, w, h, title, lines, lt, t0, dt, o = {}) {
+  const a = prog(lt, t0 - 0.6, t0);
+  if (a <= 0) return;
+  const k = 0.92 + 0.08 * spring(a);
+  scaled(x + w / 2, y + h / 2, k, () => {
+    box(x, y, w, h, { r: 22, fill: 'rgba(24,14,50,0.95)', stroke: 'rgba(196,181,253,0.35)', a, glow: o.glow || 'rgba(255,107,157,0.18)', gb: 50 });
+    withAlpha(a, () => {
+      [C.coral, C.yellow, C.green].forEach((c, i) => dot(x + 30 + i * 26, y + 27, 7, c, { glow: false }));
+      txt(title, x + 124, y + 28, { s: 18, c: C.dim, mono: true });
+      ctx.fillStyle = 'rgba(196,181,253,0.15)'; ctx.fillRect(x, y + 54, w, 1);
+    });
+    const s = o.s || 23, lh = o.lh || 40;
+    lines.forEach((l, i) => {
+      const p = prog(lt, t0 + i * dt, t0 + i * dt + 0.4);
+      if (p <= 0) return;
+      const hl = o.hl && o.hl[i];
+      if (hl) {
+        const ha = env(lt, hl[0], hl[1], 0.3);
+        if (ha > 0) box(x + 14, y + 78 + i * lh - lh / 2 + 2, w - 28, lh - 4, { r: 10, fill: hexA(hl[2], 0.18 * ha), stroke: hexA(hl[2], 0.6 * ha) });
+      }
+      rich(codeSegs(l), x + 32 + (1 - eout(p)) * 18, y + 80 + i * lh, { s, mono: true, a: p });
+    });
+  });
+}
+function terminal(x, y, w, h, title, lt, t0) {
+  const a = prog(lt, t0, t0 + 0.6);
+  box(x, y + (1 - eout(a)) * 30, w, h, { r: 24, fill: 'rgba(20,12,42,0.96)', stroke: 'rgba(196,181,253,0.35)', a, glow: 'rgba(255,159,67,0.18)', gb: 60 });
+  withAlpha(a, () => {
+    [C.coral, C.yellow, C.green].forEach((c, i) => dot(x + 32 + i * 26, y + 30, 7, c, { glow: false }));
+    txt(title, x + w / 2, y + 30, { s: 19, c: C.dim, al: 'center' });
+    ctx.fillStyle = 'rgba(196,181,253,0.15)'; ctx.fillRect(x, y + 58, w, 1);
+  });
+  return a;
+}
+// DICE node: a card with a die on the left
+function dnode(x, y, type, key, c, lt, o = {}) {
+  const w = o.w || 380, h = o.h || 90, a = o.a ?? 1;
+  if (a <= 0) return;
+  const done = o.done || 0, pend = o.pend || 0;
+  scaled(x, y, o.k ?? 1, () => {
+    const fill = done > 0 ? hexA(c, 0.08 + 0.1 * done) : 'rgba(28,18,58,0.94)';
+    box(x - w / 2, y - h / 2, w, h, { r: 20, a, fill, stroke: hexA(c, 0.45 + 0.45 * Math.max(done, o.hot || 0)), lw: 2.5, glow: done > 0 || o.hot ? hexA(c, 0.35 * Math.max(done, o.hot || 0)) : null, gb: 36 });
+    if (pend > 0 && done < 1) {
+      ctx.save(); ctx.globalAlpha *= a * pend * (1 - done); ctx.setLineDash([10, 8]); ctx.lineDashOffset = -lt * 34;
+      ctx.strokeStyle = c; ctx.lineWidth = 2.5; rr(x - w / 2 - 7, y - h / 2 - 7, w + 14, h + 14, 26); ctx.stroke(); ctx.restore();
+    }
+    const st = o.state || (done >= 1 ? 'happy' : (pend > 0 ? 'roll' : 'pips'));
+    die(x - w / 2 + 46, y, 48, c, lt, { a, state: st, n: o.n || 3, seed: o.seed || 0, gb: 12 });
+    txt(type, x - w / 2 + 88, y - 17, { s: 15, w: 700, mono: true, c, a, ls: 0.5 });
+    txt(key, x - w / 2 + 88, y + 16, { s: 20, mono: true, c: C.ink, a });
+    if (done > 0) check(x + w / 2 - 28, y, 24, C.green, a * done);
+  });
+}
+// zzz floating up
+function zzz(x, y, lt, a = 1) {
+  for (let i = 0; i < 3; i++) {
+    const p = ((lt * 0.5 + i / 3) % 1);
+    txt('z', x + p * 40 + Math.sin(p * 6) * 6, y - p * 70, { s: 18 + p * 18, w: 800, c: C.lilac, a: a * Math.sin(p * Math.PI) });
+  }
+}
+
+// =====================================================================
+// SCENES
+// =====================================================================
+const PIPE = [['Client', C.sky], ['Daemon', C.lilac], ['BUCK files', C.mint], ['DICE', C.yellow], ['Analysis', C.orange], ['Execute', C.pink], ['Materialize', C.green]];
+
+// ---- 0. Title ----
+function sTitle(lt) {
+  // Bucky drops in and lands with a squash
+  const fall = prog(lt, 0.2, 0.9);
+  const by = fall < 1 ? lerp(-200, 250, eio(fall) * eio(fall)) : 250;
+  const land = env(lt, 0.9, 1.4, 0.2);
+  bucky(W / 2, by, 78, lt, { squash: 0.12 * land * Math.sin(prog(lt, 0.9, 1.4) * Math.PI), mood: lt > 4 && lt < 6.5 ? 'grin' : 'smile', look: [Math.sin(lt * 0.7) * 0.6, 0.3], hop: lt > 7 ? 2.5 : 0 });
+  if (lt > 0.9 && lt < 2.2) for (let i = 0; i < 6; i++) { const p = prog(lt, 0.9, 1.8); dot(W / 2 + (i - 2.5) * 40 * (1 + p * 2), 330 - p * 30 * Math.sin(i), 6 * (1 - p), CONF[i], { a: 1 - p }); }
+  say(W / 2 + 80, 210, 'Hi! I’m Bucky. Let’s peek inside Buck2!', lt, 3.4, 7.2, { dx: 330, dy: -60, s: 26 });
+  // bouncy title
+  const title = 'How Buck2 works';
+  const o = { s: 140, w: 900, disp: true };
+  const total = tw(title, o), x0 = W / 2 - total / 2;
+  for (let i = 0; i < title.length; i++) {
+    const p = spring(prog(lt, 1.2 + i * 0.06, 2.2 + i * 0.06));
+    const px = x0 + tw(title.slice(0, i), o) + tw(title[i], o) / 2;
+    const bob = Math.sin(lt * 2.4 - i * 0.5) * 7 * prog(lt, 2.5, 3.5);
+    ctx.save(); ctx.globalAlpha *= clamp(p * 2);
+    ctx.translate(px, 500 + bob); ctx.scale(p, p); ctx.rotate((1 - clamp(p)) * 0.4 * (i % 2 ? 1 : -1));
+    const lg = ctx.createLinearGradient(x0 - px, 0, x0 + total - px, 0);
+    lg.addColorStop(0, C.yellow); lg.addColorStop(0.5, C.orange); lg.addColorStop(1, C.pink);
+    ctx.font = font(o); ctx.textBaseline = 'middle'; ctx.textAlign = 'center'; ctx.fillStyle = lg;
+    ctx.shadowColor = 'rgba(255,159,67,0.55)'; ctx.shadowBlur = 40;
+    ctx.fillText(title[i], 0, 0);
+    ctx.restore();
+  }
+  txt('A whimsical tour of Meta’s build system, read straight from its Rust source', W / 2, 625, { s: 34, c: C.dim, al: 'center', a: prog(lt, 2.6, 3.4) });
+  // pipeline with a rolling die
+  const n = PIPE.length, gap = 235, sx = W / 2 - (gap * (n - 1)) / 2, y = 800;
+  const lp = eio(prog(lt, 3.4, 5.0));
+  ctx.save(); ctx.strokeStyle = 'rgba(196,181,253,0.35)'; ctx.lineWidth = 3; ctx.setLineDash([2, 12]); ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(sx, y); ctx.lineTo(sx + gap * (n - 1) * lp, y); ctx.stroke(); ctx.restore();
+  PIPE.forEach(([l, c], i) => {
+    const p = spring(prog(lt, 3.5 + i * 0.25, 4.3 + i * 0.25));
+    if (p <= 0) return;
+    const hit = env(lt, 5.4 + i * 0.6, 5.9 + i * 0.6, 0.15);
+    dot(sx + i * gap, y - hit * 14, (13 + 5 * hit) * p, c, { gb: 24 + 20 * hit });
+    txt(l, sx + i * gap, y + 50, { s: 24, w: 700, c: C.soft, al: 'center', a: clamp(p) });
+  });
+  const sp = prog(lt, 5.2, 9.4);
+  if (sp > 0 && sp < 1) {
+    const k = sp * (n - 1), hopP = k % 1;
+    die(sx + gap * k, y - 44 - Math.sin(hopP * Math.PI) * 50, 36, C.yellow, lt, { state: 'roll', seed: 3 });
+  }
+}
+
+// ---- 1. Client & daemon ----
+function sClient(lt) {
+  chapter('01', 'Client & daemon', 'buck2_client_ctx/src/daemon/client/connect.rs', lt);
+  const tx = 120, ty = 190, twd = 820, th = 540;
+  const a = terminal(tx, ty, twd, th, 'zsh — hello_world', lt, 0.2);
+  const cmd = 'buck2 build //app:main';
+  const n = Math.floor(cmd.length * prog(lt, 1.0, 3.0));
+  const ly = ty + 110;
+  if (a > 0) {
+    let x = rich([['~/hello_world ', C.mint], ['$ ', C.dim]], tx + 34, ly, { s: 27, mono: true, a });
+    x = rich([[cmd.slice(0, n), C.ink]], x, ly, { s: 27, mono: true, a });
+    if (lt < 3.4 && Math.floor(lt * 2.2) % 2 === 0) { ctx.fillStyle = C.orange; ctx.fillRect(x + 2, ly - 16, 14, 32); }
+  }
+  const jobs = Math.floor(41 * prog(lt, 17.0, 22.0));
+  const outs = [
+    [3.6, [['# client: walk up the tree to find .buckconfig', C.dim]]],
+    [8.0, [['Starting new buck2 daemon...', C.yellow]]],
+    [10.2, [['Connected to new buck2 daemon.', C.yellow]]],
+    [16.6, [['Jobs: ', C.dim], [`${jobs} finished`, C.ink], [lt < 22.2 ? '  ' + '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'[Math.floor(lt * 10) % 10] : '', C.orange]]],
+    [22.4, [['BUILD SUCCEEDED', C.green, { w: 700 }]]],
+  ];
+  outs.forEach(([t0, segs], i) => {
+    const p = prog(lt, t0, t0 + 0.4);
+    rich(segs, tx + 34 + (1 - eout(p)) * 20, ly + 70 + i * 50, { s: 23, mono: true, a: p, glow: i === 4 ? hexA(C.green, 0.6) : null });
+  });
+  confetti(tx + 300, ly + 270, lt, 22.5, { n: 50, seed: 4, speed: 500 });
+
+  // the client: a little courier
+  const cx = 1180, cy = 320;
+  const cp = spring(prog(lt, 2.8, 3.8));
+  if (cp > 0) scaled(cx, cy, cp, () => critter(cx, cy, 58, C.sky, lt, { cap: C.pink, look: lt < 10 ? [1, 0.6] : [-1, 0.2], mood: lt > 10.4 && lt < 12 ? 'grin' : 'smile', hop: lt > 3.8 && lt < 6 ? 5 : 0, seed: 1 }));
+  txt('buck2 client', cx, 420, { s: 27, w: 800, al: 'center', a: prog(lt, 3.4, 4.0) });
+  txt('Rust · lives for one command', cx, 456, { s: 19, c: C.dim, al: 'center', a: prog(lt, 3.6, 4.2) });
+  curve(tx + twd - 20, ly, 1030, 230, cx - 70, 300, eio(prog(lt, 2.6, 3.4)), { c: hexA(C.sky, 0.7), lw: 3, dash: [3, 10] });
+
+  // the daemon: big, sleepy, then wide awake
+  const dx = 1560, dy = 690;
+  const dp = spring(prog(lt, 5.2, 6.2));
+  const awake = lt > 8.4;
+  const wakeHop = env(lt, 8.4, 9.6, 0.2);
+  // dice orbit the daemon (back half drawn first)
+  const orbit = front => {
+    const oa = prog(lt, 15.0, 16.0) * clamp(dp);
+    for (let i = 0; i < 6; i++) {
+      const an = lt * 0.8 + i * Math.PI / 3;
+      if ((Math.sin(an) > 0) !== front) continue;
+      die(dx + Math.cos(an) * 200, dy - 10 + Math.sin(an) * 80, 30 + 6 * Math.sin(an), CONF[i], lt, { a: oa, n: i + 1, seed: i });
+    }
+  };
+  orbit(false);
+  if (dp > 0) scaled(dx, dy, dp, () => critter(dx, dy - wakeHop * 40 * Math.sin(prog(lt, 8.4, 9.6) * Math.PI), 120, C.lilac, lt, { closed: !awake, mood: !awake ? 'flat' : (lt < 9.6 ? 'o' : 'smile'), look: lt > 12.5 ? [-1, -0.2] : [-0.6, -0.8], seed: 2, gb: 40 }));
+  orbit(true);
+  if (!awake && dp > 0) zzz(dx + 90, dy - 120, lt, clamp(dp) * clamp((8.4 - lt) / 0.3));
+  txt('buck2 daemon', dx, 860, { s: 28, w: 800, al: 'center', a: prog(lt, 5.8, 6.4) });
+  const l1 = clamp((15 - lt) / 0.4), l2 = prog(lt, 15.2, 15.8);
+  txt('same binary, relaunched in the background', dx, 896, { s: 19, c: C.dim, al: 'center', a: prog(lt, 9.0, 9.6) * l1 });
+  txt('holds the DICE graph in memory', dx, 896, { s: 19, c: C.yellow, al: 'center', a: l2 });
+
+  // spawn: client relaunches itself as the daemon
+  curve(cx - 60, 480, 1150, 700, dx - 130, dy - 10, eio(prog(lt, 7.4, 8.4)), { c: hexA(C.lilac, 0.8), lw: 3, dash: [10, 8], off: -lt * 30 });
+  badge('get_daemon_exe() = current_exe()', 1180, 790, C.lilac, env(lt, 7.6, 11.4, 0.3), 17);
+
+  // gRPC call: an envelope flies over
+  const ep = prog(lt, 11.0, 12.6);
+  curve(cx + 60, 300, 1560, 300, dx, dy - 130, eio(prog(lt, 10.8, 11.6)), { c: hexA(C.pink, 0.6), lw: 3 });
+  if (ep > 0 && ep < 1) { const [x, y] = qpt(cx + 60, 300, 1560, 300, dx, dy - 130, eio(ep)); envelope(x, y, 26, 1, Math.sin(ep * 12) * 0.3); }
+  badge('gRPC · DaemonApi.Build()', 1530, 250, C.pink, prog(lt, 11.2, 11.8), 17);
+
+  // progress events stream back to the terminal
+  const sa = env(lt, 13.0, 22.4, 0.4);
+  if (sa > 0) {
+    for (let k = 0; k < 9; k++) {
+      const pp = ((lt * 0.6 + k / 9) % 1);
+      const [x, y] = qpt(dx - 120, dy + 10, 1180, 760, tx + twd - 10, ly + 270, pp);
+      star(x, y, 7 + 3 * Math.sin(lt * 5 + k), CONF[k % 6], sa * Math.sin(pp * Math.PI), lt * 3 + k);
+    }
+  }
+  badge('stream MultiCommandProgress', 1180, 790, C.mint, sa, 17);
+  captions([
+    [0.3, 9.6, 'Typing buck2 runs a short-lived Rust client. It finds your project by looking for .buckconfig.'],
+    [9.8, 19.2, 'No daemon yet? The client relaunches its own binary as a daemon and calls it over gRPC.'],
+    [19.4, 29.4, 'The daemon does the real work, streams progress back, then stays awake with its graph warm.'],
+  ], lt);
+}
+
+// ---- 2. Cells & BUCK files ----
+const CFG = ['[cells]', '  root = .', '  prelude = prelude', '  toolchains = toolchains', '', '[buildfile]', '  name = BUCK'];
+const CELLS = [['root', '.', C.orange, 1010, 430, 100, 1.4], ['prelude', 'prelude/', C.mint, 1360, 330, 90, 1.65], ['toolchains', 'toolchains/', C.sky, 1670, 460, 86, 1.9]];
+const BUCK_APP = ['cxx_binary(', '    name = "main",', '    srcs = ["main.cpp"],', '    deps = ["//lib:print"],', ')'];
+const TREE = [['.buckconfig', 0, C.yellow], ['app/', 0, C.soft], ['BUCK', 1, C.mint], ['main.cpp', 1, C.soft], ['lib/', 0, C.soft], ['BUCK', 1, C.mint], ['print.cpp', 1, C.soft], ['print.hpp', 1, C.soft]];
+function sCells(lt) {
+  chapter('02', 'Cells & BUCK files', 'buck2_interpreter_for_build/src/interpreter/calculation.rs', lt);
+  const SPLIT = 13.4;
+  const A = clamp((SPLIT - lt) / 0.6);
+  withAlpha(A, () => {
+    codePanel(120, 200, 640, 380, '.buckconfig', CFG, lt, 0.8, 0.22, { s: 25, lh: 42, hl: { 1: [2.0, 4.0, C.orange], 2: [2.6, 4.6, C.mint], 3: [3.2, 5.2, C.sky], 8: [0, 0, C.sky] } });
+    // re-highlight toolchains while the label resolves
+    if (lt > 8) box(134, 280 + 3 * 42 + 2 - 21 + 2, 612, 38, { r: 10, fill: hexA(C.sky, 0.18 * env(lt, 8.0, 12.8, 0.3)), stroke: hexA(C.sky, 0.6 * env(lt, 8.0, 12.8, 0.3)) });
+    CELLS.forEach(([name, dir, c, x, y, r, t0], i) => {
+      const p = spring(prog(lt, t0 + 0.6, t0 + 1.6));
+      if (p <= 0) return;
+      const bob = Math.sin(lt * 1.6 + i * 2) * 10;
+      const look = (lt > 8 && lt < 12.8) ? (i === 2 ? [0, 1] : [0.8, 0.6]) : [Math.sin(lt + i) * 0.7, 0.2];
+      const jump = i === 2 ? env(lt, 8.6, 9.6, 0.15) * 40 * Math.sin(prog(lt, 8.6, 9.6) * Math.PI) : 0;
+      // island ring
+      withAlpha(clamp(p), () => { ctx.strokeStyle = hexA(c, 0.35); ctx.lineWidth = 2; ctx.setLineDash([4, 10]); ctx.beginPath(); ctx.ellipse(x, y + r * 0.85 + bob * 0.3, r * 1.25, r * 0.26, 0, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]); });
+      scaled(x, y, p, () => critter(x, y + bob - jump, r * 0.8, c, lt, { look, seed: i + 4, mood: i === 2 && lt > 8.6 && lt < 10.5 ? 'grin' : 'smile' }));
+      txt(name, x, y + r + 50 + bob * 0.3, { s: 28, w: 800, c, al: 'center', a: clamp(p) });
+      txt(dir, x, y + r + 84 + bob * 0.3, { s: 19, mono: true, c: C.dim, al: 'center', a: clamp(p) });
+    });
+    // cell-qualified label
+    const la = prog(lt, 7.4, 8.0);
+    if (la > 0) {
+      const x0 = 160, y0 = 720;
+      txt('a label can name its cell:', x0, y0 - 60, { s: 22, c: C.dim, a: la });
+      const p = spring(la);
+      scaled(x0 + 200, y0, 0.7 + 0.3 * p, () => rich([['toolchains', C.sky, { w: 800 }], ['//:cxx', C.soft]], x0, y0, { s: 48, mono: true, a: la }));
+      const pp = eio(prog(lt, 8.4, 9.2));
+      curve(x0 + 165, y0 + 36, x0 + 165, y0 + 100, x0 + 300, y0 + 120, pp, { c: hexA(C.sky, 0.8), lw: 3 });
+      pill('→ ./toolchains/', x0 + 310, y0 + 122, { s: 22, c: C.sky, mono: true, a: prog(lt, 9.0, 9.5) });
+    }
+  });
+  // part B: packages & BUCK files
+  const t = lt - SPLIT;
+  if (t > -0.3) {
+    const B = clamp((t + 0.3) / 0.6);
+    withAlpha(B, () => {
+      const fa = prog(t, 0.2, 0.8);
+      box(120, 200, 340, 430, { a: fa, fill: 'rgba(28,18,58,0.9)' });
+      txt('hello_world/', 150, 240, { s: 22, w: 700, mono: true, c: C.ink, a: fa });
+      TREE.forEach(([nm, d, c], i) => {
+        const p = eout(prog(t, 0.5 + i * 0.12, 0.9 + i * 0.12));
+        const y = 290 + i * 40;
+        if (nm === 'BUCK') { const ga = env(t, 2.0, 7.4, 0.4); box(170 + d * 34 - 10, y - 17, 250, 34, { r: 10, fill: hexA(C.mint, 0.15 * ga), stroke: hexA(C.mint, 0.6 * ga), a: p }); if (ga > 0) star(400, y, 8, C.yellow, ga, t * 2); }
+        txt((d ? '└ ' : '') + nm, 160 + d * 34 + (1 - p) * 16, y, { s: 21, mono: true, c, a: p });
+      });
+      badge('package //app', 290, 670, C.mint, env(t, 2.2, 7.6, 0.4));
+      badge('package //lib', 290, 718, C.mint, env(t, 2.5, 7.6, 0.4));
+      codePanel(520, 200, 760, 330, 'app/BUCK', BUCK_APP, t, 1.2, 0.2, { s: 24, lh: 42, hl: { 1: [4.0, 7.4, C.pink] } });
+      // label anatomy
+      const la = prog(t, 3.6, 4.2);
+      if (la > 0) {
+        const parts = [['root', C.orange, 'cell'], ['//app', C.mint, 'package'], [':main', C.pink, 'target']];
+        let x = 560; const y = 640;
+        txt('LABEL', 560, 596, { s: 18, w: 800, c: C.dim, ls: 4, a: la });
+        parts.forEach(([s, c, d], i) => {
+          const p = spring(prog(t, 3.8 + i * 0.35, 4.6 + i * 0.35));
+          const w = tw(s, { s: 48, mono: true, w: 700 });
+          txt(s, x, y - (1 - clamp(p)) * 20 + Math.sin(t * 3 + i) * 3, { s: 48, mono: true, w: 700, c, a: clamp(p), glow: hexA(c, 0.4) });
+          line(x + w / 2, y + 34, x + w / 2, y + 70, clamp(p), { c: hexA(c, 0.7), head: false, lw: 2.5 });
+          txt(d, x + w / 2, y + 92, { s: 21, w: 600, c: C.soft, al: 'center', a: clamp(p) });
+          x += w + 8;
+        });
+      }
+      // the Starlark interpreter munches the BUCK file
+      const ix = 1540, iy = 300;
+      const ip = spring(prog(t, 7.4, 8.4));
+      const munch = env(t, 9.0, 10.4, 0.2);
+      if (ip > 0) scaled(ix, iy, ip, () => critter(ix, iy, 70, C.lilac, t, { glasses: true, mood: munch > 0 ? (Math.floor(t * 8) % 2 ? 'o' : 'flat') : 'smile', look: t < 10 ? [-1, 0.3] : [0, 1], seed: 8 }));
+      txt('starlark-rust', ix, iy + 100, { s: 24, w: 800, al: 'center', c: C.lilac, a: prog(t, 7.8, 8.3) });
+      txt('Buck2’s own interpreter', ix, iy + 132, { s: 18, c: C.dim, al: 'center', a: prog(t, 8.0, 8.5) });
+      const fp = prog(t, 8.4, 9.2);
+      if (fp > 0 && fp < 1) { const [x, y] = qpt(1280, 300, 1400, 160, ix - 40, iy + 10, eio(fp)); fileIcon(x, y, 48 * (1 - fp * 0.5), C.mint, 1); }
+      // result: target node
+      const rp = spring(prog(t, 10.4, 11.4));
+      curve(ix, iy + 150, ix + 40, iy + 200, ix, 540, eio(prog(t, 10.2, 10.8)), { c: hexA(C.lilac, 0.7), lw: 3 });
+      if (rp > 0) scaled(ix, 680, 0.6 + 0.4 * rp, () => {
+        box(ix - 230, 550, 460, 290, { a: clamp(rp), fill: hexA(C.mint, 0.08), stroke: C.mint, glow: hexA(C.mint, 0.3), gb: 40, dash: [10, 7] });
+        txt('TargetNode', ix - 200, 590, { s: 26, w: 800, c: C.mint, a: clamp(rp) });
+        const rows = [['root//app:main', C.ink], ['rule  cxx_binary', C.orange], ['attrs srcs, deps', C.soft], ['unconfigured (for now)', C.dim]];
+        rows.forEach(([s, c], i) => txt(s, ix - 200 + (1 - eout(prog(t, 11 + i * 0.4, 11.5 + i * 0.4))) * 20, 640 + i * 46, { s: 21, mono: true, c, a: prog(t, 11 + i * 0.4, 11.5 + i * 0.4) }));
+      });
+    });
+  }
+  captions([
+    [0.3, 6.8, 'A Buck2 project is made of cells: named roots like root, prelude and toolchains.'],
+    [7.0, 13.2, 'The .buckconfig maps each cell to a directory, so a label can say which cell it lives in.'],
+    [13.6, 20.6, 'Any directory with a BUCK file is a package. Targets get labels like root//app:main.'],
+    [20.8, 27.6, 'BUCK files are Starlark, run by Buck2’s own Rust interpreter. Out come target nodes.'],
+  ], lt);
+}
+
+// ---- 3. The prelude ----
+const KNOWS = [['DICE, the incremental engine', true], ['actions & artifacts', true], ['remote execution', true], ['what C++ is', false], ['what Java is', false], ['what Python is', false]];
+const RULES = ['cxx_binary', 'cxx_library', 'rust_binary', 'python_binary', 'java_library', 'go_binary', 'genrule', 'sh_test', 'ocaml_binary', 'haskell_library', 'apple_bundle', 'android_apk', 'kotlin_library', 'http_archive', 'export_file', 'filegroup'];
+const GREET = [
+  'def _greet_impl(ctx):',
+  '    out = ctx.actions.declare_output("greet.txt")',
+  '    ctx.actions.write(out, "hello, " + ctx.attrs.who)',
+  '    return [DefaultInfo(default_output = out)]',
+  '',
+  'greet = rule(',
+  '    impl = _greet_impl,',
+  '    attrs = {"who": attrs.string()},',
+  ')',
+];
+function sPrelude(lt) {
+  chapter('03', 'The prelude', 'prelude/rules.bzl', lt);
+  const SPLIT = 17.0;
+  const A = clamp((SPLIT - lt) / 0.6);
+  withAlpha(A, () => {
+    // the Rust core: a crab-ish critter
+    const cp = spring(prog(lt, 0.4, 1.4));
+    const shake = lt > 5.2 && lt < 8.4 ? Math.sin(lt * 14) * 0.6 : 0;
+    if (cp > 0) scaled(300, 330, cp, () => {
+      for (const d of [-1, 1]) { // claws
+        const wave = Math.sin(lt * 3 + d) * 0.25;
+        ctx.save(); ctx.translate(300 + d * 125, 330 - 30); ctx.rotate(d * (0.5 + wave));
+        ctx.fillStyle = C.coral; ctx.beginPath(); ctx.arc(0, -40, 30, 0.6, Math.PI * 2 - 0.6); ctx.lineTo(0, -40); ctx.fill();
+        ctx.fillRect(-7, -14, 14, 34); ctx.restore();
+      }
+      critter(300, 330, 100, C.coral, lt, { look: [shake, 0.4], mood: lt > 5.2 && lt < 8.4 ? 'flat' : 'smile', seed: 11 });
+    });
+    txt('Buck2 core', 300, 470, { s: 32, w: 800, al: 'center', a: prog(lt, 1.0, 1.6) });
+    txt('~all Rust', 300, 506, { s: 20, c: C.dim, al: 'center', a: prog(lt, 1.2, 1.8) });
+    box(120, 560, 640, 350, { a: prog(lt, 1.6, 2.2), fill: 'rgba(28,18,58,0.9)' });
+    txt('THE CORE KNOWS…', 150, 600, { s: 18, w: 800, c: C.dim, ls: 4, a: prog(lt, 1.8, 2.3) });
+    KNOWS.forEach(([s, ok], i) => {
+      const t0 = ok ? 2.2 + i * 0.6 : 5.2 + (i - 3) * 0.8;
+      const p = spring(prog(lt, t0, t0 + 0.7));
+      const y = 650 + i * 44;
+      if (ok) check(170, y, 26, C.green, clamp(p)); else cross(170, y, 30, C.red, clamp(p));
+      txt(s, 205 + (1 - clamp(p)) * 20, y, { s: 23, c: ok ? C.ink : C.soft, a: clamp(p) });
+      if (!ok && p > 0) withAlpha(clamp(p) * 0.6, () => { ctx.fillStyle = C.red; ctx.fillRect(205, y + 2, tw(s, { s: 23 }) * eout(prog(lt, t0 + 0.3, t0 + 0.8)), 2); });
+    });
+    // the prelude toy box
+    const bx = 1340, by = 790;
+    const bp = spring(prog(lt, 8.4, 9.2));
+    const lid = eout(prog(lt, 9.0, 9.6)) * (1 + 0.15 * Math.sin(lt * 9) * prog(lt, 9.6, 10) * (1 - prog(lt, 13, 14)));
+    if (bp > 0) scaled(bx, by, bp, () => {
+      ctx.save(); ctx.translate(bx - 170, by - 70); ctx.rotate(-lid * 0.9);
+      ctx.fillStyle = shade(C.mint, 0.75); rr(-10, -26, 180, 26, 8); ctx.fill(); ctx.restore();
+      ctx.save(); ctx.translate(bx + 170, by - 70); ctx.rotate(lid * 0.9);
+      ctx.fillStyle = shade(C.mint, 0.75); rr(-170, -26, 180, 26, 8); ctx.fill(); ctx.restore();
+      box(bx - 170, by - 70, 340, 150, { r: 18, fill: shade(C.mint, 0.55), stroke: C.mint, glow: hexA(C.mint, 0.35), gb: 40 });
+      txt('prelude/', bx, by - 10, { s: 34, w: 800, mono: true, al: 'center', c: C.ink });
+      txt('a cell of plain Starlark', bx, by + 36, { s: 19, al: 'center', c: '#e8fff9' });
+    });
+    RULES.forEach((r, i) => {
+      const t0 = 9.6 + i * 0.32;
+      const p = prog(lt, t0, t0 + 0.9);
+      if (p <= 0) return;
+      const col = i % 4, row = Math.floor(i / 4);
+      const tx2 = 950 + col * 220, ty2 = 220 + row * 74;
+      const e = eout(p);
+      const x = lerp(bx, tx2, e), y = lerp(by - 80, ty2, e) - Math.sin(p * Math.PI) * 180;
+      const c = CONF[i % 6];
+      const land = spring(prog(lt, t0 + 0.9, t0 + 1.6));
+      scaled(x, y, p < 1 ? 0.6 + 0.4 * p : 1 + 0.12 * (1 - land) * Math.sin(land * 9), () => rotated(x, y, (1 - e) * 3 * (i % 2 ? 1 : -1), () => pill(r, x, y, { al: 'center', c, s: 19, mono: true, w: 600 })));
+    });
+    say(400, 260, 'I just run actions!', lt, 6.0, 9.0, { dx: 210, dy: -40, s: 24 });
+  });
+  // part B: your own rule uses the same API
+  const t = lt - SPLIT;
+  if (t > -0.3) {
+    const B = clamp((t + 0.3) / 0.6);
+    withAlpha(B, () => {
+      codePanel(120, 200, 1000, 470, 'greet.bzl', GREET, t, 0.6, 0.25, { s: 22, lh: 42, hl: { 1: [3.4, 6.4, C.orange], 2: [3.8, 6.4, C.pink], 3: [4.4, 6.4, C.mint], 5: [1.4, 3.4, C.lilac] } });
+      const side = [['cxx_binary', C.sky], ['genrule', C.yellow], ['rust_library', C.orange]];
+      txt('PRELUDE RULES', 1260, 240, { s: 18, w: 800, c: C.dim, ls: 4, a: prog(t, 0.6, 1.2) });
+      side.forEach(([n, c], i) => {
+        const p = spring(prog(t, 0.8 + i * 0.3, 1.6 + i * 0.3));
+        if (p > 0) scaled(1260, 300 + i * 80, p, () => pill(n, 1260, 300 + i * 80, { c, s: 24, mono: true }));
+      });
+      const gp = spring(prog(t, 2.8, 3.8));
+      if (gp > 0) scaled(1260, 560, gp, () => pill('greet  ★ yours', 1260, 560, { c: C.pink, s: 26, mono: true, glow: hexA(C.pink, 0.6), gb: 30 }));
+      star(1560, 545, 12, C.yellow, prog(t, 3.4, 3.8), t * 2);
+      star(1250, 520, 8, C.mint, prog(t, 3.6, 4.0), -t * 2);
+      txt('same API, same power', 1260, 630, { s: 22, c: C.soft, a: prog(t, 4.2, 4.8) });
+      // a BUCK file using it + Bucky
+      codePanel(120, 720, 700, 190, 'BUCK', ['load(":greet.bzl", "greet")', 'greet(name = "hi", who = "Bucky")'], t, 5.2, 0.4, { s: 22, lh: 42 });
+      const bp = spring(prog(t, 6.0, 7.0));
+      if (bp > 0) scaled(1100, 830, bp, () => bucky(1100, 830, 62, t, { mood: t > 7.2 ? 'grin' : 'smile', look: [-0.8, 0.2], hop: t > 7.2 && t < 8.6 ? 6 : 0 }));
+      say(1100, 750, 'That’s me!', t, 7.2, 8.8, { dx: 210, dy: -40, s: 24 });
+    });
+  }
+  captions([
+    [0.3, 8.6, 'Surprise: Buck2’s Rust core has no idea what C++, Java or Python are. It has no built-in rules.'],
+    [8.8, 16.8, 'Every rule, from cxx_binary to genrule, lives in the prelude: a cell of plain Starlark code.'],
+    [17.2, 25.6, 'Your own rules use exactly the same API: an impl function, attrs, and ctx.actions.'],
+  ], lt);
+}
+
+// ---- 4. DICE ----
+const KEYCODE = [
+  '#[async_trait]',
+  'pub trait Key: Clone + Eq + Hash + ... {',
+  '    type Value;',
+  '',
+  '    async fn compute(',
+  '        &self,',
+  '        ctx: &mut DiceComputations,',
+  '        cancellations: &CancellationContext,',
+  '    ) -> Self::Value;',
+  '',
+  '    fn equality_behavior() -> ...;',
+  '}',
+];
+const DICE_G = 15.6;
+const DN = [
+  // id, x, y, type, key, color, tReq, tDone, w
+  ['bk', 960, 230, 'BuildKey', 'cxx_link · main', C.pink, 0.0, 20.0, 380],
+  ['an', 960, 380, 'AnalysisKey', 'root//app:main', C.orange, 0.8, 18.8, 380],
+  ['cn', 560, 530, 'ConfiguredTargetNodeKey', 'root//app:main', C.yellow, 1.6, 8.6, 380],
+  ['ir', 560, 690, 'InterpreterResultsKey', 'root//app', C.mint, 2.4, 7.4, 380],
+  ['fa', 300, 850, 'ReadFileKey', 'app/BUCK', C.sky, 3.2, 4.6, 360],
+  ['ev', 800, 850, 'EvalImportKey', 'prelude//rules.bzl', C.lilac, 3.6, 6.6, 400],
+  ['al', 1380, 530, 'AnalysisKey', 'root//lib:print', C.orange, 9.6, 17.4, 380],
+  ['il', 1380, 690, 'InterpreterResultsKey', 'root//lib', C.mint, 10.4, 14.8, 380],
+  ['fl', 1620, 850, 'ReadFileKey', 'lib/BUCK', C.sky, 11.2, 12.6, 360],
+];
+const DE = [['bk', 'an', 0.8], ['an', 'cn', 1.6], ['cn', 'ir', 2.4], ['ir', 'fa', 3.2], ['ir', 'ev', 3.6], ['an', 'al', 9.6], ['al', 'il', 10.4], ['il', 'fl', 11.2], ['il', 'ev', 11.8]];
+function sDice(lt) {
+  chapter('04', 'DICE', 'dice/dice/src/api/key.rs', lt);
+  const A = clamp((DICE_G - 0.2 - lt) / 0.6);
+  withAlpha(A, () => {
+    const hd = 'Dynamic Incremental Computation Engine';
+    heading(hd, lt, 190, 'the engine at the heart of the daemon', [0, 8, 20, 32]);
+    const trio = [['Key', 'what to compute', C.sky, 'AnalysisKey(root//app:main)'], ['compute()', 'async · asks for other keys', C.pink, 'ctx.compute(&dep).await'], ['Value', 'memoized result', C.green, 'providers + declared actions']];
+    trio.forEach(([n, d, c, ex], i) => {
+      const p = spring(prog(lt, 1.2 + i * 0.8, 2.0 + i * 0.8));
+      if (p <= 0) return;
+      const y = 380 + i * 170;
+      scaled(400, y, 0.7 + 0.3 * p, () => {
+        box(120, y - 62, 620, 124, { a: clamp(p), stroke: hexA(c, 0.7), glow: hexA(c, 0.25), fill: 'rgba(28,18,58,0.92)' });
+        die(176, y, 56, c, lt, { a: clamp(p), state: i === 1 ? 'roll' : (i === 2 ? 'happy' : 'pips'), n: 4, seed: i });
+        txt(n, 228, y - 22, { s: 32, w: 800, c, a: clamp(p) });
+        txt(d, 228 + tw(n, { s: 32, w: 800 }) + 18, y - 21, { s: 19, c: C.dim, a: clamp(p) });
+        txt(ex, 228, y + 24, { s: 19, mono: true, c: C.soft, a: clamp(p) });
+      });
+      if (i < 2) line(430, y + 66, 430, y + 104, eio(prog(lt, 1.9 + i * 0.8, 2.4 + i * 0.8)), { c: C.faint });
+    });
+    codePanel(820, 280, 980, 560, 'dice/src/api/key.rs', KEYCODE, lt, 3.6, 0.22, { s: 21, lh: 38, hl: { 4: [8.0, 15, C.pink], 6: [9.6, 15, C.sky], 10: [12.2, 15, C.green] } });
+    badge('ctx.compute(&other) records a dependency', 1310, 885, C.sky, prog(lt, 10.0, 10.6), 18);
+    badge('equal values stop recomputation (more later!)', 1310, 935, C.green, prog(lt, 12.4, 13.0), 18);
+  });
+  const g = lt - DICE_G;
+  if (g > -0.2) {
+    const B = clamp((g + 0.2) / 0.6);
+    withAlpha(B, () => {
+      const pos = Object.fromEntries(DN.map(n => [n[0], n]));
+      for (const [f, t2, t0] of DE) {
+        const a = pos[f], b = pos[t2];
+        const p = eio(prog(g, t0, t0 + 0.6));
+        const shared = f === 'il' && t2 === 'ev';
+        const doneB = prog(g, b[7], b[7] + 0.3);
+        curve(a[1], a[2] + 46, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2 + 14, b[1], b[2] - 52, p, { c: shared ? hexA(C.lilac, 0.95) : hexA(C.soft, 0.25 + 0.4 * doneB), lw: shared ? 3.5 : 2.5, dash: shared ? [10, 8] : null, off: -g * 24 });
+        // little request sparks travelling down each edge
+        const sp = prog(g, t0, t0 + 0.6);
+        if (sp > 0 && sp < 1) { const [x, y] = qpt(a[1], a[2] + 46, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2 + 14, b[1], b[2] - 52, eio(sp)); star(x, y, 10, C.yellow, 1, g * 4); }
+      }
+      for (const [id, x, y, type, key, c, tr, td, w] of DN) {
+        const ap = spring(prog(g, tr, tr + 0.7));
+        dnode(x, y, type, key, c, lt, { a: clamp(ap * 1.5), k: 0.7 + 0.3 * ap, pend: prog(g, tr + 0.2, tr + 0.5), done: prog(g, td, td + 0.4), w, seed: x + y });
+      }
+      badge('compute() awaits its deps…', 960 + 410, 380, C.orange, env(g, 1.2, 8.4, 0.3), 17);
+      badge('seen it! memoized', 800, 925, C.lilac, env(g, 12.0, 18.0, 0.3), 18);
+      // worker threads
+      const wa = prog(g, 2.0, 2.6);
+      txt('tokio worker threads', 120, 300, { s: 18, c: C.dim, a: wa });
+      for (let i = 0; i < 4; i++) {
+        const busy = Math.sin(g * 4 + i * 1.9) > -0.2 && g < 20.2;
+        die(136 + i * 44, 260 - (busy ? Math.abs(Math.sin(g * 8 + i)) * 8 : 0), 30, busy ? C.green : C.faint, lt, { a: wa, state: busy ? 'roll' : 'sleep', seed: i * 5, gb: busy ? 12 : 0 });
+      }
+      confetti(960, 230, g, 20.3, { n: 70, seed: 9 });
+      const bp = spring(prog(g, 20.4, 21.4));
+      if (bp > 0) scaled(1640, 300, bp, () => bucky(1640, 300, 60, lt, { mood: 'grin', look: [-1, 0], hop: 4 }));
+      say(1640, 220, 'One graph. No phases!', g, 21.2, 24.4, { dx: -60, dy: -60, s: 24 });
+    });
+  }
+  captions([
+    [0.3, 7.8, 'Inside the daemon lives DICE: the Dynamic Incremental Computation Engine.'],
+    [8.0, 15.2, 'Everything is a Key. Its async compute() asks DICE for other keys, recording each dependency.'],
+    [15.6, 24.0, 'Ask for one output, and the graph grows on demand: files read, packages load, rules analyze.'],
+    [24.2, 31.8, 'Every finished key is memoized. When //lib loads the same .bzl file, it’s already done.'],
+    [32.0, 39.6, 'There are no separate phases: loading, analysis and building are all keys in one graph.'],
+  ], lt);
+}
+
+// ---- 5. Configurations ----
+const SEL = ['cxx_library(', '    name = "print",', '    srcs = ["print.cpp"] + select({', '        "config//os:linux": ["linux.cpp"],', '        "config//os:macos": ["mac.cpp"],', '    }),', ')'];
+const PLATS = [['linux-x86_64', C.mint, 300, 3, 9.2, 300], ['macos-arm64', C.pink, 640, 4, 11.0, 610]];
+function sConfig(lt) {
+  chapter('05', 'Configurations', 'buck2_configured/src/nodes.rs', lt);
+  codePanel(120, 190, 860, 360, 'lib/BUCK  ·  unconfigured', SEL, lt, 0.8, 0.2, { s: 22, lh: 38, hl: { 2: [3.4, 8.4, C.yellow], 3: [9.4, 16, C.mint], 4: [11.2, 16, C.pink] } });
+  badge('select(): decided later', 760, 590, C.yellow, env(lt, 3.6, 8.6, 0.3), 18);
+  // platform critters wearing hats hop over to their cards
+  PLATS.forEach(([name, c, x0, , tj, cy], i) => {
+    const p = spring(prog(lt, 4.8 + i * 0.8, 5.8 + i * 0.8));
+    if (p <= 0) return;
+    const jp = prog(lt, tj, tj + 1.2);
+    const tx = 1740, ty = cy - 34;
+    const x = lerp(x0, tx, eio(jp)), y = lerp(760, ty, eio(jp)) - Math.sin(jp * Math.PI) * 220;
+    const r = lerp(64, 40, eio(jp));
+    scaled(x, y, p, () => critter(x, y, r, c, lt, { hat: shade(c, 0.5), mood: jp > 0 && jp < 1 ? 'grin' : 'smile', look: [jp > 0 ? 1 : 0.4, -0.3], seed: 20 + i, hop: jp >= 1 ? 0 : (lt < tj ? 3 : 0) }));
+    txt(name, x0, 860, { s: 24, w: 800, mono: true, c, al: 'center', a: clamp(p) * (1 - prog(lt, tj, tj + 0.4)) });
+  });
+  txt('PLATFORMS', 470, 670, { s: 18, w: 800, c: C.dim, ls: 4, al: 'center', a: prog(lt, 4.8, 5.4) * (1 - prog(lt, 11, 11.6)) });
+  // configured cards
+  PLATS.forEach(([name, c, , n, tj, cy], i) => {
+    const p = spring(prog(lt, tj + 1.1, tj + 1.9));
+    if (p <= 0) return;
+    curve(980, 330, 1080, 330 + i * 120, 1160, cy + 40, eio(prog(lt, tj + 0.8, tj + 1.4)), { c: hexA(c, 0.7), lw: 3 });
+    scaled(1480, cy + 80, 0.7 + 0.3 * p, () => {
+      box(1160, cy - 20, 640, 220, { a: clamp(p), fill: hexA(c, 0.1), stroke: c, glow: hexA(c, 0.35), gb: 40 });
+      die(1250, cy + 34, 44, c, lt, { a: clamp(p), state: 'happy', seed: i });
+      txt('root//lib:print', 1290, cy + 20, { s: 26, w: 700, mono: true, a: clamp(p) });
+      txt(`(${name}#${i ? '9c1e' : '3f2a'})`, 1290, cy + 54, { s: 20, mono: true, c, a: clamp(p) });
+      txt('srcs = [print.cpp, ' + (i ? 'mac.cpp' : 'linux.cpp') + ']', 1190, cy + 140, { s: 21, mono: true, c: C.soft, a: prog(lt, tj + 1.8, tj + 2.3) });
+    });
+  });
+  badge('ConfiguredTargetLabel = label + configuration hash', 1480, 930, C.yellow, prog(lt, 16.6, 17.2), 18);
+  captions([
+    [0.3, 7.8, 'A target node is still unconfigured: its select() branches haven’t been chosen yet.'],
+    [8.0, 15.8, 'Pair it with a platform, and Buck2 resolves every select() into a configured target node.'],
+    [16.0, 23.6, 'The same target can be configured many ways at once, side by side in the same graph.'],
+  ], lt);
+}
+
+// ---- 6. Analysis ----
+const CXX_IMPL = [
+  'def cxx_library_impl(ctx):',
+  '    obj = ctx.actions.declare_output("print.o")',
+  '    ctx.actions.run(',
+  '        ["clang++", "-c", src, "-o", obj.as_output()],',
+  '        category = "cxx_compile",',
+  '    )',
+  '    return [DefaultInfo(...), MergedLinkInfo(...)]',
+];
+const AG = {
+  files: [['print.cpp', 260, 700], ['print.hpp', 260, 790], ['main.cpp', 260, 880], ['print.o', 1000, 735], ['main.o', 1000, 860], ['main', 1640, 800]],
+  acts: [['cxx_compile', 640, 735, ['print.cpp', 'print.hpp'], 'print.o'], ['cxx_compile', 640, 860, ['main.cpp', 'print.hpp'], 'main.o'], ['cxx_link', 1320, 800, ['print.o', 'main.o'], 'main']],
+};
+function actionGraph(lt, t0, o = {}) {
+  const dy = o.dy || 0;
+  const f = Object.fromEntries(AG.files.map(([n, x, y]) => [n, [n, x, y + dy]]));
+  const st = o.state || (() => ({}));
+  AG.acts.forEach(([m, x, y0, ins, out], i) => {
+    const y = y0 + dy;
+    const p = prog(lt, t0 + 0.5 + i * 0.8, t0 + 1.2 + i * 0.8);
+    ins.forEach(n => curve(f[n][1] + 85, f[n][2], (f[n][1] + x) / 2, (f[n][2] + y) / 2, x - 112, y, eio(p), { c: hexA(C.soft, 0.35), lw: 2.5 }));
+    curve(x + 112, y, (x + f[out][1]) / 2, (y + f[out][2]) / 2, f[out][1] - 85, f[out][2], eio(prog(lt, t0 + 0.8 + i * 0.8, t0 + 1.4 + i * 0.8)), { c: hexA(C.soft, 0.35), lw: 2.5 });
+    const s = st('a' + i);
+    const a = spring(p);
+    if (a > 0) scaled(x, y + (s.jump || 0), 0.7 + 0.3 * a, () => {
+      box(x - 110, y - 34, 220, 68, { r: 34, a: clamp(a), fill: s.fill || hexA(C.pink, 0.2), stroke: s.stroke || C.pink, glow: s.glow || null, gb: 36 });
+      txt(m, x - 18, y + 1, { s: 20, w: 700, mono: true, al: 'center', c: C.ink, a: clamp(a) });
+      withAlpha(clamp(a), () => face(x + 74, y - 6, 6.5, lt, { mood: s.mood || 'smile', seed: i * 3, cheeks: false, closed: s.closed }));
+    });
+    if (s.label) badge(s.label, x, y + (s.ly ?? -60), s.lc || C.green, s.la ?? 1, 16);
+  });
+  AG.files.forEach(([n, x, y0], i) => {
+    const y = y0 + dy;
+    const out = i >= 3;
+    const p = prog(lt, t0 + (out ? 1.0 + (i - 3) * 0.8 : i * 0.15), t0 + (out ? 1.4 + (i - 3) * 0.8 : 0.4 + i * 0.15));
+    const s = st(n);
+    box(x - 84, y - 27, 168, 54, { r: 14, a: p, fill: s.fill || (out ? 'rgba(28,18,58,0.95)' : 'rgba(40,28,80,0.9)'), stroke: s.stroke || (out ? hexA(C.yellow, 0.6) : 'rgba(196,181,253,0.4)'), glow: s.glow || null, gb: 30, dash: out && !s.solid ? [7, 5] : null });
+    txt(n, x, y + 1, { s: 20, mono: true, al: 'center', c: out ? C.yellow : C.soft, a: p });
+    if (s.check) check(x + 104, y, 24, C.green, s.check);
+  });
+}
+function sAnalysis(lt) {
+  chapter('06', 'Analysis', 'buck2_analysis/src/analysis/calculation.rs', lt);
+  const p1 = spring(prog(lt, 0.4, 1.2));
+  if (p1 > 0) scaled(140, 220, p1, () => pill('root//lib:print  (linux-x86_64)', 140, 220, { s: 22, c: C.mint, mono: true }));
+  line(320, 246, 400, 290, eio(prog(lt, 1.0, 1.6)), { c: hexA(C.mint, 0.6), lw: 2.5 });
+  const ap = spring(prog(lt, 1.2, 2.0));
+  dnode(430, 340, 'AnalysisKey', 'root//lib:print', C.orange, lt, { a: clamp(ap * 1.5), k: 0.7 + 0.3 * ap, pend: prog(lt, 1.6, 2.0), done: prog(lt, 9.0, 9.4), seed: 5 });
+  curve(624, 340, 760, 300, 870, 300, eio(prog(lt, 2.4, 3.0)), { c: hexA(C.orange, 0.7), lw: 3 });
+  badge('run the rule’s Starlark impl', 730, 410, C.orange, env(lt, 2.6, 8.2, 0.3), 16);
+  codePanel(880, 180, 920, 350, 'prelude/cxx/cxx.bzl (simplified)', CXX_IMPL, lt, 3.2, 0.26, { s: 20, lh: 36, hl: { 1: [5.4, 8.4, C.yellow], 2: [6.2, 9.0, C.pink], 6: [9.2, 13.6, C.mint] } });
+  badge('declares, but runs nothing', 1340, 570, C.pink, env(lt, 6.6, 12.4, 0.3), 17);
+  // providers: gift boxes fly to the dependent
+  const rx = 300, ry = 520;
+  const rp = spring(prog(lt, 8.6, 9.6));
+  const caught = lt > 11.6;
+  if (rp > 0) scaled(rx, ry, rp, () => critter(rx, ry, 56, C.sky, lt, { look: lt < 11.6 ? [1, -0.4] : [1, 0.4], mood: caught ? (lt < 13.6 ? 'grin' : 'smile') : 'o', hop: caught && lt < 12.6 ? 6 : 0, seed: 30 }));
+  txt('root//app:main', rx, ry + 82, { s: 20, mono: true, w: 700, al: 'center', c: C.sky, a: prog(lt, 9.0, 9.6) });
+  const GIFTS = [['DefaultInfo', C.mint, 480], ['MergedLinkInfo', C.pink, 650]];
+  GIFTS.forEach(([n, c, gx], i) => {
+    const t0 = 9.8 + i * 0.5;
+    const p = prog(lt, t0, t0 + 1.4);
+    if (p <= 0) return;
+    const [x, y] = p < 1 ? qpt(1150, 480, 900, 260, gx, 530, eio(p)) : [gx, 530 + Math.sin(lt * 2 + i) * 4];
+    const open = eback(prog(lt, 12.8 + i * 0.4, 13.6 + i * 0.4));
+    gift(x, y, 64, c, lt, { rot: p < 1 ? Math.sin(p * 10) * 0.5 : 0, open });
+    if (open > 0.3) {
+      star(x - 30, y - 60 - open * 10, 9, C.yellow, clamp(open), lt * 3);
+      star(x + 28, y - 70 - open * 14, 7, c, clamp(open), -lt * 3);
+    }
+    txt(n, x, y + 62, { s: 17, mono: true, w: 700, al: 'center', c, a: prog(lt, t0 + 1.2, t0 + 1.6) });
+  });
+  txt('“here’s how to link me”', 565, 640, { s: 19, c: C.soft, al: 'center', a: env(lt, 13.8, 17.0, 0.3) });
+  // action graph
+  const ga = prog(lt, 16.8, 17.4);
+  txt('ACTION GRAPH', 120, 650, { s: 18, w: 800, c: C.pink, ls: 4, a: ga });
+  if (ga > 0) withAlpha(ga, () => actionGraph(lt, 17.0));
+  captions([
+    [0.3, 8.4, 'Analysis runs the rule’s Starlark impl for one configured target.'],
+    [8.6, 16.6, 'It declares outputs and actions, then hands providers to its dependents, like little gifts.'],
+    [16.8, 25.6, 'Still nothing is compiled. The declared actions form a graph of commands, inputs and outputs.'],
+  ], lt);
+}
+
+// ---- 7. Execution ----
+function heatPos(lt, t0, d) { return clamp((lt - t0) / d); }
+function sExec(lt) {
+  chapter('07', 'Execution', 'buck2_execute_impl/src/executors/hybrid.rs', lt);
+  const SPLIT = 10.6;
+  const A = clamp((SPLIT - lt) / 0.6);
+  withAlpha(A, () => {
+    withAlpha(prog(lt, 0.3, 0.9), () => actionGraph(lt + 30, 30, {
+      dy: -450,
+      state: k => {
+        if (k === 'a1') { const h = prog(lt, 4.2, 4.6); return { fill: h > 0 ? hexA(C.green, 0.2) : null, stroke: h > 0 ? C.green : null, mood: h > 0 ? 'grin' : 'smile', label: h > 0 ? 'cache HIT' : null, lc: C.green, la: h, ly: 60 }; }
+        if (k === 'a0') { const m = prog(lt, 6.2, 6.6); return { mood: m > 0 ? 'sad' : 'smile', label: m > 0 ? 'cache miss' : null, lc: C.red, la: m }; }
+        if (k === 'main.o') return { check: prog(lt, 5.0, 5.4), solid: lt > 5 };
+        return {};
+      }
+    }));
+    // the remote action cache: a cloud with a face
+    const ca = spring(prog(lt, 1.0, 1.8));
+    if (ca > 0) scaled(960, 700, 0.7 + 0.3 * ca, () => {
+      cloud(620, 540, 680, 330, { a: clamp(ca) });
+      const mood = lt > 6.2 ? 'sad' : (lt > 4.2 ? 'grin' : (lt > 2.4 ? 'o' : 'smile'));
+      face(960, 680, 22, lt, { mood, look: lt < 4.2 ? [0, -1] : [lt < 6.2 ? 0.5 : -0.5, -1], seed: 40 });
+      txt('Remote action cache', 960, 790, { s: 26, w: 800, al: 'center', a: clamp(ca) });
+      txt('action digest → ActionResult', 960, 826, { s: 18, mono: true, c: C.dim, al: 'center', a: clamp(ca) });
+    });
+    // digests fly down
+    [[640, 410, 2.6, '4be2…', C.green], [640, 285, 4.8, '9a1f…', C.red]].forEach(([x, y, t0, d, c]) => {
+      const p = prog(lt, t0, t0 + 1.2);
+      if (p > 0 && p < 1) { const [px, py] = qpt(x, y + 34, x - 60, 560, 940, 640, eio(p)); pill('sha256:' + d, px, py, { al: 'center', s: 16, mono: true, c: C.yellow }); }
+    });
+    badge('main.o comes straight back', 1500, 640, C.green, prog(lt, 4.4, 4.9), 17);
+    badge('print.o: nobody has built this yet', 1500, 720, C.red, prog(lt, 6.4, 6.9), 17);
+  });
+  // ---- the race ----
+  const t = lt - SPLIT;
+  if (t > -0.3) {
+    const B = clamp((t + 0.3) / 0.6);
+    withAlpha(B, () => {
+      const X0 = 430, X1 = 1600, LANES = [['local', 'forkserver on your machine', C.mint, 470], ['remote', 'RE build farm', C.sky, 710]];
+      LANES.forEach(([n, d, c, y], i) => {
+        const p = eout(prog(t, 0.2 + i * 0.3, 0.9 + i * 0.3));
+        box(X0 - 60, y - 76, (X1 - X0 + 180) * p, 152, { r: 30, a: p, fill: hexA(c, 0.07), stroke: hexA(c, 0.3) });
+        withAlpha(p * 0.5, () => { ctx.strokeStyle = hexA(c, 0.5); ctx.setLineDash([16, 14]); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(X0, y + 52); ctx.lineTo(X0 + (X1 - X0) * p, y + 52); ctx.stroke(); ctx.setLineDash([]); });
+        txt(n, 120, y - 14, { s: 32, w: 800, c, a: p });
+        txt(d, 120, y + 22, { s: 17, c: C.dim, a: p });
+        // checkered finish line
+        withAlpha(prog(t, 1.0, 1.5), () => { for (let r = 0; r < 10; r++) for (let q = 0; q < 2; q++) { ctx.fillStyle = (r + q) % 2 ? '#fff6ea' : '#2a1640'; ctx.fillRect(X1 + 60 + q * 14, y - 70 + r * 14, 14, 14); } });
+      });
+      // heats: [title, t0, localStart, localDur, remoteStart, remoteDur, winner]
+      const HEATS = [['Heat 1 · cxx_compile print.o', 1.0, 2.0, 10, 3.6, 4.8, 'remote', 11.6], ['Heat 2 · cxx_link main', 12.6, 13.2, 3.0, 14.4, 4.5, 'local', 21.4]];
+      for (const [title, h0, ls, ld, rs, rd, win, h1] of HEATS) {
+        const ha = env(t, h0, h1, 0.4);
+        if (ha <= 0) continue;
+        const claim = win === 'remote' ? rs + rd : ls + ld;
+        withAlpha(ha, () => {
+          const tp = spring(prog(t, h0, h0 + 0.8));
+          scaled(960, 240, tp, () => pill(title, 960, 240, { al: 'center', s: 26, mono: true, c: C.yellow }));
+          const runners = [['local', C.mint, 470, ls, ld], ['remote', C.sky, 710, rs, rd]];
+          runners.forEach(([who, c, y, st, d]) => {
+            const tt = Math.min(t, claim);
+            const p = heatPos(tt, st, d);
+            const won = who === win, after = t > claim;
+            const x = lerp(X0, X1, eio(p) * 0.4 + p * 0.6);
+            const running = t > st && !after;
+            const mood = after ? (won ? 'grin' : 'sad') : (running ? 'grin' : 'smile');
+            critter(x, y + (after && !won ? 10 : 0), 46, c, lt, { run: running ? 16 : 0, hop: running ? 8 : (after && won ? 5 : 0), mood, look: after && !won ? [0.3, 1] : [1, 0], seed: y, tilt: running ? 0.12 : (after && !won ? -0.15 : 0), squash: after && !won ? 0.12 : 0 });
+            if (won && after) { star(x, y - 76 + Math.sin(lt * 4) * 4, 18, C.yellow, prog(t, claim, claim + 0.3), lt); badge('claimed first!', x, y - 120, C.green, prog(t, claim + 0.1, claim + 0.5), 17); }
+            if (!won && after) badge('cancelled', x, y - 90, C.red, prog(t, claim + 0.2, claim + 0.6), 17);
+            if (who === 'remote' && t > h0 + 0.5 && t < st) {
+              badge('uploading inputs…', X0 + 120, y - 92, C.sky, env(t, h0 + 0.5, st, 0.2), 16);
+              for (let k = 0; k < 5; k++) { const q = ((t * 1.4 + k / 5) % 1); dot(X0 + 60 + k * 12, y - 40 - q * 60, 4, C.sky, { a: Math.sin(q * Math.PI) }); }
+            }
+          });
+          confetti(X1 + 60, win === 'remote' ? 700 : 460, t, claim, { n: 60, seed: h0 * 10 | 0 });
+        });
+      }
+      const qa = prog(t, 6.4, 7.0);
+      box(W / 2 - 560, 830, 1120, 92, { a: qa, fill: 'rgba(24,14,50,0.95)', stroke: hexA(C.lilac, 0.4) });
+      txt('// when RE takes a claim, we cancel local commands', W / 2 - 530, 862, { s: 22, mono: true, c: C.dim, a: qa });
+      txt('HybridExecutor::exec_cmd', W / 2 - 530, 896, { s: 18, mono: true, c: C.lilac, a: qa });
+    });
+  }
+  captions([
+    [0.3, 10.2, 'Each action becomes a command. First stop: the remote action cache. Has anyone run this before?'],
+    [10.8, 17.0, 'A miss? In hybrid mode Buck2 can race the same command locally and on remote execution…'],
+    [17.2, 22.8, '…and whichever side claims the result first wins. The other one is cancelled.'],
+    [23.0, 31.6, 'Either side can win, so each command finishes as fast as the faster runner.'],
+  ], lt);
+}
+
+// ---- 8. Deferred materialization ----
+const MATF = [['print.o', 300, 1260], ['main.o', 560, 1450], ['main', 820, 1640]];
+function sMat(lt) {
+  chapter('08', 'Deferred materialization', 'buck2_execute_impl/src/materializers/deferred.rs', lt);
+  const ca = spring(prog(lt, 0.4, 1.2));
+  if (ca > 0) scaled(1450, 340, 0.7 + 0.3 * ca, () => {
+    cloud(1100, 170, 700, 330, { a: clamp(ca) });
+    txt('Remote CAS', 1450, 260, { s: 28, w: 800, al: 'center', a: clamp(ca) });
+    txt('content digest → bytes', 1450, 296, { s: 18, mono: true, c: C.dim, al: 'center', a: clamp(ca) });
+  });
+  MATF.forEach(([n, , cx], i) => {
+    const p = spring(prog(lt, 1.4 + i * 0.3, 2.2 + i * 0.3));
+    if (p > 0) scaled(cx, 400, p, () => { fileIcon(cx, 390 + Math.sin(lt * 2 + i) * 5, 60, C.sky); txt(n, cx, 450, { s: 19, mono: true, w: 700, al: 'center' }); });
+  });
+  // local disk
+  const da = prog(lt, 2.8, 3.4);
+  box(120, 560, 1000, 360, { a: da, fill: 'rgba(28,18,58,0.9)' });
+  txt('buck-out/v2/gen/', 150, 600, { s: 22, w: 700, mono: true, c: C.ink, a: da });
+  txt('your disk', 1090, 600, { s: 18, c: C.dim, al: 'right', a: da });
+  const DIG = ['6e34…', 'b1c0…', 'f00d…'];
+  MATF.forEach(([n, gx, cx], i) => {
+    const p = prog(lt, 3.4 + i * 0.3, 3.9 + i * 0.3);
+    const lp = prog(lt, 4.4 + i * 0.4, 5.4 + i * 0.4);
+    curve(cx, 470, (cx + gx) / 2, 520, gx, 650, eio(lp), { c: hexA(C.lilac, 0.6), lw: 2.5, dash: [3, 9], off: -lt * 20, head: false });
+    const solid = i === 2 ? eout(prog(lt, 18.2, 19.0)) : 0;
+    ghost(gx, 730, 120, lt, { a: p, solid, seed: i * 2 });
+    txt(n, gx, 830, { s: 21, mono: true, w: 700, al: 'center', c: solid > 0.5 ? C.green : C.soft, a: p });
+    txt('sha256:' + DIG[i], gx, 862, { s: 16, mono: true, al: 'center', c: C.dim, a: prog(lt, 5.0 + i * 0.4, 5.6 + i * 0.4) });
+  });
+  const bk = spring(prog(lt, 5.6, 6.6));
+  if (bk > 0) scaled(260, 340, bk, () => bucky(260, 340, 60, lt, { mood: lt > 6.6 && lt < 10 ? 'o' : 'smile', look: [0.6, 1], hop: lt > 18.8 && lt < 21 ? 5 : 0 }));
+  say(300, 270, 'Boo! Ghost files!', lt, 6.6, 10.0, { dx: 230, dy: -60, s: 24 });
+  say(300, 270, 'Only what you need!', lt, 19.2, 23.0, { dx: 230, dy: -60, s: 24 });
+  badge('declare_cas_many(): just the digests', 760, 420, C.lilac, env(lt, 4.6, 10.4, 0.3), 17);
+  // the materializer, with a checklist
+  const mp = spring(prog(lt, 8.6, 9.6));
+  if (mp > 0) scaled(1290, 700, mp, () => critter(1290, 700, 62, C.lilac, lt, { glasses: true, look: lt > 15.4 && lt < 19 ? [-1, 0.2] : [0.8, 0.2], mood: lt > 19 ? 'grin' : 'smile', seed: 50 }));
+  txt('Deferred', 1290, 800, { s: 22, w: 800, al: 'center', c: C.lilac, a: prog(lt, 9.0, 9.6) });
+  txt('Materializer', 1290, 828, { s: 22, w: 800, al: 'center', c: C.lilac, a: prog(lt, 9.0, 9.6) });
+  const la = prog(lt, 9.6, 10.2);
+  box(1400, 600, 400, 210, { a: la, fill: '#fff8ee', stroke: null, r: 16 });
+  MATF.forEach(([n], i) => {
+    const on = i === 2 && lt > 18.6;
+    const p = prog(lt, 10.0 + i * 0.3, 10.4 + i * 0.3);
+    txt(n, 1430, 650 + i * 56, { s: 20, mono: true, w: 700, c: C.dark, a: p });
+    txt(on ? 'on disk' : 'in CAS only', 1600, 650 + i * 56, { s: 19, c: on ? '#178a3e' : '#7d63b8', a: p, w: 600 });
+    if (on) check(1770, 650 + i * 56, 22, '#178a3e', 1); else dot(1770, 650 + i * 56, 6, '#b9a6ea', { a: p, glow: false });
+  });
+  // a request comes in: download just main
+  badge('you asked for main → ensure_materialized()', 760, 420, C.green, env(lt, 15.0, 23.6, 0.3), 17);
+  for (let k = 0; k < 10; k++) {
+    const q = prog(lt, 16.2 + k * 0.18, 17.4 + k * 0.18);
+    if (q > 0 && q < 1) { const [x, y] = qpt(1640, 470, 1300, 560, 820, 700, eio(q)); ctx.save(); ctx.translate(x, y); ctx.rotate(q * 6); ctx.fillStyle = CONF[k % 6]; ctx.fillRect(-7, -7, 14, 14); ctx.restore(); }
+  }
+  confetti(820, 700, lt, 18.8, { n: 50, seed: 12, speed: 480 });
+  badge('print.o & main.o: never downloaded', 430, 900, C.mint, prog(lt, 20.0, 20.6), 17);
+  captions([
+    [0.3, 8.0, 'When an action runs remotely, its outputs stay in the remote CAS. Buck2 keeps just their digests.'],
+    [8.2, 15.4, 'Locally they’re ghosts: declared in buck-out but not downloaded, tracked by the materializer.'],
+    [15.6, 23.6, 'Only files someone actually needs get downloaded. The rest never leave the cloud.'],
+  ], lt);
+}
+
+// ---- 9. Incremental ----
+const CHAIN = [['ReadFileKey', 'lib/print.cpp', C.sky, 300], ['BuildKey', 'cxx_compile print.o', C.pink, 740], ['BuildKey', 'cxx_link main', C.orange, 1180]];
+const SLEEPY = [['ReadFileKey', 'app/main.cpp', C.sky, 300], ['BuildKey', 'cxx_compile main.o', C.pink, 740], ['AnalysisKey', 'root//app:main', C.orange, 1180]];
+function sIncr(lt) {
+  chapter('09', 'Incremental builds', 'buck2_common/src/file_ops/dice.rs', lt);
+  // edit card
+  const ea = prog(lt, 0.4, 1.0);
+  box(120, 180, 700, 150, { a: ea, fill: 'rgba(24,14,50,0.95)', stroke: 'rgba(196,181,253,0.35)' });
+  txt('lib/print.cpp', 150, 214, { s: 18, mono: true, c: C.dim, a: ea });
+  const typed = '// TODO: say hi louder';
+  const n = Math.floor(typed.length * prog(lt, 1.0, 2.8));
+  txt('+ ' + typed.slice(0, n), 150, 262, { s: 26, mono: true, c: C.green, a: ea });
+  txt('a comment at the end of the file', 150, 304, { s: 18, c: C.dim, a: prog(lt, 2.8, 3.3) });
+  // watchman
+  const wp = spring(prog(lt, 0.8, 1.6));
+  const spot = env(lt, 3.2, 6.0, 0.2);
+  if (wp > 0) scaled(980, 260, wp, () => critter(980, 260 - spot * 14, 58, C.yellow, lt, { binoculars: true, mood: spot > 0 ? 'o' : 'smile', seed: 60, tilt: -0.1 }));
+  if (spot > 0) txt('!', 1040, 170 - spring(prog(lt, 3.2, 3.8)) * 20, { s: 64, w: 900, disp: true, c: C.coral, a: spot, glow: hexA(C.coral, 0.6) });
+  txt('file watcher', 980, 350, { s: 20, w: 700, al: 'center', c: C.yellow, a: prog(lt, 1.2, 1.8) });
+  const ca = prog(lt, 4.0, 4.6);
+  box(1100, 196, 700, 120, { a: ca, fill: 'rgba(24,14,50,0.95)', stroke: hexA(C.sky, 0.5) });
+  txt('FileChangeTracker::write_to_dice', 1130, 232, { s: 18, mono: true, c: C.dim, a: ca });
+  rich([['ctx', C.ink], ['.', C.soft], ['changed', C.sky], ['(self.files_to_dirty)?;', C.soft]], 1130, 278, { s: 24, mono: true, a: ca });
+  curve(940, 320, 760, 420, 330, 508, eio(prog(lt, 4.8, 5.6)), { c: hexA(C.yellow, 0.8), lw: 3, dash: [10, 8], off: -lt * 30 });
+  // sleepy row
+  SLEEPY.forEach(([type, key, c, x], i) => {
+    const a = prog(lt, 0.8 + i * 0.2, 1.3 + i * 0.2);
+    const dim = 0.35 + 0.65 * (1 - prog(lt, 7.0, 8.0));
+    withAlpha(dim, () => dnode(x, 790, type, key, c, lt, { a, done: 1, state: lt > 7.5 ? 'sleep' : 'happy', seed: i + 9 }));
+    if (i < 2) line(x + 196, 790, x + 244, 790, a, { c: hexA(C.soft, 0.25) });
+    if (lt > 8) zzz(x + 150, 740, lt + i, prog(lt, 8.0, 8.6) * 0.8);
+  });
+  line(940, 760, 1060, 600, prog(lt, 1, 1.5), { c: hexA(C.soft, 0.2) });
+  badge('untouched: still asleep', 740, 690, C.dim, prog(lt, 8.4, 9.0), 17);
+  // dirty chain
+  const dirtyT = [5.6, 6.6, 7.6], doneT = [10.6, 15.0, 18.4];
+  CHAIN.forEach(([type, key, c, x], i) => {
+    const a = prog(lt, 0.6 + i * 0.2, 1.1 + i * 0.2);
+    const dirty = prog(lt, dirtyT[i], dirtyT[i] + 0.3);
+    const done = Math.max(1 - dirty, prog(lt, doneT[i], doneT[i] + 0.4));
+    const working = (i === 0 && lt > 9.4 && lt < 10.6) || (i === 1 && lt > 11.2 && lt < 15.0);
+    const state = done >= 1 ? 'happy' : (working ? 'roll' : 'o');
+    const col = dirty > 0 && done < 1 ? (i === 0 ? C.red : C.yellow) : c;
+    dnode(x, 560, type, key, col, lt, { a, done, pend: dirty > 0 && done < 1 ? 1 : 0, state, seed: i * 7, hot: working ? 0.6 + 0.4 * Math.sin(lt * 8) : 0 });
+    if (i < 2) line(x + 196, 560, x + 244, 560, a, { c: hexA(C.soft, 0.45) });
+  });
+  line(1376, 560, 1450, 560, prog(lt, 1, 1.4), { c: hexA(C.soft, 0.45) });
+  const outDone = lt > 18.4 || lt < 7.6;
+  pill('main', 1460, 560, { s: 24, mono: true, c: outDone ? C.green : C.yellow, a: prog(lt, 1, 1.4) });
+  badge('dirty!', 300, 480, C.red, env(lt, 5.8, 10.6, 0.3), 17);
+  badge('maybe dirty: needs a check', 960, 470, C.yellow, env(lt, 7.0, 11.0, 0.3), 17);
+  badge('new contents', 300, 480, C.sky, env(lt, 10.8, 14.6, 0.3), 17);
+  badge('recompiling…', 740, 480, C.pink, env(lt, 11.4, 15.0, 0.3), 17);
+  badge('print.o: same bytes as before!', 740, 480, C.green, env(lt, 15.2, 21.0, 0.3), 17);
+  badge('inputs equal → keep old value', 1180, 480, C.green, prog(lt, 17.6, 18.2), 17);
+  badge('no relink', 1460, 480, C.green, prog(lt, 18.8, 19.3), 17);
+  confetti(1180, 560, lt, 18.6, { n: 60, seed: 14 });
+  const bp = spring(prog(lt, 19.6, 20.6));
+  if (bp > 0) scaled(1700, 820, bp, () => bucky(1700, 820, 58, lt, { mood: 'grin', look: [-1, -0.6], hop: 4 }));
+  say(1700, 740, 'Zero relinks!', lt, 20.4, 24.6, { dx: -40, dy: -70, s: 24 });
+  captions([
+    [0.3, 9.0, 'Edit a file, and the file watcher (Watchman or notify) tells the daemon exactly what changed.'],
+    [9.2, 17.6, 'DICE marks that key changed in a new version, and re-checks only the keys that depend on it.'],
+    [17.8, 29.4, 'If a recomputed value equals the old one, DICE stops right there. No relink needed!'],
+  ], lt);
+}
+
+// ---- 10. Outro ----
+function sOutro(lt) {
+  const n = PIPE.length, gap = 250, sx = W / 2 - (gap * (n - 1)) / 2, y = 380;
+  const subs = ['buck2 client', 'buck2 daemon', 'starlark-rust', 'dice', 'AnalysisKey', 'HybridExecutor', 'deferred'];
+  const lp = eio(prog(lt, 0.3, 1.8));
+  ctx.save(); ctx.strokeStyle = 'rgba(196,181,253,0.35)'; ctx.lineWidth = 3; ctx.setLineDash([2, 12]); ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(sx, y); ctx.lineTo(sx + gap * (n - 1) * lp, y); ctx.stroke(); ctx.restore();
+  PIPE.forEach(([l, c], i) => {
+    const p = spring(prog(lt, 0.3 + i * 0.25, 1.1 + i * 0.25));
+    if (p <= 0) return;
+    const glow = Math.max(0, 1 - Math.abs((lt - 2.2) * 2.2 - i) * 0.8);
+    die(sx + i * gap, y - glow * 16, (44 + 10 * glow) * p, c, lt, { state: glow > 0.3 ? 'happy' : 'pips', n: (i % 6) + 1, seed: i });
+    txt(l, sx + i * gap, y + 60, { s: 28, w: 800, c: C.ink, al: 'center', a: clamp(p) });
+    txt(subs[i], sx + i * gap, y + 98, { s: 17, mono: true, c: C.dim, al: 'center', a: clamp(p) });
+  });
+  txt('all of it memoized in one DICE graph', W / 2, 250, { s: 28, w: 600, c: C.yellow, al: 'center', a: prog(lt, 1.6, 2.2) });
+  const ba = prog(lt, 4.2, 4.8);
+  box(W / 2 - 560, 600, 820, 180, { a: ba, fill: 'rgba(20,12,42,0.96)', stroke: hexA(C.green, 0.45) });
+  txt('BUILD SUCCEEDED', W / 2 - 520, 656, { s: 34, mono: true, w: 700, c: C.green, a: ba, glow: hexA(C.green, 0.6) });
+  txt('Jobs completed: 41. Time elapsed: 0.6s.', W / 2 - 520, 716, { s: 22, mono: true, c: C.soft, a: prog(lt, 4.8, 5.2) });
+  const bp = spring(prog(lt, 4.6, 5.6));
+  if (bp > 0) scaled(W / 2 + 430, 730, bp, () => bucky(W / 2 + 430, 730, 74, lt, { mood: 'grin', hop: 3, look: [-0.5, 0] }));
+  say(W / 2 + 430, 600, 'Thanks for visiting!', lt, 5.8, 12.4, { dx: 60, dy: -50, s: 24 });
+  confetti(W / 2, 600, lt, 5.0, { n: 90, seed: 21, speed: 800, spread: 3.0 });
+  txt('Read the source: github.com/facebook/buck2', W / 2, 900, { s: 30, w: 600, c: C.dim, al: 'center', a: prog(lt, 6.4, 7.2) });
+}
+
+// =====================================================================
+const SCENES = [
+  [sTitle, 11], [sClient, 30], [sCells, 28], [sPrelude, 26], [sDice, 40], [sConfig, 24], [sAnalysis, 26], [sExec, 32], [sMat, 24], [sIncr, 30], [sOutro, 13]
+];
+let acc = 0; for (const s of SCENES) { s.push(acc); acc += s[1]; }
+const DURATION = acc;
+window.DURATION = DURATION; window.FPS = FPS;
+
+function renderFrame(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  background(t);
+  for (const [fn, d, s] of SCENES) {
+    if (t < s || t >= s + d) continue;
+    const lt = t - s;
+    const last = fn === SCENES[SCENES.length - 1][0];
+    const al = clamp(lt / 0.6) * (last ? clamp((d - lt) / 1.2) : clamp((d - lt) / 0.6));
+    ctx.save(); ctx.globalAlpha = al; fn(lt); ctx.restore();
+  }
+  const g = ctx.createLinearGradient(0, 0, W, 0); g.addColorStop(0, C.yellow); g.addColorStop(0.5, C.orange); g.addColorStop(1, C.pink);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W * (t / DURATION), 4);
+}
+window.renderFrame = renderFrame;
+window.ready = document.fonts.load('800 20px Inter').then(() => document.fonts.load('900 20px "Inter Display"')).then(() => document.fonts.load('20px "DejaVu Sans Mono"')).then(() => { renderFrame(0); return true; });
+if (location.hash.startsWith('#t=')) { window.ready.then(() => renderFrame(parseFloat(location.hash.slice(3)))); }
+else if (location.hash === '#play') { const st = performance.now(); const loop = () => { renderFrame(((performance.now() - st) / 1000) % DURATION); requestAnimationFrame(loop); }; window.ready.then(loop); }
+</script>
+</body>
+</html>
