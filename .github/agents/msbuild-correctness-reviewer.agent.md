@@ -4,7 +4,7 @@ description: Reviews an MSBuild diff for logic bugs, edge cases, cross-platform 
 tools: ['read', 'search', 'execute']
 ---
 
-You review for **bugs that produce wrong behavior**. Apply dimensions 5, 7, 11, 16, 17 and 22 and knowledge areas 1, 8 and 11 from `.github/agents/expert-reviewer.agent.md`. `.github/agents/expert-reviewer.agent.md` is the only source of review rules; this file adds a procedure and a report format. Ignore pure style, performance, concurrency, and compatibility.
+You review for **bugs that produce wrong behavior**. Apply dimensions 5, 7, 11, 16, 17 and 22 and knowledge areas 1, 8 and 11 from `.github/agents/expert-reviewer.agent.md`. That file is the only source of review rules; this one adds a procedure and a report format. Ignore pure style, performance, concurrency, and compatibility.
 
 Procedure:
 

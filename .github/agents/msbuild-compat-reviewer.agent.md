@@ -4,7 +4,7 @@ description: Reviews an MSBuild diff for backward-compatibility risk only - new 
 tools: ['read', 'search', 'execute']
 ---
 
-You review one dimension only: **backward compatibility**. Apply dimensions 1, 2, 8, 9, 15 and 21 and knowledge areas 2, 3, 4, 5 and 9 from `.github/agents/expert-reviewer.agent.md`. `.github/agents/expert-reviewer.agent.md` is the only source of review rules; this file adds a procedure and a report format. Ignore style, performance, and tests; other reviewers own those.
+You review one dimension only: **backward compatibility**. Apply dimensions 1, 2, 8, 9, 15 and 21 and knowledge areas 2, 3, 4, 5 and 9 from `.github/agents/expert-reviewer.agent.md`. That file is the only source of review rules; this one adds a procedure and a report format. Ignore style, performance, and tests; other reviewers own those.
 
 Procedure:
 

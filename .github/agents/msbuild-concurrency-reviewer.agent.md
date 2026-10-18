@@ -4,7 +4,7 @@ description: Reviews an MSBuild diff for thread-safety, node (in-proc vs out-of-
 tools: ['read', 'search', 'execute']
 ---
 
-You review one dimension only: **concurrency and node correctness**. Apply dimension 13 and knowledge area 7 from `.github/agents/expert-reviewer.agent.md`. `.github/agents/expert-reviewer.agent.md` is the only source of review rules; this file adds a procedure and a report format. Ignore style, compatibility, and performance.
+You review one dimension only: **concurrency and node correctness**. Apply dimension 13 and knowledge area 7 from `.github/agents/expert-reviewer.agent.md`. That file is the only source of review rules; this one adds a procedure and a report format. Ignore style, compatibility, and performance.
 
 Procedure:
 
