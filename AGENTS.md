@@ -19,6 +19,18 @@ Instructions for GitHub Copilot and other AI coding agents working with the MSBu
 - xUnit with Shouldly for testing
 - Multi-platform support (Windows, Linux, macOS)
 
+## Start Here: the Change Workflow
+
+Every code change follows `.github/skills/msbuild-change-workflow/SKILL.md` (also exposed to Claude Code as `/msbuild-change-workflow`). It has six phases with a hard gate each; the one that matters most is Phase 4: a change is done only when `.github/skills/verifying-changes/verify-change.sh` and `.github/skills/assessing-breaking-changes/compat-scan.sh` both end in `RESULT: PASS` (or `REVIEW` with every signal answered) and those lines are quoted in your report.
+
+Rules of thumb that keep smaller models on track here:
+
+* Read the matching `.github/instructions/*.md` for every path you touch before editing it. They are not auto-loaded in Claude Code.
+* Load a skill whenever its description matches, even if you think you know the content. The skills carry the repo-specific commands.
+* Delegate exploration to the `Explore` subagent and review to the `msbuild-*-reviewer` agents under `.claude/agents/`. Do not let the agent that wrote the code be the only one that judged it.
+* Scripts decide, prose explains. When a skill offers a script, run the script and quote its verdict rather than reasoning about what it would say.
+* If a gate cannot be satisfied after two attempts, stop and report which gate and what you saw.
+
 ## General
 
 * Performance is the top priority - minimize allocations, avoid LINQ in hot paths, use efficient algorithms.
@@ -124,7 +136,7 @@ Build individual projects with `dotnet msbuild {path/to/project.csproj} -v:q`.
 
 ### Bootstrap Environment Setup
 
-After building the whole repo, to use the just-built MSBuild to build things use the bootstrap environment (described in [`skills/use-bootstrap-msbuild](.github/skills/use-bootstrap-msbuild/SKILL.md)).
+After building the whole repo, to use the just-built MSBuild to build things use the bootstrap environment (described in [`skills/use-bootstrap-msbuild`](.github/skills/use-bootstrap-msbuild/SKILL.md)): `source artifacts/sdk-build-env.sh` on macOS/Linux, `.\artifacts\msbuild-build-env.ps1` on Windows.
 
 ### Build Troubleshooting
 
@@ -219,6 +231,17 @@ Before completing any change:
 
 See **Key Configuration Files** section for files that should not be modified without explicit request.
 
+## Agent Configuration Layout
+
+| Location | Purpose |
+|----------|---------|
+| `AGENTS.md` (this file, symlinked as `.github/copilot-instructions.md`) | Always-loaded rules for every agent |
+| `.github/instructions/*.instructions.md` | Area-specific rules keyed by path (`applyTo`). Copilot loads them automatically; Claude Code agents read them when the workflow skill says to. |
+| `.github/skills/*/SKILL.md` | On-demand procedures. `.claude/skills/*` are symlinks to these so Claude Code discovers them. Scripts next to a SKILL.md are the authoritative version of the procedure. |
+| `.github/agents/expert-reviewer.agent.md` | Copilot reviewer with the full 24-dimension methodology |
+| `.claude/agents/msbuild-*.md` | Claude Code reviewer agents, one narrow dimension each, pinned to Sonnet. Orchestrated by the `reviewing-msbuild-code` skill. |
+| `.claude/settings.json`, `.claude/hooks/` | Hooks that block redirected build output, edits under `artifacts/` and `.dotnet/`, edits to pinned files, and destructive git commands |
+
 ## Documentation
 
 When making changes, check if related documentation exists in the `documentation/` folder (including `documentation/specs/`) and update it to reflect your changes. Keep documentation in sync with code changes.
@@ -238,8 +261,9 @@ When reviewing PRs, always consider whether the behavior change could be experie
    - Windows: `.\build.cmd -v quiet`
    - macOS/Linux: `./build.sh -v quiet`
 4. Test your changes end-to-end using the bootstrap output: `dotnet build src/Samples/Dependency/Dependency.csproj`
-5. Run relevant individual tests, not the full test suite
-6. Commit your changes
+5. Run `.github/skills/verifying-changes/verify-change.sh` (scoped build with warnings as errors plus the mapped tests) and `.github/skills/assessing-breaking-changes/compat-scan.sh`; quote both `RESULT:` lines
+6. Self-review with the `reviewing-msbuild-code` skill and fix confirmed BLOCKING/MAJOR findings
+7. Commit your changes
 
 ## Trust These Instructions
 
