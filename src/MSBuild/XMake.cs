@@ -161,7 +161,7 @@ namespace Microsoft.Build.CommandLine
                 //  This forces the type to initialize in this static constructor and thus    //
                 //  any configuration file exceptions can be caught here.                     //
                 ////////////////////////////////////////////////////////////////////////////////
-                s_exePath = Path.GetDirectoryName(typeof(MSBuildApp).GetAssemblyPath());
+                s_exePath = GetExecutableDirectory();
                 commandLineParser = new CommandLineParser();
 
                 s_initialized = true;
@@ -1533,6 +1533,18 @@ namespace Microsoft.Build.CommandLine
         /// Initialized in the static constructor. See comment there.
         /// </remarks>
         private static readonly string s_exePath; // Do not initialize
+
+        /// <summary>
+        /// Gets the directory containing the MSBuild application. This is the directory of MSBuild.dll, or, in a
+        /// single-file or Native AOT app where the assembly has no location on disk, the application base directory.
+        /// </summary>
+        internal static string GetExecutableDirectory()
+        {
+            string assemblyPath = typeof(MSBuildApp).GetAssemblyPath();
+            return string.IsNullOrEmpty(assemblyPath)
+                ? AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                : Path.GetDirectoryName(assemblyPath);
+        }
 
         /// <summary>
         /// Name of the exe (presumably msbuild.exe)

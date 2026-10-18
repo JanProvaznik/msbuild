@@ -82,7 +82,7 @@ Pick the entry point that matches what you are doing:
 ### Host-registration API proposals (in `../specs/`)
 
 These propose the public, reflection-free APIs a host uses so the engine can run without reflecting at run
-time. All three are **implemented**.
+time. All of them are **implemented**.
 
 - [../specs/task-class-registration-api.md](../specs/task-class-registration-api.md) -
   `Microsoft.Build.Utilities.Task.RegisterTask<T>`: register task classes so the engine constructs, binds,
@@ -93,6 +93,10 @@ time. All three are **implemented**.
 - [../specs/sdk-resolver-host-registration-api.md](../specs/sdk-resolver-host-registration-api.md) -
   `SdkResolver.Register`: contribute a reflection-free SDK resolver instead of MSBuild loading one by
   reflection.
+- [../specs/precompiled-task-assemblies.md](../specs/precompiled-task-assemblies.md) -
+  `Task.RegisterPrecompiledTask<T>` / `SdkResolver.RegisterPrecompiled`: compile a toolset's task and resolver
+  assemblies into the host while keeping `<UsingTask>` and manifest resolution unchanged. Used by the Native AOT
+  MSBuild command line in [`src/MSBuild.Aot`](../../src/MSBuild.Aot/README.md).
 
 ## How these relate
 

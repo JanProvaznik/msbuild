@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Build-time tool for MSBuild.Aot: scans an SDK layout for task and SDK-resolver assemblies and generates the
+    registrations (and the reference list) that compile them into the Native AOT MSBuild. Runs on the JIT; it is
+    never part of the AOT image.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Reflection.MetadataLoadContext" Version="10.0.10" />
+  </ItemGroup>
+
+</Project>

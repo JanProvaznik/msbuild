@@ -530,14 +530,14 @@ namespace Microsoft.Build.BackEnd
                 ? [primary]
                 : [primary, alternate];
 
-            // AppHost path -> "MSBuild"; managed DLL path -> current host name (e.g. "dotnet").
+            // Native executable (the MSBuild app host, or a Native AOT MSBuild) -> its own name; managed DLL path -> current
+            // host name (e.g. "dotnet"). Matches how NodeLauncher decides whether a location needs the dotnet host.
             static string GetProcessNameForLocation(string location)
             {
-                bool isAppHost = Path.GetFileName(location)
-                    .Equals(Constants.MSBuildExecutableName, StringComparison.OrdinalIgnoreCase);
+                bool isNativeExecutable = !location.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
 
                 return Path.GetFileNameWithoutExtension(
-                    isAppHost ? location : (CurrentHost.GetCurrentHost() ?? location));
+                    isNativeExecutable ? location : (CurrentHost.GetCurrentHost() ?? location));
             }
         }
 

@@ -117,6 +117,91 @@ namespace Microsoft.Build.Framework
         }
 
         /// <summary>
+        /// Resolvers compiled into the host, keyed by the simple name of the resolver assembly they came from.
+        /// </summary>
+        private static readonly Dictionary<string, (Guid ModuleVersionId, List<SdkResolver> Resolvers)> s_precompiledResolvers = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Registers an <see cref="SdkResolver"/> that the host compiled into itself, to stand in for the resolver that
+        /// MSBuild would otherwise load by reflection from an <c>SdkResolvers</c> manifest naming the same build of the
+        /// resolver's assembly.
+        /// </summary>
+        /// <param name="resolver">The resolver instance.</param>
+        /// <param name="assemblyName">
+        /// The simple name of the resolver assembly (the file name, without extension, of the manifest's <c>Path</c>) that
+        /// <paramref name="resolver"/> stands in for. Usually the resolver's own assembly; a host may also supply a
+        /// replacement that adapts the original to its environment.
+        /// </param>
+        /// <param name="assemblyModuleVersionId">
+        /// The module version id (MVID) of the resolver assembly build that <paramref name="resolver"/> was compiled from.
+        /// The resolver is used only for a manifest whose assembly file has this MVID; a manifest naming any other file is
+        /// loaded as before.
+        /// </param>
+        /// <remarks>
+        /// <para>
+        /// Unlike <see cref="Register"/>, which adds a resolver to MSBuild's built-in resolver pass, a precompiled resolver
+        /// takes part in resolution exactly where its manifest does: with the manifest's <c>ResolvableSdkPattern</c>, in
+        /// the same order relative to the built-in resolver and other manifests. A Native AOT MSBuild uses this to keep SDK
+        /// resolution identical to a JIT MSBuild of the same toolset.
+        /// </para>
+        /// <para>
+        /// Register every resolver type of an assembly (MSBuild instantiates all of them from a manifest), during host
+        /// initialization before the first project is evaluated. This method is thread-safe.
+        /// </para>
+        /// </remarks>
+        /// <exception cref="ArgumentNullException"><paramref name="resolver"/> is <see langword="null"/>.</exception>
+        public static void RegisterPrecompiled(SdkResolver resolver, string assemblyName, Guid assemblyModuleVersionId)
+        {
+            if (resolver is null)
+            {
+                throw new ArgumentNullException(nameof(resolver));
+            }
+
+            if (string.IsNullOrEmpty(assemblyName))
+            {
+                throw new ArgumentException("The resolver assembly name must not be empty.", nameof(assemblyName));
+            }
+
+            lock (s_precompiledResolvers)
+            {
+                if (!s_precompiledResolvers.TryGetValue(assemblyName, out var entry))
+                {
+                    entry = (assemblyModuleVersionId, new List<SdkResolver>());
+                    s_precompiledResolvers.Add(assemblyName, entry);
+                }
+                else if (entry.ModuleVersionId != assemblyModuleVersionId)
+                {
+                    throw new ArgumentException($"SDK resolver assembly '{assemblyName}' was already registered with module version id {entry.ModuleVersionId}.", nameof(assemblyModuleVersionId));
+                }
+
+                if (!entry.Resolvers.Contains(resolver))
+                {
+                    entry.Resolvers.Add(resolver);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the precompiled resolvers registered for the resolver assembly with the given simple name.
+        /// </summary>
+        internal static bool TryGetPrecompiledResolvers(string assemblyName, out Guid moduleVersionId, out IReadOnlyList<SdkResolver> resolvers)
+        {
+            lock (s_precompiledResolvers)
+            {
+                if (s_precompiledResolvers.TryGetValue(assemblyName, out var entry))
+                {
+                    moduleVersionId = entry.ModuleVersionId;
+                    resolvers = entry.Resolvers.ToArray();
+                    return true;
+                }
+            }
+
+            moduleVersionId = Guid.Empty;
+            resolvers = Array.Empty<SdkResolver>();
+            return false;
+        }
+
+        /// <summary>
         /// Clears all registered resolvers. For test use only, to reset the process-global registration state.
         /// </summary>
         internal static void ClearRegisteredResolversForTests()
@@ -124,6 +209,11 @@ namespace Microsoft.Build.Framework
             lock (s_registeredResolvers)
             {
                 s_registeredResolvers.Clear();
+            }
+
+            lock (s_precompiledResolvers)
+            {
+                s_precompiledResolvers.Clear();
             }
         }
     }

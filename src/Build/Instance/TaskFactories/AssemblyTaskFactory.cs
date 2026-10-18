@@ -64,6 +64,11 @@ namespace Microsoft.Build.BackEnd
         /// </summary>
         private TaskHostParameters _factoryIdentityParameters;
 
+        /// <summary>
+        /// Set when this process cannot load the task assembly in-proc (a Native AOT host) and the task was not
+        /// compiled into the host, so it is described through a MetadataLoadContext and runs in a .NET task host.
+        /// </summary>
+        private bool _isOutOfProcBecauseInProcLoadIsUnsupported;
 
         #endregion
 
@@ -260,6 +265,25 @@ namespace Microsoft.Build.BackEnd
                 ArgumentException.ThrowIfNullOrEmpty(taskName);
                 _taskName = taskName;
 
+                // A task the project explicitly sends to a task host (TaskHostFactory, or a Runtime/Architecture other than
+                // this process's) is described through a MetadataLoadContext below, as always, so it keeps running out of proc.
+                if (!taskHostExplicitlyRequested
+                    && taskHostParamsMatchCurrentProc
+                    && PrecompiledTaskResolver.TryResolve(loadInfo, taskName, out LoadedType precompiledType))
+                {
+                    // The host compiled this build of the task assembly in: use the compiled-in type rather than loading the file.
+                    _loadedType = precompiledType;
+                    return _loadedType;
+                }
+
+                if (!TaskFactoryUtilities.CanLoadTaskAssemblies)
+                {
+                    // A Native AOT process cannot load a task assembly. Describe the task through a MetadataLoadContext
+                    // (no code is loaded) and run it in a .NET task host, which loads it the way an in-proc JIT MSBuild would.
+                    _isOutOfProcBecauseInProcLoadIsUnsupported = true;
+                    taskHostExplicitlyRequested = true;
+                }
+
                 string assemblyName = loadInfo.AssemblyName ?? Path.GetFileName(loadInfo.AssemblyFile);
                 using var assemblyLoadsTracker = AssemblyLoadsTracker.StartTracking(targetLoggingContext, AssemblyLoadingContext.TaskRun, assemblyName);
                 _loadedType = _typeLoader.Load(taskName, loadInfo, targetLoggingContext.LogWarning, taskHostExplicitlyRequested, taskHostParamsMatchCurrentProc);
@@ -426,14 +450,16 @@ namespace Microsoft.Build.BackEnd
         /// </summary>
         private TaskHostParameters UpdateTaskHostParameters(TaskHostParameters taskHostParameters)
         {
-            // Determine runtime: prefer explicit parameter, fallback to loaded type's runtime or current.
+            // A task that runs out of proc only because this process cannot load assemblies would have been loaded into
+            // the current runtime in-proc (whatever framework the assembly targets), so its task host matches this process
+            // unless the project explicitly asked otherwise.
             string runtime = taskHostParameters.Runtime
-                ?? _loadedType?.Runtime
+                ?? (_isOutOfProcBecauseInProcLoadIsUnsupported ? null : _loadedType?.Runtime)
                 ?? XMakeAttributes.GetCurrentMSBuildRuntime();
 
             // Determine architecture: prefer explicit parameter, fallback to loaded type's architecture or current
             string architecture = taskHostParameters.Architecture
-                ?? _loadedType?.Architecture
+                ?? (_isOutOfProcBecauseInProcLoadIsUnsupported ? null : _loadedType?.Architecture)
                 ?? XMakeAttributes.GetCurrentMSBuildArchitecture();
 
             return new TaskHostParameters(

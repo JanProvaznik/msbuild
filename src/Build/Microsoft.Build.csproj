@@ -589,6 +589,7 @@
     <Compile Include="Instance\ProjectTaskOutputItemInstance.cs" />
     <Compile Include="Instance\ProjectTaskOutputPropertyInstance.cs" />
     <Compile Include="Instance\TaskFactories\AssemblyTaskFactory.cs" />
+    <Compile Include="Instance\TaskFactories\PrecompiledTaskResolver.cs" />
     <Compile Include="Instance\TaskFactories\RegisteredTaskFactory.cs" />
     <Compile Include="Instance\TaskFactories\TaskHostTask.cs" />
     <Compile Include="Instance\TaskFactoryEngineContext.cs" />

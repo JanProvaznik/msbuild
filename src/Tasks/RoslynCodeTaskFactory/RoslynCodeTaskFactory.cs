@@ -94,7 +94,12 @@ namespace Microsoft.Build.Tasks
 
         [UnconditionalSuppressMessage("SingleFile", "IL3002:RequiresAssemblyFiles",
             Justification = "RoslynCodeTaskFactory compiles task source against reference assemblies on disk, so it does not support single-file deployment; the module path is only used to locate those on-disk references.")]
-        private static string GetThisAssemblyDirectory() => Path.GetDirectoryName(typeof(RoslynCodeTaskFactory).Assembly.ManifestModule.FullyQualifiedName);
+        private static string GetThisAssemblyDirectory()
+            => TaskFactoryUtilities.CanLoadTaskAssemblies
+                ? Path.GetDirectoryName(typeof(RoslynCodeTaskFactory).Assembly.ManifestModule.FullyQualifiedName)
+
+                // A Native AOT MSBuild has this assembly compiled in; its reference assemblies ship in the toolset directory.
+                : BuildEnvironmentHelper.Instance.CurrentMSBuildToolsDirectory;
 
         /// <summary>
         /// Stores an instance of a <see cref="TaskLoggingHelper"/> for logging messages.
@@ -212,6 +217,36 @@ namespace Microsoft.Build.Tasks
         }
 
         /// <summary>
+        /// Derives task parameters from a task type that was inspected through a MetadataLoadContext (its property types
+        /// belong to that context, so they are mapped back to this process's types by name, as task parameter types are
+        /// always framework or MSBuild types).
+        /// </summary>
+        [RequiresUnreferencedCode("Resolves task parameter types by name, which is incompatible with trimming.")]
+        private static TaskPropertyInfo[] GetTaskParametersFromMetadata(Type taskType)
+        {
+            List<TaskPropertyInfo> parameters = [];
+            foreach (PropertyInfo property in taskType.GetProperties(BindingFlags.Instance | BindingFlags.Public))
+            {
+                // A type that does not resolve here is not a supported task parameter type; leave it out, so using it
+                // fails as an unknown parameter.
+                Type propertyType = Type.GetType(property.PropertyType.AssemblyQualifiedName);
+                if (propertyType is null)
+                {
+                    continue;
+                }
+
+                IList<CustomAttributeData> attributes = property.GetCustomAttributesData();
+                parameters.Add(new TaskPropertyInfo(
+                    property.Name,
+                    propertyType,
+                    attributes.Any(a => a.AttributeType.FullName == typeof(OutputAttribute).FullName),
+                    attributes.Any(a => a.AttributeType.FullName == typeof(RequiredAttribute).FullName)));
+            }
+
+            return [.. parameters];
+        }
+
+        /// <summary>
         /// Reflects over the exported types of the runtime-compiled <paramref name="assembly"/> to locate the task type
         /// and, when the user supplied a whole class, derive its parameters from the type's properties.
         /// </summary>
@@ -236,13 +271,15 @@ namespace Microsoft.Build.Tasks
                 {
                     // If the user specified a whole class but nothing in <ParameterGroup />, automatically derive
                     // the task parameters from their type's properties
-                    _parameters = TaskType?.GetProperties(BindingFlags.Instance | BindingFlags.Public)
-                        .Select(i => new TaskPropertyInfo(
-                            i.Name,
-                            i.PropertyType,
-                            i.GetCustomAttribute<OutputAttribute>() != null,
-                            i.GetCustomAttribute<RequiredAttribute>() != null))
-                        .ToArray();
+                    _parameters = TaskFactoryUtilities.CanLoadTaskAssemblies
+                        ? TaskType?.GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                            .Select(i => new TaskPropertyInfo(
+                                i.Name,
+                                i.PropertyType,
+                                i.GetCustomAttribute<OutputAttribute>() != null,
+                                i.GetCustomAttribute<RequiredAttribute>() != null))
+                            .ToArray()
+                        : GetTaskParametersFromMetadata(TaskType);
                 }
             }
 
@@ -836,8 +873,11 @@ namespace Microsoft.Build.Tasks
                     }
                 }
 
-                // Return the compiled assembly
-                assembly = TaskFactoryUtilities.LoadTaskAssembly(_assemblyPath);
+                // Return the compiled assembly. A process that cannot load task assemblies (Native AOT) always compiles for
+                // out-of-proc execution; it only inspects the assembly's metadata here, and the task runs in a task host.
+                assembly = TaskFactoryUtilities.CanLoadTaskAssemblies
+                    ? TaskFactoryUtilities.LoadTaskAssembly(_assemblyPath)
+                    : ((ITaskAssemblyMetadataLoader)buildEngine).LoadTaskAssemblyMetadata(_assemblyPath);
 
                 // Cache the assembly path if we compiled for out-of-process execution
                 string cachedAssemblyPath = _compileForOutOfProcess ? _assemblyPath : string.Empty;

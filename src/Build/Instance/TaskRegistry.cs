@@ -1452,6 +1452,18 @@ namespace Microsoft.Build.Execution
                                     }
                                 }
 
+#if NET
+                                // A task factory runs in this process, so a process that cannot load assemblies (Native AOT)
+                                // can only use the factories compiled into it - those of MSBuild's own assemblies.
+                                if (!TaskFactoryUtilities.CanLoadTaskAssemblies
+                                    && !MSBuildLoadContext.WellKnownAssemblyNames.Contains(taskFactoryLoadInfo.AssemblyName is string factoryAssemblyName
+                                        ? new AssemblyName(factoryAssemblyName).Name
+                                        : Path.GetFileNameWithoutExtension(taskFactoryLoadInfo.AssemblyFile)))
+                                {
+                                    ProjectErrorUtilities.ThrowInvalidProject(elementLocation, "ReflectiveTaskExecutionNotSupported", RegisteredName);
+                                }
+#endif
+
                                 // Make sure we only look for task factory classes when loading based on the name
                                 loadedType = s_taskFactoryTypeLoader.Load(TaskFactoryAttributeName, taskFactoryLoadInfo, targetLoggingContext.LogWarning);
 

@@ -36,6 +36,19 @@ namespace Microsoft.Build.Engine.UnitTests.BackEnd
         }
 
         [Fact]
+        public void ReuseBranch_OtherNativeExecutablePath_ReturnsItsOwnName()
+        {
+            // A native executable that is not the app host (for example a Native AOT MSBuild) launches its nodes as
+            // itself, so reuse must look for processes with its name rather than the dotnet host's.
+            string nativeExecutable = NativeMethodsShared.IsWindows ? "MSBuildAot.exe" : "MSBuildAot";
+            string[] names = NodeProviderOutOfProcBase.ResolveProcessNamesToSearch(
+                msbuildLocation: Path.Combine("c:", "tools", nativeExecutable),
+                configuredNodeExeLocation: null);
+
+            names.ShouldBe(["MSBuildAot"]);
+        }
+
+        [Fact]
         public void ReuseBranch_DllPath_ReturnsHostName()
         {
             // For a managed-assembly path the launcher uses the current host (e.g. "dotnet" on .NET Core).

@@ -77,6 +77,7 @@ namespace Microsoft.Build.Shared
             var possibleLocations = new Func<BuildEnvironment>[]
             {
                 TryFromEnvironmentVariable,
+                TryFromNativeAotMSBuildProcess,
                 TryFromSdkRoot,
                 TryFromVisualStudioProcess,
                 TryFromMSBuildProcess,
@@ -166,6 +167,41 @@ namespace Microsoft.Build.Shared
                 ?? TryFromStandaloneMSBuildExe(Path.Combine(sdkRoot, Constants.MSBuildAssemblyName));
         }
 
+        /// <summary>
+        /// A Native AOT-compiled MSBuild executable placed inside a toolset directory (next to <c>MSBuild.dll</c>,
+        /// for example in an SDK's versioned directory) is the MSBuild process itself, whatever its file name.
+        /// Treat it as a standalone toolset whose <see cref="BuildEnvironment.CurrentMSBuildExePath"/> is the native
+        /// executable, so out-of-proc worker nodes relaunch the same native image. An AOT host that merely embeds the
+        /// engine (for example an AOT <c>dotnet</c> muxer) has no <c>MSBuild.dll</c> next to it and falls through.
+        /// </summary>
+        private static BuildEnvironment TryFromNativeAotMSBuildProcess()
+        {
+#if NET
+            if (RuntimeFeature.IsDynamicCodeSupported)
+            {
+                return null;
+            }
+
+            string processPath = EnvironmentUtilities.ProcessPath;
+            string processDirectory = string.IsNullOrEmpty(processPath) ? null : Path.GetDirectoryName(processPath);
+            if (string.IsNullOrEmpty(processDirectory)
+                || !FileSystems.Default.FileExists(Path.Combine(processDirectory, Constants.MSBuildAssemblyName)))
+            {
+                return null;
+            }
+
+            return new BuildEnvironment(
+                BuildEnvironmentMode.Standalone,
+                processPath,
+                runningTests: false,
+                runningInMSBuildExe: true,
+                runningInVisualStudio: false,
+                visualStudioPath: null);
+#else
+            return null;
+#endif
+        }
+
         private static BuildEnvironment TryFromVisualStudioProcess()
         {
             if (!NativeMethods.IsWindows)
@@ -231,7 +267,9 @@ namespace Microsoft.Build.Shared
         private static BuildEnvironment TryFromMSBuildAppHost()
         {
             var buildAssembly = s_getExecutingAssemblyPath();
-            if (buildAssembly == null)
+
+            // Empty in a single-file or Native AOT app, where the assembly has no location on disk.
+            if (string.IsNullOrEmpty(buildAssembly))
             {
                 return null;
             }
