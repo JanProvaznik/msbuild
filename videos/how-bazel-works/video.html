@@ -1,0 +1,846 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>How Bazel works</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #070b18; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script>
+'use strict';
+const W = 1920, H = 1080, FPS = 30;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+// ---------- palette ----------
+const C = {
+  bg: '#070b18', ink: '#eef1ff', soft: '#c9d0f0', dim: '#8b93b8', faint: '#3a4370', line: '#262f57',
+  panel: 'rgba(18,25,54,0.88)', panel2: 'rgba(26,35,72,0.92)',
+  purple: '#a78bfa', violet: '#7c3aed', teal: '#2dd4bf', amber: '#fbbf24', pink: '#f472b6',
+  blue: '#60a5fa', green: '#4ade80', red: '#f87171', gray: '#6b7280'
+};
+const SANS = 'Inter', MONO = '"DejaVu Sans Mono"';
+
+// ---------- math ----------
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const eio = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const eout = x => 1 - Math.pow(1 - x, 3);
+const eback = x => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+const env = (t, a, b, f = 0.4) => clamp((t - a) / f) * clamp((b - t) / f);
+function rnd(seed) { let s = seed >>> 0; return () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function hexA(hex, a) { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; }
+
+// ---------- drawing primitives ----------
+function font(o) { return `${o.w || 400} ${o.s || 28}px ${o.mono ? MONO : SANS}`; }
+function txt(s, x, y, o = {}) {
+  ctx.save();
+  ctx.globalAlpha *= (o.a ?? 1);
+  ctx.font = font(o);
+  ctx.fillStyle = o.c || C.ink;
+  ctx.textAlign = o.al || 'left';
+  ctx.textBaseline = o.bl || 'middle';
+  ctx.letterSpacing = (o.ls || 0) + 'px';
+  if (o.glow) { ctx.shadowColor = o.glow; ctx.shadowBlur = o.gb || 18; }
+  ctx.fillText(s, x, y);
+  ctx.restore();
+}
+function tw(s, o = {}) { ctx.save(); ctx.font = font(o); ctx.letterSpacing = (o.ls || 0) + 'px'; const w = ctx.measureText(s).width; ctx.restore(); return w; }
+// segments: [[text, color], ...]
+function rich(segs, x, y, o = {}) {
+  let cx = x;
+  for (const [s, c, extra] of segs) { txt(s, cx, y, { ...o, ...(extra || {}), c }); cx += tw(s, { ...o, ...(extra || {}) }); }
+  return cx;
+}
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+function box(x, y, w, h, o = {}) {
+  ctx.save();
+  ctx.globalAlpha *= (o.a ?? 1);
+  rr(x, y, w, h, o.r ?? 18);
+  if (o.glow) { ctx.shadowColor = o.glow; ctx.shadowBlur = o.gb || 30; }
+  ctx.fillStyle = o.fill || C.panel; ctx.fill();
+  ctx.shadowBlur = 0;
+  if (o.stroke !== null) { ctx.lineWidth = o.lw || 1.5; ctx.strokeStyle = o.stroke || 'rgba(167,139,250,0.28)'; ctx.stroke(); }
+  ctx.restore();
+}
+function pill(label, x, y, o = {}) {
+  const s = o.s || 22, padX = o.px || 16, h = o.h || s + 20;
+  const w = tw(label, { s, w: o.w || 500, mono: o.mono }) + padX * 2;
+  const bx = o.al === 'center' ? x - w / 2 : x;
+  box(bx, y - h / 2, w, h, { r: h / 2, fill: o.fill || hexA(o.c || C.purple, 0.16), stroke: o.stroke ?? hexA(o.c || C.purple, 0.6), a: o.a, glow: o.glow, gb: o.gb });
+  txt(label, bx + padX, y + 1, { s, w: o.w || 500, c: o.tc || o.c || C.ink, mono: o.mono, a: o.a });
+  return w;
+}
+function qpt(x1, y1, cx, cy, x2, y2, t) { const u = 1 - t; return [u * u * x1 + 2 * u * t * cx + t * t * x2, u * u * y1 + 2 * u * t * cy + t * t * y2]; }
+function curve(x1, y1, cx, cy, x2, y2, p, o = {}) {
+  if (p <= 0) return;
+  ctx.save();
+  ctx.globalAlpha *= (o.a ?? 1);
+  ctx.strokeStyle = o.c || C.faint; ctx.lineWidth = o.lw || 2.5; ctx.lineCap = 'round';
+  if (o.dash) { ctx.setLineDash(o.dash); ctx.lineDashOffset = o.off || 0; }
+  ctx.beginPath(); ctx.moveTo(x1, y1);
+  const N = 40; let last = [x1, y1], prev = [x1, y1];
+  for (let i = 1; i <= N; i++) { const tt = (i / N) * p; prev = last; last = qpt(x1, y1, cx, cy, x2, y2, tt); ctx.lineTo(last[0], last[1]); }
+  ctx.stroke();
+  if (o.head !== false && p > 0.05) {
+    ctx.setLineDash([]);
+    const a = Math.atan2(last[1] - prev[1], last[0] - prev[0]), L = o.hl || 14;
+    ctx.fillStyle = o.c || C.faint; ctx.beginPath();
+    ctx.moveTo(last[0], last[1]);
+    ctx.lineTo(last[0] - L * Math.cos(a - 0.45), last[1] - L * Math.sin(a - 0.45));
+    ctx.lineTo(last[0] - L * Math.cos(a + 0.45), last[1] - L * Math.sin(a + 0.45));
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+function line(x1, y1, x2, y2, p, o = {}) { curve(x1, y1, (x1 + x2) / 2, (y1 + y2) / 2, x2, y2, p, o); }
+function dot(x, y, r, c, o = {}) { ctx.save(); ctx.globalAlpha *= (o.a ?? 1); ctx.fillStyle = c; if (o.glow !== false) { ctx.shadowColor = c; ctx.shadowBlur = o.gb || 16; } ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.restore(); }
+function check(x, y, s, c, a = 1) { ctx.save(); ctx.globalAlpha *= a; ctx.strokeStyle = c; ctx.lineWidth = s * 0.18; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath(); ctx.moveTo(x - s * 0.35, y); ctx.lineTo(x - s * 0.08, y + s * 0.28); ctx.lineTo(x + s * 0.4, y - s * 0.3); ctx.stroke(); ctx.restore(); }
+function withAlpha(a, fn) { ctx.save(); ctx.globalAlpha *= a; fn(); ctx.restore(); }
+function scaled(cx, cy, k, fn) { ctx.save(); ctx.translate(cx, cy); ctx.scale(k, k); ctx.translate(-cx, -cy); fn(); ctx.restore(); }
+function token(label, x, y, c, a = 1, s = 22) {
+  pill(label, x, y, { al: 'center', c, s, w: 600, fill: hexA(c, 0.22), stroke: c, glow: c, gb: 18, a, tc: C.ink });
+}
+function codeColor(seg) { return seg; }
+// ---------- background ----------
+const STARS = (() => { const r = rnd(7); return Array.from({ length: 90 }, () => ({ x: r() * W, y: r() * H, z: 0.3 + r() * 0.7, ph: r() * 6.28 })); })();
+function background(t) {
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+  const g1 = ctx.createRadialGradient(W * 0.25 + Math.sin(t * 0.1) * 80, H * 0.2, 0, W * 0.25, H * 0.2, 900);
+  g1.addColorStop(0, 'rgba(22,163,74,0.16)'); g1.addColorStop(1, 'rgba(22,163,74,0)');
+  ctx.fillStyle = g1; ctx.fillRect(0, 0, W, H);
+  const g2 = ctx.createRadialGradient(W * 0.8, H * 0.85 + Math.cos(t * 0.08) * 60, 0, W * 0.8, H * 0.85, 1000);
+  g2.addColorStop(0, 'rgba(45,212,191,0.10)'); g2.addColorStop(1, 'rgba(45,212,191,0)');
+  ctx.fillStyle = g2; ctx.fillRect(0, 0, W, H);
+  // dot grid
+  ctx.fillStyle = 'rgba(120,135,200,0.07)';
+  const off = (t * 6) % 48;
+  for (let y = -48 + off; y < H; y += 48) for (let x = 0; x < W; x += 48) ctx.fillRect(x, y, 2, 2);
+  for (const s of STARS) {
+    const y = (s.y - t * 8 * s.z + H * 10) % H;
+    dot(s.x, y, 1.2 * s.z, '#b9c3ff', { a: 0.25 + 0.25 * Math.sin(t * 1.3 + s.ph), glow: false });
+  }
+  const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.4, W / 2, H / 2, H * 1.05);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+}
+
+// ---------- chrome: chapter, file ref, caption ----------
+function chapter(n, title, file, lt) {
+  const a = prog(lt, 0.1, 0.7);
+  const x = 120 - (1 - eout(a)) * 30;
+  txt(n, x, 92, { s: 22, w: 700, c: C.teal, ls: 3, a });
+  txt(title.toUpperCase(), x + 46, 92, { s: 22, w: 600, c: C.soft, ls: 5, a });
+  ctx.save(); ctx.globalAlpha *= a; ctx.fillStyle = C.teal; ctx.fillRect(x, 116, 36 * eout(a), 3); ctx.restore();
+  if (file) {
+    const fa = prog(lt, 0.6, 1.3);
+    const w = tw(file, { s: 19, mono: true });
+    box(W - 120 - w - 52, 72, w + 52, 40, { r: 20, fill: 'rgba(20,28,58,0.7)', stroke: 'rgba(139,147,184,0.25)', a: fa });
+    // tiny file glyph
+    withAlpha(fa, () => { ctx.strokeStyle = C.dim; ctx.lineWidth = 1.5; rr(W - 120 - w - 36, 82, 14, 18, 3); ctx.stroke(); });
+    txt(file, W - 120 - w - 14, 93, { s: 19, mono: true, c: C.dim, a: fa });
+  }
+}
+function captions(list, lt) {
+  for (const [a, b, s] of list) {
+    const al = env(lt, a, b, 0.45);
+    if (al <= 0) continue;
+    const y = 1000 + (1 - eout(clamp((lt - a) / 0.45))) * 12;
+    ctx.save(); ctx.globalAlpha *= al;
+    const w = tw(s, { s: 31, w: 500 });
+    const g = ctx.createLinearGradient(0, 940, 0, 1080);
+    g.addColorStop(0, 'rgba(7,11,24,0)'); g.addColorStop(1, 'rgba(7,11,24,0.85)');
+    ctx.fillStyle = g; ctx.fillRect(0, 930, W, 150);
+    ctx.restore();
+    txt(s, W / 2, y, { s: 31, w: 500, c: C.soft, al: 'center', a: al });
+  }
+}
+function heading(s, lt, y = 170, sub) {
+  const a = prog(lt, 0.2, 0.9);
+  txt(s, 120, y - (1 - eout(a)) * 16, { s: 52, w: 700, c: C.ink, a });
+  if (sub) txt(sub, 120, y + 48, { s: 26, c: C.dim, a: prog(lt, 0.5, 1.2) });
+}
+
+
+// ---------- code highlighting (Starlark / Java) ----------
+const KW = new Set(['load', 'def', 'return', 'if', 'for', 'in', 'null', 'new', 'public', 'interface', 'throws']);
+function codeSegs(line) {
+  const segs = [];
+  const re = /(#.*$|\/\/ .*$)|("[^"]*")|([A-Za-z_][\w]*)(?=\s*\()|([A-Za-z_][\w]*)(?=\s*=[^=])|([A-Za-z_][\w.]*)|(\s+)|(.)/g;
+  let m;
+  while ((m = re.exec(line))) {
+    if (m[1]) segs.push([m[1], C.dim]);
+    else if (m[2]) segs.push([m[2], C.amber]);
+    else if (m[3]) segs.push([m[3], KW.has(m[3]) ? C.purple : C.blue]);
+    else if (m[4]) segs.push([m[4], C.pink]);
+    else if (m[5]) segs.push([m[5], KW.has(m[5]) ? C.purple : (/^[A-Z]/.test(m[5]) ? C.teal : C.ink)]);
+    else segs.push([m[6] || m[7], C.ink]);
+  }
+  return segs;
+}
+// A code panel whose lines fade in from t0, one every dt seconds.
+function codePanel(x, y, w, h, title, lines, lt, t0, dt, o = {}) {
+  const a = prog(lt, t0 - 0.6, t0);
+  box(x, y + (1 - eout(a)) * 24, w, h, { r: 18, fill: 'rgba(10,14,32,0.95)', stroke: 'rgba(139,147,184,0.3)', a, glow: o.glow || 'rgba(34,197,94,0.18)', gb: 50 });
+  withAlpha(a, () => {
+    [C.red, C.amber, C.green].forEach((c, i) => dot(x + 28 + i * 24, y + 26, 6, c, { glow: false }));
+    txt(title, x + 120, y + 27, { s: 18, c: C.dim, mono: true });
+    ctx.fillStyle = 'rgba(139,147,184,0.15)'; ctx.fillRect(x, y + 52, w, 1);
+  });
+  const s = o.s || 23, lh = o.lh || 40;
+  lines.forEach((l, i) => {
+    const p = prog(lt, t0 + i * dt, t0 + i * dt + 0.35);
+    if (p <= 0) return;
+    const hl = o.hl && o.hl[i];
+    if (hl) {
+      const ha = env(lt, hl[0], hl[1], 0.3);
+      if (ha > 0) box(x + 14, y + 74 + i * lh - lh / 2 + 2, w - 28, lh - 4, { r: 8, fill: hexA(hl[2], 0.16 * ha), stroke: hexA(hl[2], 0.5 * ha) });
+    }
+    rich(codeSegs(l), x + 32 + (1 - eout(p)) * 14, y + 76 + i * lh, { s, mono: true, a: p });
+  });
+}
+// Skyframe-style node tile: small type label + key.
+function node(x, y, type, key, c, o = {}) {
+  const w = o.w || 330, h = o.h || 82, a = o.a ?? 1;
+  if (a <= 0) return;
+  const done = o.done || 0, pend = o.pend || 0;
+  const fill = done > 0 ? `rgba(${lerp(18, 16, done)},${lerp(25, 40, done)},${lerp(54, 46, done)},0.95)` : 'rgba(14,19,42,0.92)';
+  scaled(x, y, o.k ?? 1, () => {
+    box(x - w / 2, y - h / 2, w, h, { r: 14, a, fill, stroke: done > 0 ? hexA(c, 0.5 + 0.4 * done) : hexA(c, 0.45), lw: 2, glow: done > 0 || o.glowNow ? hexA(c, 0.35 * Math.max(done, o.glowNow || 0)) : null, gb: 36 });
+    if (pend > 0 && done < 1) {
+      ctx.save(); ctx.globalAlpha *= a * pend * (1 - done); ctx.setLineDash([8, 7]); ctx.lineDashOffset = -o.lt * 30;
+      ctx.strokeStyle = c; ctx.lineWidth = 2; rr(x - w / 2 - 6, y - h / 2 - 6, w + 12, h + 12, 18); ctx.stroke(); ctx.restore();
+    }
+    txt(type, x - w / 2 + 20, y - 16, { s: 15, w: 700, mono: true, c, a, ls: 1 });
+    txt(key, x - w / 2 + 20, y + 15, { s: 21, mono: true, c: C.ink, a });
+    if (done > 0) check(x + w / 2 - 28, y, 22, C.green, a * done);
+  });
+}
+function badge(label, x, y, c, a, s = 18) { if (a > 0) pill(label, x, y, { al: 'center', c, s, w: 600, a, mono: true }); }
+
+// =====================================================================
+// SCENES
+// =====================================================================
+const PIPE = [['Client', C.blue], ['Server', C.purple], ['Load', C.teal], ['Analyze', C.amber], ['Execute', C.pink], ['Cache', C.green]];
+
+// ---- 0. Title ----
+function sTitle(lt) {
+  const title = 'How Bazel works';
+  const s = 132, o = { s, w: 800 };
+  const total = tw(title, o);
+  const x0 = W / 2 - total / 2;
+  const grad = ctx.createLinearGradient(x0, 0, x0 + total, 0);
+  grad.addColorStop(0, '#86efac'); grad.addColorStop(0.5, '#4ade80'); grad.addColorStop(1, '#5eead4');
+  for (let i = 0; i < title.length; i++) {
+    const p = eout(prog(lt, 0.3 + i * 0.05, 0.9 + i * 0.05));
+    const px = x0 + tw(title.slice(0, i), o);
+    ctx.save(); ctx.globalAlpha *= p;
+    ctx.font = font(o); ctx.textBaseline = 'middle'; ctx.fillStyle = grad;
+    ctx.shadowColor = 'rgba(74,222,128,0.5)'; ctx.shadowBlur = 40;
+    ctx.fillText(title[i], px, 430 + (1 - p) * 40);
+    ctx.restore();
+  }
+  txt('A tour of the build system, read straight from its source code', W / 2, 555, { s: 36, c: C.dim, al: 'center', a: prog(lt, 1.5, 2.3) });
+  const n = PIPE.length, gap = 230, sx = W / 2 - (gap * (n - 1)) / 2, y = 740;
+  const lp = eio(prog(lt, 2.2, 3.8));
+  ctx.save(); ctx.strokeStyle = 'rgba(139,147,184,0.35)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(sx, y); ctx.lineTo(sx + gap * (n - 1) * lp, y); ctx.stroke(); ctx.restore();
+  PIPE.forEach(([l, c], i) => {
+    const p = eback(prog(lt, 2.3 + i * 0.25, 2.8 + i * 0.25));
+    if (p <= 0) return;
+    dot(sx + i * gap, y, 11 * p, c, { gb: 24 });
+    txt(l, sx + i * gap, y + 46, { s: 24, w: 600, c: C.soft, al: 'center', a: clamp(p) });
+  });
+  const sp = prog(lt, 4.0, 6.2);
+  if (sp > 0 && sp < 1) dot(sx + gap * (n - 1) * eio(sp), y, 6, '#fff', { gb: 30 });
+}
+
+// ---- 1. Client & server ----
+function sClient(lt) {
+  chapter('01', 'Client & server', 'src/main/cpp/blaze.cc', lt);
+  const tx = 120, ty = 200, twd = 860, th = 500;
+  const a = prog(lt, 0.2, 0.8);
+  box(tx, ty + (1 - eout(a)) * 30, twd, th, { r: 20, fill: 'rgba(10,14,32,0.95)', stroke: 'rgba(139,147,184,0.3)', a, glow: 'rgba(34,197,94,0.2)', gb: 60 });
+  withAlpha(a, () => {
+    [C.red, C.amber, C.green].forEach((c, i) => dot(tx + 32 + i * 26, ty + 30, 7, c, { glow: false }));
+    txt('zsh — my-workspace', tx + twd / 2, ty + 30, { s: 19, c: C.dim, al: 'center' });
+    ctx.fillStyle = 'rgba(139,147,184,0.15)'; ctx.fillRect(tx, ty + 58, twd, 1);
+  });
+  const cmd = 'bazel build //app:server';
+  const n = Math.floor(cmd.length * prog(lt, 0.9, 2.6));
+  const ly = ty + 108;
+  if (a > 0) {
+    let x = rich([['~/ws ', C.teal], ['$ ', C.dim]], tx + 34, ly, { s: 27, mono: true, a });
+    x = rich([[cmd.slice(0, n), C.ink]], x, ly, { s: 27, mono: true, a });
+    if (lt < 3.2 && Math.floor(lt * 2.2) % 2 === 0) { ctx.fillStyle = C.ink; ctx.fillRect(x + 2, ly - 16, 14, 32); }
+  }
+  const outs = [
+    [3.0, [['# C++ client: find workspace, read .bazelrc', C.dim]]],
+    [4.4, [['Starting local Bazel server and', C.amber]]],
+    [4.4, [['connecting to it...', C.amber]]],
+    [9.4, [['INFO: ', C.green], ['Analyzed target //app:server', C.ink]]],
+    [9.9, [['INFO: ', C.green], ['Found 1 target...', C.ink]]],
+    [10.4, [['INFO: ', C.green], ['Build completed successfully', C.ink]]],
+  ];
+  outs.forEach(([t0, segs], i) => rich(segs, tx + 34, ly + 64 + i * 46, { s: 22, mono: true, a: prog(lt, t0, t0 + 0.4) }));
+
+  // right: client -> gRPC -> server
+  const rx = 1120, rw = 680;
+  const b1 = eback(prog(lt, 2.4, 3.0));
+  if (b1 > 0) scaled(rx + rw / 2, 270, 0.9 + 0.1 * b1, () => {
+    box(rx, 210, rw, 120, { a: clamp(b1), stroke: hexA(C.blue, 0.6), glow: hexA(C.blue, 0.25) });
+    txt('bazel client', rx + 32, 252, { s: 34, w: 700, a: clamp(b1) });
+    txt('native C++ · short-lived · one per command', rx + 32, 294, { s: 21, c: C.dim, a: clamp(b1) });
+  });
+  curve(tx + twd - 10, ly, 1050, 220, rx - 8, 260, eio(prog(lt, 2.2, 2.8)), { c: hexA(C.blue, 0.7), lw: 3 });
+  // gRPC link
+  const gp = eio(prog(lt, 5.2, 5.9));
+  line(rx + rw / 2, 334, rx + rw / 2, 470, gp, { c: hexA(C.teal, 0.8), lw: 3 });
+  badge('gRPC · CommandServer.Run()', rx + rw / 2 + 190, 402, C.teal, prog(lt, 5.6, 6.1), 18);
+  for (let k = 0; k < 3; k++) {
+    const pp = ((lt - 6.2 + k * 0.33) % 1 + 1) % 1;
+    if (lt > 6.2 && lt < 13.5) dot(rx + rw / 2, lerp(338, 466, pp), 5, C.teal, { gb: 14, a: 0.9 });
+  }
+  const b2 = eback(prog(lt, 4.4, 5.1));
+  if (b2 > 0) scaled(rx + rw / 2, 640, 0.9 + 0.1 * b2, () => {
+    const pulse = 0.5 + 0.5 * Math.sin(lt * 3);
+    box(rx, 478, rw, 360, { a: clamp(b2), fill: 'rgba(20,60,40,0.4)', stroke: C.green, glow: hexA(C.green, 0.2 + 0.2 * pulse), gb: 50 });
+    txt('bazel server', rx + 32, 522, { s: 34, w: 700, a: clamp(b2) });
+    txt('Java · long-lived · one per workspace', rx + 32, 562, { s: 21, c: C.dim, a: clamp(b2) });
+    const rows = [['GrpcCommandServer', 'receives the request'], ['BlazeCommandDispatcher', 'picks "build"'], ['BuildTool', 'load → analyze → execute']];
+    rows.forEach(([k, v], i) => {
+      const p = eout(prog(lt, 6.4 + i * 0.5, 6.9 + i * 0.5));
+      const y = 616 + i * 50;
+      txt(k, rx + 32 + (1 - p) * 20, y, { s: 22, mono: true, c: C.amber, a: p * clamp(b2) });
+      txt(v, rx + 380, y, { s: 21, c: C.soft, a: p * clamp(b2) });
+    });
+    // memory chip
+    const ma = prog(lt, 8.4, 9.0);
+    box(rx + 32, 760, rw - 64, 56, { r: 12, a: ma * clamp(b2), fill: hexA(C.purple, 0.14), stroke: hexA(C.purple, 0.5) });
+    const R = rnd(4);
+    for (let i = 0; i < 14; i++) dot(rx + 60 + i * 13, 788 + Math.sin(i * 1.7 + lt * 2) * 10, 3.5, C.purple, { a: ma * (0.5 + 0.5 * R()), gb: 8 });
+    txt('Skyframe graph stays warm in memory', rx + 270, 788, { s: 20, c: C.soft, a: ma * clamp(b2) });
+  });
+  captions([
+    [0.3, 6.6, 'Typing bazel runs a small C++ client. It finds the workspace, reads .bazelrc, and looks for a server.'],
+    [6.8, 13.6, 'The real work happens in a long-lived Java server that keeps its build graph warm between commands.'],
+  ], lt);
+}
+
+// ---- 2. Packages & BUILD files ----
+const BUILD_APP = [
+  'load("@rules_cc//cc:defs.bzl", "cc_binary")',
+  '',
+  'cc_binary(',
+  '    name = "server",',
+  '    srcs = ["main.cc"],',
+  '    deps = ["//lib:net"],',
+  ')',
+];
+const TREE = [
+  ['MODULE.bazel', 0, C.dim], ['app/', 0, C.soft], ['BUILD', 1, C.green], ['main.cc', 1, C.soft],
+  ['lib/', 0, C.soft], ['BUILD', 1, C.green], ['net.cc', 1, C.soft], ['net.h', 1, C.soft],
+];
+function sBuild(lt) {
+  chapter('02', 'Packages & BUILD files', 'lib/skyframe/PackageFunction.java', lt);
+  // file tree
+  const fa = prog(lt, 0.3, 0.9);
+  box(120, 180, 340, 420, { a: fa, fill: 'rgba(14,19,42,0.9)' });
+  txt('my-workspace/', 150, 220, { s: 22, w: 600, mono: true, c: C.ink, a: fa });
+  TREE.forEach(([n, d, c], i) => {
+    const p = eout(prog(lt, 0.6 + i * 0.12, 1.0 + i * 0.12));
+    const y = 268 + i * 40;
+    const isPkg = n === 'BUILD';
+    if (isPkg) { const ga = env(lt, 2.2, 7.2, 0.4); box(170 + d * 34 - 10, y - 17, 260, 34, { r: 8, fill: hexA(C.green, 0.15 * ga), stroke: hexA(C.green, 0.5 * ga), a: p }); }
+    txt((d ? '└ ' : '') + n, 160 + d * 34, y, { s: 21, mono: true, c, a: p });
+  });
+  badge('package //app', 330, 655, C.green, env(lt, 2.4, 7.2, 0.4));
+  badge('package //lib', 330, 705, C.green, env(lt, 2.6, 7.2, 0.4));
+
+  codePanel(540, 180, 760, 360, 'app/BUILD', BUILD_APP, lt, 1.4, 0.18, { s: 23, lh: 40, hl: { 0: [8.2, 12, C.purple], 3: [4.2, 7, C.amber] } });
+
+  // label anatomy
+  const la = prog(lt, 4.0, 4.6);
+  if (la > 0) {
+    const parts = [['@', C.dim, 'repo'], ['//app', C.teal, 'package'], [':server', C.amber, 'target']];
+    let x = 560; const y = 640;
+    txt('label', 560, 596, { s: 18, w: 600, c: C.dim, ls: 3, a: la });
+    parts.forEach(([s, c, d], i) => {
+      const p = eout(prog(lt, 4.2 + i * 0.3, 4.7 + i * 0.3));
+      const w = tw(s, { s: 44, mono: true, w: 700 });
+      txt(s, x, y + (1 - p) * 10, { s: 44, mono: true, w: 700, c, a: p, glow: hexA(c, 0.4) });
+      line(x + w / 2, y + 32, x + w / 2, y + 66, p, { c: hexA(c, 0.6), head: false, lw: 2 });
+      txt(d, x + w / 2, y + 88, { s: 20, c: C.soft, al: 'center', a: p });
+      x += w + 6;
+    });
+  }
+  // Package result on the right
+  const rx = 1440, rw = 360;
+  const pa = eback(prog(lt, 8.6, 9.3));
+  curve(1304, 330, 1370, 330, rx - 6, 330, eio(prog(lt, 8.2, 8.8)), { c: hexA(C.green, 0.7), lw: 3 });
+  badge('Starlark', 1370, 380, C.purple, prog(lt, 8.4, 8.9), 16);
+  if (pa > 0) scaled(rx + rw / 2, 470, 0.9 + 0.1 * pa, () => {
+    box(rx, 200, rw, 540, { a: clamp(pa), fill: 'rgba(20,60,40,0.35)', stroke: C.green, glow: hexA(C.green, 0.3), gb: 40 });
+    txt('Package //app', rx + 28, 244, { s: 28, w: 700, a: clamp(pa) });
+    txt('name → Target', rx + 28, 282, { s: 19, c: C.dim, a: clamp(pa) });
+    const ts = [['server', 'Rule  cc_binary', C.amber], ['main.cc', 'InputFile', C.soft], ['BUILD', 'InputFile', C.soft]];
+    ts.forEach(([k, v, c], i) => {
+      const p = eout(prog(lt, 9.4 + i * 0.4, 9.9 + i * 0.4));
+      box(rx + 24, 316 + i * 96, rw - 48, 80, { r: 12, a: p, fill: 'rgba(10,14,32,0.8)', stroke: hexA(c, 0.4) });
+      txt(k, rx + 46, 342 + i * 96, { s: 22, mono: true, w: 700, c, a: p });
+      txt(v, rx + 46, 374 + i * 96, { s: 18, mono: true, c: C.dim, a: p });
+    });
+    txt('attrs: srcs, deps → labels', rx + 28, 640, { s: 19, c: C.soft, a: prog(lt, 11, 11.6) * clamp(pa) });
+    txt('no commands run yet', rx + 28, 690, { s: 19, c: C.dim, a: prog(lt, 11.4, 12) * clamp(pa) });
+  });
+  captions([
+    [0.3, 7.6, 'Code lives in packages: any directory with a BUILD file. Targets are named by labels like //app:server.'],
+    [7.8, 14.6, 'BUILD files are Starlark. Evaluating one, plus the .bzl files it load()s, yields a Package of targets.'],
+  ], lt);
+}
+
+// ---- 3. Skyframe ----
+const SKYCODE = [
+  'SkyValue compute(SkyKey key, Environment env) {',
+  '  PackageValue pkg =',
+  '      (PackageValue) env.getValue(pkgKey);',
+  '  if (env.valuesMissing()) {',
+  '    return null;   // restart when deps are ready',
+  '  }',
+  '  return new ConfiguredTargetValue(...);',
+  '}',
+];
+// graph timeline is relative to G
+const SKY_G = 12.2;
+const SKYN = [
+  // id, x, y, type, key, color, tReq, tDone
+  ['tp', 960, 230, 'TARGET_PATTERN', '//app:server', C.blue, 0.0, 10.4],
+  ['ct', 960, 370, 'CONFIGURED_TARGET', '//app:server', C.amber, 0.7, 9.8],
+  ['pa', 560, 520, 'PACKAGE', '//app', C.teal, 1.4, 4.5],
+  ['fa', 330, 680, 'FILE', 'app/BUILD', C.soft, 2.1, 3.2],
+  ['bz', 790, 830, 'BZL_LOAD', '@rules_cc//cc:defs.bzl', C.purple, 2.5, 3.9],
+  ['cl', 1380, 520, 'CONFIGURED_TARGET', '//lib:net', C.amber, 5.5, 9.0],
+  ['pl', 1380, 680, 'PACKAGE', '//lib', C.teal, 6.0, 8.3],
+  ['fl', 1600, 830, 'FILE', 'lib/BUILD', C.soft, 6.5, 7.4],
+];
+const SKYE = [['tp', 'ct', 0.7], ['ct', 'pa', 1.4], ['pa', 'fa', 2.1], ['pa', 'bz', 2.5], ['ct', 'cl', 5.5], ['cl', 'pl', 6.0], ['pl', 'fl', 6.5], ['pl', 'bz', 6.9]];
+function sSky(lt) {
+  chapter('03', 'Skyframe', 'build/skyframe/ParallelEvaluator.java', lt);
+  // part A: the trio + compute()
+  const A = clamp((SKY_G - 0.2 - lt) / 0.6);
+  if (A > 0) withAlpha(A, () => {
+    heading('One engine for everything', lt, 180, 'Loading, analysis and execution are all nodes in one memoized graph');
+    const trio = [['SkyKey', 'what to compute', C.blue, 'PACKAGE  //app'], ['SkyFunction', 'how to compute it', C.purple, 'PackageFunction.compute()'], ['SkyValue', 'the immutable result', C.green, 'Package{server, main.cc, …}']];
+    trio.forEach(([n, d, c, ex], i) => {
+      const p = eback(prog(lt, 1.0 + i * 0.6, 1.6 + i * 0.6));
+      if (p <= 0) return;
+      const y = 380 + i * 160;
+      scaled(400, y, 0.9 + 0.1 * p, () => {
+        box(120, y - 60, 580, 120, { a: clamp(p), stroke: hexA(c, 0.6), glow: hexA(c, 0.22) });
+        txt(n, 150, y - 22, { s: 32, w: 700, c, a: clamp(p) });
+        txt(d, 420, y - 22, { s: 20, c: C.dim, a: clamp(p) });
+        txt(ex, 150, y + 24, { s: 20, mono: true, c: C.soft, a: clamp(p) });
+      });
+      if (i < 2) line(410, y + 62, 410, y + 98, eio(prog(lt, 1.5 + i * 0.6, 1.9 + i * 0.6)), { c: C.faint });
+    });
+    codePanel(800, 300, 1000, 400, 'SkyFunction.java', SKYCODE, lt, 4.0, 0.25, { s: 22, lh: 40, hl: { 2: [6.5, 9, C.blue], 4: [8.2, 11.5, C.amber] } });
+    badge('null → not computed yet', 1300, 750, C.blue, prog(lt, 6.8, 7.3));
+    badge('missing deps get scheduled; compute() reruns', 1300, 800, C.amber, prog(lt, 8.6, 9.1));
+  });
+  // part B: the graph grows
+  const g = lt - SKY_G;
+  if (g > -0.2) {
+    const B = clamp((g + 0.2) / 0.6);
+    withAlpha(B, () => {
+      const pos = Object.fromEntries(SKYN.map(n => [n[0], n]));
+      for (const [f, t, t0] of SKYE) {
+        const a = pos[f], b = pos[t];
+        const p = eio(prog(g, t0, t0 + 0.5));
+        const shared = f === 'pl' && t === 'bz';
+        const doneB = prog(g, b[7], b[7] + 0.3);
+        curve(a[1], a[2] + 42, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2 + 10, b[1], b[2] - 48, p, { c: shared ? hexA(C.purple, 0.9) : hexA(C.soft, 0.25 + 0.35 * doneB), lw: shared ? 3 : 2.2, dash: shared ? [10, 8] : null, off: -g * 20 });
+      }
+      for (const [id, x, y, type, key, c, tr, td] of SKYN) {
+        const ap = eback(prog(g, tr, tr + 0.45));
+        node(x, y, type, key, c, { a: clamp(ap), k: 0.85 + 0.15 * ap, pend: prog(g, tr + 0.2, tr + 0.5), done: prog(g, td, td + 0.35), lt, w: id === 'bz' ? 380 : 330 });
+      }
+      // restart badges on ct
+      badge('getValue(PACKAGE //app) → null · return null', 960 + 430, 370, C.amber, env(g, 1.6, 4.5, 0.3), 17);
+      badge('restart ↻  deps ready', 960 + 330, 370, C.green, env(g, 4.8, 6.6, 0.3), 17);
+      badge('already done · memoized', 790, 905, C.purple, env(g, 7.0, 10.4, 0.3), 17);
+      // worker threads
+      const wa = prog(g, 2.0, 2.6) * clamp((17.8 - g) / 0.5);
+      txt('ParallelEvaluator', 120, 220, { s: 22, w: 700, c: C.soft, a: wa });
+      for (let i = 0; i < 4; i++) {
+        const busy = Math.sin(g * 4 + i * 1.9) > -0.2 && g < 10.6;
+        dot(130 + i * 34, 262, 9, busy ? C.green : C.faint, { a: wa, glow: busy });
+      }
+      txt('worker threads', 270, 262, { s: 18, c: C.dim, a: wa });
+    });
+  }
+  captions([
+    [0.3, 6.0, 'Everything Bazel knows lives in Skyframe: SkyKeys, computed by SkyFunctions into SkyValues.'],
+    [6.2, 11.8, 'A function asks env.getValue() for its deps. If one isn’t ready, it returns null and is restarted later.'],
+    [12.3, 19.6, 'Starting from the requested target, the graph grows on demand, loading packages and .bzl files in parallel…'],
+    [19.8, 29.5, '…and every finished node is memoized. When a second package loads the same .bzl, it costs nothing.'],
+  ], lt);
+}
+
+// ---- 4. Analysis ----
+const RULE_IMPL = [
+  'def _cc_library_impl(ctx):',
+  '    obj = ctx.actions.declare_file("net.o")',
+  '    ctx.actions.run(',
+  '        mnemonic = "CppCompile",',
+  '        inputs = ctx.files.srcs + ctx.files.hdrs,',
+  '        outputs = [obj],',
+  '        executable = cc_toolchain.compiler,',
+  '    )',
+  '    return [DefaultInfo(...), CcInfo(...)]',
+];
+// action graph: files and actions
+const AG = {
+  files: [['net.cc', 260, 690], ['net.h', 260, 790], ['main.cc', 260, 890], ['net.o', 1000, 740], ['main.o', 1000, 870], ['server', 1640, 800]],
+  acts: [['CppCompile', 640, 740, ['net.cc', 'net.h'], 'net.o'], ['CppCompile', 640, 870, ['main.cc', 'net.h'], 'main.o'], ['CppLink', 1320, 800, ['net.o', 'main.o'], 'server']],
+};
+function actionGraph(lt, t0, o = {}) {
+  const dy = o.dy || 0;
+  const f = Object.fromEntries(AG.files.map(([n, x, y]) => [n, [n, x, y + dy]]));
+  const st = o.state || (() => ({}));
+  AG.acts.forEach(([m, x, y0, ins, out], i) => {
+    const y = y0 + dy;
+    const p = prog(lt, t0 + 0.4 + i * 0.7, t0 + 1.0 + i * 0.7);
+    ins.forEach(n => curve(f[n][1] + 80, f[n][2], (f[n][1] + x) / 2, (f[n][2] + y) / 2, x - 100, y, eio(p), { c: hexA(C.soft, 0.35), lw: 2 }));
+    curve(x + 100, y, (x + f[out][1]) / 2, (y + f[out][2]) / 2, f[out][1] - 80, f[out][2], eio(prog(lt, t0 + 0.7 + i * 0.7, t0 + 1.2 + i * 0.7)), { c: hexA(C.soft, 0.35), lw: 2 });
+    const s = st('a' + i);
+    const a = eback(p);
+    if (a > 0) scaled(x, y, 0.85 + 0.15 * a, () => {
+      box(x - 100, y - 32, 200, 64, { r: 32, a: clamp(a), fill: s.fill || hexA(C.pink, 0.18), stroke: s.stroke || C.pink, glow: s.glow || null, gb: 36 });
+      txt(m, x, y + 1, { s: 21, w: 700, mono: true, al: 'center', c: C.ink, a: clamp(a) });
+    });
+    if (s.label) badge(s.label, x, y - 56, s.lc || C.green, s.la ?? 1, 16);
+  });
+  AG.files.forEach(([n, x, y0], i) => {
+    const y = y0 + dy;
+    const out = i >= 3;
+    const p = prog(lt, t0 + (out ? 0.9 + (i - 3) * 0.7 : i * 0.15), t0 + (out ? 1.3 + (i - 3) * 0.7 : 0.4 + i * 0.15));
+    const s = st(n);
+    box(x - 80, y - 26, 160, 52, { r: 10, a: p, fill: s.fill || (out ? 'rgba(14,19,42,0.95)' : 'rgba(20,28,58,0.9)'), stroke: s.stroke || (out ? hexA(C.amber, 0.55) : 'rgba(139,147,184,0.35)'), glow: s.glow || null, gb: 30 });
+    txt(n, x, y + 1, { s: 20, mono: true, al: 'center', c: out ? C.amber : C.soft, a: p });
+    if (s.check) check(x + 100, y, 22, C.green, s.check);
+  });
+}
+function sAnalysis(lt) {
+  chapter('04', 'Analysis', 'lib/skyframe/ConfiguredTargetFunction.java', lt);
+  // target + configuration -> configured target
+  const t1 = eback(prog(lt, 0.4, 1.0)), t2 = eback(prog(lt, 1.0, 1.6));
+  if (t1 > 0) pill('Target  //lib:net', 140, 230, { s: 24, c: C.amber, w: 600, mono: true, a: clamp(t1) });
+  if (t2 > 0) pill('Config  k8-fastbuild', 140, 310, { s: 24, c: C.blue, w: 600, mono: true, a: clamp(t2) });
+  txt('platform + flags, hashed into the output path', 140, 360, { s: 18, c: C.dim, a: prog(lt, 1.6, 2.2) });
+  curve(430, 230, 580, 230, 660, 268, eio(prog(lt, 1.8, 2.4)), { c: hexA(C.amber, 0.7), lw: 3 });
+  curve(472, 310, 600, 310, 660, 286, eio(prog(lt, 1.8, 2.4)), { c: hexA(C.blue, 0.7), lw: 3 });
+  const ct = eback(prog(lt, 2.4, 3.0));
+  if (ct > 0) scaled(780, 278, 0.9 + 0.1 * ct, () => {
+    box(670, 228, 230, 100, { a: clamp(ct), fill: 'rgba(76,60,10,0.35)', stroke: C.amber, glow: hexA(C.amber, 0.35), gb: 40 });
+    txt('Configured', 785, 264, { s: 24, w: 700, al: 'center', a: clamp(ct) });
+    txt('Target', 785, 296, { s: 24, w: 700, al: 'center', a: clamp(ct) });
+  });
+  // providers flow
+  const pv = prog(lt, 10.5, 11.2);
+  ['DefaultInfo', 'CcInfo'].forEach((n, i) => {
+    const p = eout(prog(lt, 10.6 + i * 0.4, 11.2 + i * 0.4));
+    badge(n, 300 + i * 220, 450 - p * 10, i ? C.teal : C.green, p, 20);
+  });
+  curve(590, 430, 680, 400, 740, 336, eio(prog(lt, 10.6, 11.3)), { c: hexA(C.teal, 0.6), lw: 2, dash: [6, 6] });
+  txt('providers flow to //app:server', 140, 510, { s: 19, c: C.soft, a: pv });
+
+  codePanel(960, 170, 840, 420, 'cc_library (simplified)', RULE_IMPL, lt, 3.4, 0.22, { s: 21, lh: 38, hl: { 1: [6.6, 9.6, C.amber], 2: [7.4, 10.2, C.pink], 8: [10.3, 13.5, C.teal] } });
+
+  // action graph
+  const ga = prog(lt, 13.6, 14.2);
+  txt('ACTION GRAPH', 120, 620, { s: 18, w: 700, c: C.pink, ls: 4, a: ga });
+  if (ga > 0) actionGraph(lt, 14.0);
+  captions([
+    [0.3, 7.0, 'Analysis pairs each target with a build configuration (platform, flags) to make a ConfiguredTarget.'],
+    [7.2, 13.8, 'The rule implementation runs. It returns providers like CcInfo to dependents and declares actions.'],
+    [14.0, 21.5, 'Still nothing has been compiled. The result is an action graph: which files each command reads and writes.'],
+  ], lt);
+}
+
+// ---- 5. Execution ----
+const RUNNERS = [['local', 'LocalSpawnRunner', C.soft], ['sandboxed', 'LinuxSandboxedSpawnRunner', C.teal], ['worker', 'WorkerSpawnRunner', C.purple], ['remote', 'RemoteSpawnRunner', C.blue]];
+function sExec(lt) {
+  chapter('05', 'Execution', 'lib/exec/AbstractSpawnStrategy.java', lt);
+  const runA = i => [[7.4, 10.0], [7.8, 10.3], [10.8, 12.6]][i];
+  withAlpha(prog(lt, 0.3, 0.9), () => actionGraph(lt + 20, 20, {
+    dy: -440,
+    state: k => {
+      if (k[0] === 'a' && k.length === 2) {
+        const [s, e] = runA(+k[1]);
+        const r = env(lt, s, e + 0.3, 0.3), d = prog(lt, e, e + 0.4);
+        const hit = k === 'a1' && lt > 4.6 && lt < 7.2;
+        return { glow: r > 0 ? hexA(C.pink, 0.6 * r * (0.6 + 0.4 * Math.sin(lt * 9))) : (hit ? hexA(C.green, 0.5) : null), fill: d > 0 || hit ? hexA(C.green, 0.2) : null, stroke: d > 0 || hit ? C.green : null, label: hit ? 'cache check…' : (r > 0 ? 'running' : (d > 0 ? 'done' : null)), lc: hit ? C.green : (r > 0 ? C.pink : C.green), la: hit ? env(lt, 4.6, 7.2, 0.3) : Math.max(r, d) };
+      }
+      if (k === 'net.o') return { check: prog(lt, 10.0, 10.4) };
+      if (k === 'main.o') return { check: prog(lt, 10.3, 10.7) };
+      if (k === 'server') { const g = prog(lt, 12.6, 13.0); return { check: g, glow: g > 0 ? hexA(C.green, 0.6) : null }; }
+      return {};
+    }
+  }));
+  badge('requested: bazel-bin/app/server', 1640, 296, C.amber, env(lt, 0.8, 4.4, 0.3), 17);
+  const rq = prog(lt, 1.4, 3.6);
+  if (rq > 0 && rq < 1) { // request ripples backwards through the graph
+    const pts = [[1640, 360], [1320, 360], [1000, 300], [640, 300], [260, 250]];
+    const k = rq * (pts.length - 1), i = Math.min(pts.length - 2, Math.floor(k)), f = k - i;
+    dot(lerp(pts[i][0], pts[i + 1][0], f), lerp(pts[i][1], pts[i + 1][1], f), 8, C.amber, { gb: 26 });
+  }
+  // bottom-left: action cache
+  const ca = prog(lt, 3.8, 4.4);
+  box(120, 520, 820, 270, { a: ca, fill: 'rgba(14,19,42,0.9)' });
+  txt('ActionCacheChecker', 150, 562, { s: 26, w: 700, c: C.green, a: ca });
+  txt('lib/actions/ActionCacheChecker.java', 470, 563, { s: 16, mono: true, c: C.dim, a: ca });
+  const rows = [['input digests', 'hash of every input file'], ['action key', 'command line, env, mnemonic'], ['outputs', 'still on disk, unchanged?']];
+  rows.forEach(([k, v], i) => {
+    const p = eout(prog(lt, 4.2 + i * 0.3, 4.6 + i * 0.3));
+    txt(k, 150, 616 + i * 44, { s: 21, mono: true, c: C.amber, a: p });
+    txt(v, 400, 616 + i * 44, { s: 20, c: C.soft, a: p });
+  });
+  badge('all match → skip, nothing runs', 700, 754, C.green, prog(lt, 5.6, 6.1), 17);
+  // bottom-right: spawn pipeline
+  const rx = 1000, rw = 800;
+  const pa = prog(lt, 7.2, 7.8);
+  box(rx, 520, rw, 270, { a: pa, fill: 'rgba(14,19,42,0.9)', stroke: hexA(C.pink, 0.35) });
+  const steps = [
+    [7.4, 'Action → Spawn', 'argv · env · inputs · outputs', C.pink],
+    [8.0, 'SpawnStrategy', 'picked per mnemonic', C.amber],
+    [8.6, 'SpawnCache.lookup()', 'disk / remote cache first', C.green],
+    [9.2, 'SpawnRunner.exec()', 'actually runs it', C.blue],
+  ];
+  steps.forEach(([t0, n, d, c], i) => {
+    const p = eout(prog(lt, t0, t0 + 0.45));
+    const y = 566 + i * 56;
+    dot(rx + 36, y, 7, c, { a: p });
+    if (i < 3) line(rx + 36, y + 10, rx + 36, y + 46, p, { c: C.faint, head: false, lw: 2 });
+    txt(n, rx + 60 + (1 - p) * 16, y, { s: 23, mono: true, w: 700, c: C.ink, a: p });
+    txt(d, rx + 450, y, { s: 19, c: C.dim, a: p });
+  });
+  // runners row
+  RUNNERS.forEach(([n, cls, c], i) => {
+    const p = eout(prog(lt, 13.6 + i * 0.4, 14.1 + i * 0.4));
+    const x = 120 + i * 425, y = 812, w = 405;
+    const hot = env(lt, 15.4 + i * 1.9, 17.2 + i * 1.9, 0.3);
+    box(x, y, w, 96, { a: p, r: 14, fill: hexA(c, 0.08 + 0.18 * hot), stroke: hexA(c, 0.4 + 0.5 * hot), glow: hot > 0 ? hexA(c, 0.4 * hot) : null, gb: 30 });
+    txt(n, x + 24, y + 32, { s: 26, w: 700, c, a: p });
+    txt(cls, x + 24, y + 68, { s: 16, mono: true, c: C.dim, a: p });
+  });
+  const notes = ['plain subprocess', 'only declared inputs are visible', 'warm JVM / compiler, reused', 'run on a build farm'];
+  notes.forEach((s, i) => { const h = env(lt, 15.4 + i * 1.9, 17.2 + i * 1.9, 0.3); txt(s, 120 + i * 425 + 24, 812 + 120, { s: 17, c: C.soft, a: h }); });
+  captions([
+    [0.3, 4.4, 'To build //app:server, Bazel asks Skyframe for its output file, pulling in the actions behind it.'],
+    [4.6, 7.2, 'An action whose inputs and command line match the action cache is skipped outright.'],
+    [7.4, 13.4, 'The rest run in parallel. Each becomes a Spawn, handed to a strategy that checks the cache, then runs it…'],
+    [13.6, 23.5, '…locally, in a sandbox that sees only declared inputs, in a persistent worker, or on a remote executor.'],
+  ], lt);
+}
+
+// ---- 6. Remote cache ----
+function sRemote(lt) {
+  chapter('06', 'Remote caching', 'lib/remote/RemoteSpawnCache.java', lt);
+  // inputs -> merkle tree
+  const leaves = [['net.cc', 'e3b0…'], ['net.h', '9f86…'], ['argv+env', '2c26…'], ['toolchain', '7d86…']];
+  leaves.forEach(([n, h], i) => {
+    const p = eout(prog(lt, 0.5 + i * 0.25, 1.0 + i * 0.25));
+    const x = 130 + i * 200, y = 800;
+    box(x, y - 34, 180, 68, { r: 12, a: p, fill: 'rgba(20,28,58,0.9)' });
+    txt(n, x + 90, y - 10, { s: 19, mono: true, c: C.soft, al: 'center', a: p });
+    txt(h, x + 90, y + 16, { s: 17, mono: true, c: C.dim, al: 'center', a: p });
+  });
+  const mids = [[320, 640], [720, 640]];
+  mids.forEach(([x, y], i) => {
+    const p = prog(lt, 1.8 + i * 0.3, 2.3 + i * 0.3);
+    line(220 + i * 400, 764, x - 30, y + 26, eio(p), { c: C.faint, head: false });
+    line(420 + i * 400, 764, x + 30, y + 26, eio(p), { c: C.faint, head: false });
+    box(x - 70, y - 26, 140, 52, { r: 26, a: p, fill: hexA(C.purple, 0.15), stroke: hexA(C.purple, 0.5) });
+    txt(i ? '5f1a…' : 'b94d…', x, y + 1, { s: 18, mono: true, al: 'center', c: C.purple, a: p });
+  });
+  const rp = prog(lt, 2.8, 3.3);
+  line(320, 612, 500, 512, eio(rp), { c: C.faint, head: false });
+  line(720, 612, 540, 512, eio(rp), { c: C.faint, head: false });
+  const ak = eback(prog(lt, 3.3, 3.9));
+  if (ak > 0) scaled(520, 470, 0.9 + 0.1 * ak, () => {
+    box(330, 420, 380, 96, { a: clamp(ak), fill: hexA(C.green, 0.15), stroke: C.green, glow: hexA(C.green, 0.4), gb: 40 });
+    txt('ActionKey', 520, 450, { s: 24, w: 700, al: 'center', a: clamp(ak) });
+    txt('sha256: a3f9c2…41e0', 520, 486, { s: 20, mono: true, c: C.green, al: 'center', a: clamp(ak) });
+  });
+  txt('Merkle tree of inputs + command', 130, 880, { s: 19, c: C.dim, a: prog(lt, 2, 2.6) });
+  // remote server
+  const rx = 1180, rw = 620;
+  const ra = eback(prog(lt, 4.2, 4.9));
+  if (ra > 0) scaled(rx + rw / 2, 470, 0.92 + 0.08 * ra, () => {
+    box(rx, 200, rw, 560, { a: clamp(ra), fill: 'rgba(14,24,52,0.9)', stroke: hexA(C.blue, 0.6), glow: hexA(C.blue, 0.25), gb: 50 });
+    txt('Remote cache', rx + 30, 244, { s: 30, w: 700, a: clamp(ra) });
+    txt('REAPI · gRPC', rx + 30, 282, { s: 19, mono: true, c: C.dim, a: clamp(ra) });
+    box(rx + 30, 320, rw - 60, 180, { r: 14, a: clamp(ra), fill: 'rgba(10,14,32,0.8)', stroke: hexA(C.green, 0.4) });
+    txt('Action Cache', rx + 56, 356, { s: 22, w: 700, c: C.green, a: clamp(ra) });
+    txt('ActionKey → ActionResult', rx + 56, 392, { s: 19, mono: true, c: C.soft, a: clamp(ra) });
+    const hit = env(lt, 6.0, 9.5, 0.3);
+    box(rx + 50, 420, rw - 100, 50, { r: 10, a: clamp(ra), fill: hexA(C.green, 0.08 + 0.25 * hit), stroke: hexA(C.green, 0.3 + 0.6 * hit) });
+    txt('a3f9c2…  →  net.o: 6e34…', rx + 72, 446, { s: 19, mono: true, c: C.ink, a: clamp(ra) });
+    box(rx + 30, 520, rw - 60, 200, { r: 14, a: clamp(ra), fill: 'rgba(10,14,32,0.8)', stroke: hexA(C.amber, 0.4) });
+    txt('CAS', rx + 56, 556, { s: 22, w: 700, c: C.amber, a: clamp(ra) });
+    txt('content digest → bytes', rx + 56, 592, { s: 19, mono: true, c: C.soft, a: clamp(ra) });
+    const R = rnd(11);
+    for (let i = 0; i < 14; i++) {
+      const bx = rx + 56 + (i % 7) * 76, by = 628 + Math.floor(i / 7) * 44;
+      const isIt = i === 4;
+      box(bx, by, 64, 34, { r: 6, a: clamp(ra) * (0.4 + 0.4 * R()), fill: isIt ? hexA(C.amber, 0.2 + 0.5 * env(lt, 8.2, 11, 0.3)) : hexA(C.amber, 0.12), stroke: hexA(C.amber, isIt ? 0.8 : 0.3) });
+    }
+  });
+  // lookup + download
+  curve(712, 450, 900, 400, rx - 6, 446, eio(prog(lt, 5.2, 6.0)), { c: hexA(C.green, 0.8), lw: 3 });
+  badge('lookup', 950, 386, C.green, env(lt, 5.4, 8.5, 0.3));
+  badge('HIT', 950, 386, C.green, prog(lt, 8.5, 8.8));
+  curve(rx - 6, 660, 950, 700, 720, 520, eio(prog(lt, 8.8, 9.8)), { c: hexA(C.amber, 0.8), lw: 3 });
+  for (let k = 0; k < 4; k++) {
+    const pp = prog(lt, 9.0 + k * 0.25, 10.0 + k * 0.25);
+    if (pp > 0 && pp < 1) { const [x, y] = qpt(rx - 6, 660, 950, 700, 720, 520, eio(pp)); dot(x, y, 6, C.amber, { gb: 18 }); }
+  }
+  badge('download net.o, no compile', 1000, 560, C.amber, prog(lt, 9.8, 10.3));
+  // CI + laptops
+  const ma = prog(lt, 11.4, 12.0);
+  const mach = [['your laptop', 1240], ['CI runner', 1480], ['teammate', 1720]];
+  mach.forEach(([n, x], i) => {
+    const p = eout(prog(lt, 11.4 + i * 0.3, 11.9 + i * 0.3));
+    box(x - 100, 830, 200, 64, { r: 12, a: p, fill: 'rgba(20,28,58,0.9)', stroke: hexA(C.blue, 0.5) });
+    txt(n, x, 863, { s: 20, w: 600, al: 'center', c: C.soft, a: p });
+    line(x, 828, x, 790, eio(prog(lt, 12.2 + i * 0.2, 12.6 + i * 0.2)), { c: hexA(C.blue, 0.6), lw: 2 });
+  });
+  captions([
+    [0.3, 5.0, 'Hermetic actions are pure functions of their inputs, so their results can be cached by content hash.'],
+    [5.2, 11.0, 'Inputs and command hash into an ActionKey. A cache hit means the outputs are just downloaded.'],
+    [11.2, 15.6, 'Share one cache across CI and every laptop, and code is compiled once for the whole team.'],
+  ], lt);
+}
+
+// ---- 7. Incremental ----
+const INC = [
+  // id, x, y, type, key, color
+  ['f', 300, 560, 'FILE', 'lib/net.cc', C.soft],
+  ['c', 710, 560, 'ACTION_EXECUTION', 'CppCompile net.o', C.pink],
+  ['o', 1120, 560, 'ARTIFACT', 'net.o', C.amber],
+  ['l', 1530, 560, 'ACTION_EXECUTION', 'CppLink server', C.pink],
+];
+const INC2 = [['fb', 300, 330, 'FILE', 'lib/BUILD', C.soft], ['pk', 710, 330, 'PACKAGE', '//lib', C.teal], ['cn', 1120, 330, 'CONFIGURED_TARGET', '//lib:net', C.amber]];
+function sIncr(lt) {
+  chapter('07', 'Incremental builds', 'build/skyframe/AbstractParallelEvaluator.java', lt);
+  // edit card
+  const ea = prog(lt, 0.4, 1.0);
+  box(120, 760, 640, 140, { a: ea, fill: 'rgba(10,14,32,0.95)', stroke: 'rgba(139,147,184,0.3)' });
+  txt('lib/net.cc', 150, 792, { s: 18, mono: true, c: C.dim, a: ea });
+  const typed = '// TODO: retry on timeout';
+  const n = Math.floor(typed.length * prog(lt, 1.0, 2.6));
+  txt('+ ' + typed.slice(0, n), 150, 840, { s: 24, mono: true, c: C.green, a: ea });
+  txt('comment-only change', 150, 878, { s: 18, c: C.dim, a: prog(lt, 2.8, 3.3) });
+  // diff awareness
+  const da = prog(lt, 3.0, 3.6);
+  box(860, 760, 940, 140, { a: da, fill: hexA(C.blue, 0.1), stroke: hexA(C.blue, 0.5) });
+  txt('DiffAwareness', 890, 800, { s: 26, w: 700, c: C.blue, a: da });
+  txt('inotify / FSEvents: "lib/net.cc changed"', 890, 846, { s: 21, mono: true, c: C.soft, a: da });
+  txt('no need to stat the whole workspace', 890, 880, { s: 18, c: C.dim, a: prog(lt, 3.6, 4.2) });
+  curve(860, 800, 440, 760, 300, 606, eio(prog(lt, 4.2, 4.9)), { c: hexA(C.blue, 0.7), lw: 3 });
+
+  // untouched upper row
+  INC2.forEach(([id, x, y, type, key, c], i) => {
+    const a = 0.25 + 0.5 * clamp(1 - prog(lt, 7.5, 8.5));
+    node(x, y, type, key, c, { a: prog(lt, 0.6 + i * 0.2, 1.1 + i * 0.2) * a, done: 1 * (1 - prog(lt, 7.5, 8.5)), lt });
+    if (i < 2) line(x + 170, y, x + 236, y, 1, { c: hexA(C.soft, 0.2 * a) });
+  });
+  badge('untouched: not even visited', 1560, 330, C.dim, prog(lt, 8.5, 9.0), 18);
+  // chain: dirty propagation then re-eval, change pruning
+  const dirtyT = [5.0, 5.7, 6.4, 7.1, 7.8];
+  const reT = [11.0, 12.0, 13.3];
+  INC.forEach(([id, x, y, type, key, c], i) => {
+    const a = prog(lt, 0.6 + i * 0.2, 1.1 + i * 0.2);
+    const dirty = prog(lt, dirtyT[i], dirtyT[i] + 0.3);
+    let done = 1 - dirty, glowNow = 0, col = c;
+    if (i < 3) { done = Math.max(done, prog(lt, reT[i], reT[i] + 0.4)); }
+    if (i === 3) { done = Math.max(done, prog(lt, 15.0, 15.4)); }
+    if (dirty > 0 && done < 1) { glowNow = 0.7 + 0.3 * Math.sin(lt * 8); col = i === 0 ? C.red : C.amber; }
+    node(x, y, type, key, col, { a, done, glowNow, lt, w: 340, pend: (dirty > 0 && done < 1) ? 1 : 0 });
+    if (i < 3) line(x + 176, y, x + 234, y, 1, { c: hexA(C.soft, 0.4 * a) });
+  });
+  line(1706, 560, 1760, 560, prog(lt, 1, 1.4), { c: hexA(C.soft, 0.4) });
+  dot(1790, 560, 10, prog(lt, 15, 15.4) > 0 ? C.green : (lt > 7.8 ? C.amber : C.green), { a: prog(lt, 1, 1.4) });
+  txt('server', 1790, 600, { s: 20, mono: true, c: C.soft, al: 'center', a: prog(lt, 1, 1.4) });
+  // labels
+  badge('dirty', 300, 470, C.red, env(lt, 5.0, 11.0, 0.3));
+  badge('marked dirty up the reverse deps', 1120, 450, C.amber, env(lt, 6.4, 10.6, 0.3));
+  badge('new digest → recompile', 710, 470, C.pink, env(lt, 11.4, 14.2, 0.3));
+  badge('same bytes as before', 1120, 470, C.green, env(lt, 13.3, 19.5, 0.3));
+  badge('VERIFIED_CLEAN · no relink', 1530, 470, C.green, prog(lt, 14.6, 15.1));
+  captions([
+    [0.3, 6.6, 'Edit a file, and the server’s file watcher tells Skyframe exactly which FILE nodes changed.'],
+    [6.8, 10.8, 'Those nodes and everything that depends on them are marked dirty. The rest of the graph is left alone.'],
+    [11.0, 19.5, 'If a rebuilt value comes out identical, its parents are VERIFIED_CLEAN. That’s change pruning: no relink.'],
+  ], lt);
+}
+
+// ---- 8. Outro ----
+function sOutro(lt) {
+  const n = PIPE.length, gap = 280, sx = W / 2 - (gap * (n - 1)) / 2, y = 380;
+  const subs = ['blaze.cc', 'GrpcCommandServer', 'PackageFunction', 'ConfiguredTargetFunction', 'SpawnStrategy', 'RemoteSpawnCache'];
+  const lp = eio(prog(lt, 0.3, 1.8));
+  ctx.save(); ctx.strokeStyle = 'rgba(139,147,184,0.35)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(sx, y); ctx.lineTo(sx + gap * (n - 1) * lp, y); ctx.stroke(); ctx.restore();
+  PIPE.forEach(([l, c], i) => {
+    const p = eback(prog(lt, 0.3 + i * 0.25, 0.8 + i * 0.25));
+    if (p <= 0) return;
+    const glow = Math.max(0, 1 - Math.abs((lt - 2.2) * 1.6 - i) * 0.8);
+    dot(sx + i * gap, y, (14 + 8 * glow) * p, c, { gb: 24 + 30 * glow });
+    txt(l, sx + i * gap, y + 58, { s: 30, w: 700, c: C.ink, al: 'center', a: clamp(p) });
+    txt(subs[i], sx + i * gap, y + 98, { s: 18, mono: true, c: C.dim, al: 'center', a: clamp(p) });
+  });
+  txt('all of it memoized in one Skyframe graph', W / 2, 250, { s: 26, c: C.purple, al: 'center', a: prog(lt, 1.6, 2.2) });
+  const sp = prog(lt, 2.0, 4.0);
+  if (sp > 0 && sp < 1) dot(sx + gap * (n - 1) * eio(sp), y, 7, '#fff', { gb: 30 });
+  const ba = prog(lt, 4.2, 4.8);
+  box(W / 2 - 460, 600, 920, 190, { a: ba, fill: 'rgba(10,14,32,0.94)', stroke: 'rgba(74,222,128,0.4)' });
+  txt('INFO: Build completed successfully', W / 2 - 420, 650, { s: 30, mono: true, w: 700, c: C.green, a: ba, glow: hexA(C.green, 0.5) });
+  txt('INFO: 3 total actions, 1 remote cache hit', W / 2 - 420, 698, { s: 23, mono: true, c: C.soft, a: prog(lt, 4.8, 5.1) });
+  txt('INFO: Elapsed time: 0.41s', W / 2 - 420, 738, { s: 23, mono: true, c: C.soft, a: prog(lt, 5.1, 5.4) });
+  txt('Read the source: github.com/bazelbuild/bazel', W / 2, 900, { s: 28, w: 500, c: C.dim, al: 'center', a: prog(lt, 5.8, 6.6) });
+}
+
+// =====================================================================
+const SCENES = [
+  [sTitle, 7], [sClient, 14], [sBuild, 15], [sSky, 30], [sAnalysis, 22], [sExec, 24], [sRemote, 16], [sIncr, 20], [sOutro, 10]
+];
+let acc = 0; for (const s of SCENES) { s.push(acc); acc += s[1]; }
+const DURATION = acc;
+window.DURATION = DURATION; window.FPS = FPS;
+
+function renderFrame(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  background(t);
+  for (const [fn, d, s] of SCENES) {
+    if (t < s || t >= s + d) continue;
+    const lt = t - s;
+    const last = fn === sOutro;
+    const al = clamp(lt / 0.6) * (last ? clamp((d - lt) / 1.2) : clamp((d - lt) / 0.6));
+    ctx.save(); ctx.globalAlpha = al; fn(lt); ctx.restore();
+  }
+  ctx.fillStyle = 'rgba(74,222,128,0.6)'; ctx.fillRect(0, 0, W * (t / DURATION), 3);
+}
+window.renderFrame = renderFrame;
+window.ready = document.fonts.load('700 20px Inter').then(() => document.fonts.load('20px "DejaVu Sans Mono"')).then(() => { renderFrame(0); return true; });
+if (location.hash.startsWith('#t=')) { window.ready.then(() => renderFrame(parseFloat(location.hash.slice(3)))); }
+else if (location.hash === '#play') { const st = performance.now(); const loop = () => { renderFrame(((performance.now() - st) / 1000) % DURATION); requestAnimationFrame(loop); }; window.ready.then(loop); }
+</script>
+</body>
+</html>
