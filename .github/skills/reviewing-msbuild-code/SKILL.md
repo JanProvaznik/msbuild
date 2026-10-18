@@ -58,4 +58,4 @@ If asked to post to a PR: write the report to a file, show it to the user, then 
 
 ## Step 6: If you are also the author
 
-When reviewing your own change (Phase 5 of `msbuild-change-workflow`), fix every CONFIRMED BLOCKING or MAJOR finding, re-run `.github/skills/verifying-changes/verify-change.sh`, and re-run only the reviewers whose dimension you touched. List the rest under "Notes" in the PR description.
+When reviewing your own change (Phase 5 of `msbuild-change-workflow`), fix every CONFIRMED BLOCKING or MAJOR finding, re-run `.github/skills/verifying-changes/verify-change.ps1`, and re-run only the reviewers whose dimension you touched. List the rest under "Notes" in the PR description.

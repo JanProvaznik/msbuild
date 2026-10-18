@@ -39,8 +39,8 @@ Other skills in `.github/skills/` load from their own descriptions (diagnostics,
 
 1. Find the code. When the issue names a symptom rather than a file, delegate the search to a subagent (the `agent` tool) so the file dumps stay out of your context. Ask it for file paths and line ranges, not summaries.
 2. Find the existing tests for that code:
-   ```bash
-   grep -rl "ClassOrMethodName" src/*.UnitTests --include='*.cs'
+   ```powershell
+   git grep -l "ClassOrMethodName" -- "src/*.UnitTests/*.cs"
    ```
    If there are none, note that; you will add a test file next to the closest related one.
 3. For a bug fix, find the original issue and the PR that introduced the code (`git log -S "snippet" --oneline -- path`). Read the PR discussion if it is linked. The fix must match the original design intent, not just make the symptom disappear.
@@ -75,20 +75,20 @@ Test authoring follows `.github/instructions/tests.instructions.md`.
 
 This phase defines "done" for a change in this repo. Other skills point here rather than restating it.
 
-1. While iterating, run the scoped verification with a filter:
-   ```bash
-   .github/skills/verifying-changes/verify-change.sh --filter "*YourTestNamePattern*"
+1. While iterating, run the scoped verification with a filter (`pwsh` on macOS/Linux):
+   ```powershell
+   .\.github\skills\verifying-changes\verify-change.ps1 -Filter "*YourTestNamePattern*"
    ```
-2. Before saying done, run it with no filter. It builds every project your diff maps to with warnings as errors and runs those test projects in full (`src/Shared/**` maps to Build, Tasks, and Utilities). That is the required local test run; the whole-repo `./build.sh --test` is what CI runs and is not a local gate. The `verifying-changes` skill explains the script's output and options.
+2. Before saying done, run it with no filter. It builds every project your diff maps to with warnings as errors and runs those test projects in full (`src/Shared/**` maps to Build, Tasks, and Utilities). That is the required local test run; the whole-repo `.\build.cmd -test` is what CI runs and is not a local gate. The `verifying-changes` skill explains the script's output and options.
 3. Run the compatibility scan:
-   ```bash
-   .github/skills/assessing-breaking-changes/compat-scan.sh
+   ```powershell
+   .\.github\skills\assessing-breaking-changes\compat-scan.ps1
    ```
    If it prints any `SIGNAL` line, the `assessing-breaking-changes` skill decides, in writing, whether a ChangeWave is needed. `WAVE: REQUIRED` with no `ChangeWaves.AreFeaturesEnabled` check in your diff means you are not done.
 
 Never redirect build or test output to a file yourself; the script writes its own logs and tells you where they are.
 
-**Gate 4**: `verify-change.sh` ends with `RESULT: PASS`; `compat-scan.sh` ends with `RESULT: PASS`, or with `RESULT: REVIEW` and a one-line answer from you for every `SIGNAL`. Your reply quotes both result lines. A build warning is a failure. A skipped test count that went up unexpectedly is a failure. `RESULT: FAIL` from either script means you are not done.
+**Gate 4**: `verify-change.ps1` ends with `RESULT: PASS`; `compat-scan.ps1` ends with `RESULT: PASS`, or with `RESULT: REVIEW` and a one-line answer from you for every `SIGNAL`. Your reply quotes both result lines. A build warning is a failure. A skipped test count that went up unexpectedly is a failure. `RESULT: FAIL` from either script means you are not done.
 
 ## Phase 5: Review
 
@@ -100,7 +100,7 @@ You may say the change is done only when all of these are true:
 
 - [ ] Gate 4 result lines are quoted in your message.
 - [ ] A test exists that fails without the change (bug fix) or covers the new behavior (feature). Name it.
-- [ ] `compat-scan.sh` signals are each addressed: wave added, or a one-line reason why not.
+- [ ] `compat-scan.ps1` signals are each addressed: wave added, or a one-line reason why not.
 - [ ] `documentation/` was checked for pages that describe the changed behavior, and updated if any.
 - [ ] No files under `artifacts/`, `.dotnet/`, `global.json`, or `NuGet.config` changed.
 
@@ -114,10 +114,10 @@ PR description template (fill every line; delete none):
 <what changed, by file group>
 
 ### Testing
-<test names added; verify-change.sh result line; manual repro if any>
+<test names added; verify-change.ps1 result line; manual repro if any>
 
 ### Compatibility
-<compat-scan.sh output summary; ChangeWave version or "no behavior change">
+<compat-scan.ps1 output summary; ChangeWave version or "no behavior change">
 
 ### Notes
 <open questions, things deliberately left out>

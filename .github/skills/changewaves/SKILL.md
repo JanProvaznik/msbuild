@@ -8,7 +8,7 @@ argument-hint: 'Add, query, or remove changewaves and changewave checks.'
 
 A Change Wave is an opt-out flag that groups risky features together. Users disable features by setting the environment variable `MSBUILDDISABLEFEATURESFROMVERSION` to the wave version. This skill is the mechanics only: creating a wave, conditioning code on it, testing, documenting, and retiring.
 
-Whether a change needs a wave at all is decided in [assessing-breaking-changes](../assessing-breaking-changes/SKILL.md), starting from its `compat-scan.sh`; come here once that answer is "yes".
+Whether a change needs a wave at all is decided in [assessing-breaking-changes](../assessing-breaking-changes/SKILL.md), starting from its `compat-scan.ps1`; come here once that answer is "yes".
 
 Background for the steps below: [ChangeWaves-Dev.md](../../../documentation/wiki/ChangeWaves-Dev.md) (developer-facing) and [ChangeWaves.md](../../../documentation/wiki/ChangeWaves.md) (public-facing).
 
@@ -40,7 +40,7 @@ else
 
 The `else` branch must be the old code, unchanged. Do not "improve" it while you are there; that defeats the opt-out.
 
-`.github/skills/assessing-breaking-changes/compat-scan.sh` detects the gate by the `ChangeWaves.AreFeaturesEnabled` text in added product lines and checks that `documentation/wiki/ChangeWaves.md` changed too. Re-run it after Step 4 and expect `RESULT: REVIEW` or `PASS`, not `FAIL`.
+`compat-scan.ps1` (in `.github/skills/assessing-breaking-changes/`) detects the gate by the `ChangeWaves.AreFeaturesEnabled` text in added product lines and checks that `documentation/wiki/ChangeWaves.md` changed too. Re-run it after Step 4 and expect `RESULT: REVIEW` or `PASS`, not `FAIL`.
 
 ## Step 3: Write Tests
 
@@ -54,7 +54,7 @@ BuildEnvironmentHelper.ResetInstance_ForUnitTestsOnly();
 // ... build or evaluate, then assert the OLD behavior ...
 ```
 
-All three lines are needed: ChangeWaves caches its state statically, so a stale value leaks between tests otherwise. `TestEnvironment.Dispose` clears the variable and resets the cache again. The canonical helper is `SetChangeWave` in `src/Build.UnitTests/ChangeWaves_Tests.cs`; copy its shape. Run both tests with `.github/skills/verifying-changes/verify-change.sh --filter "*YourTestName*"`.
+All three lines are needed: ChangeWaves caches its state statically, so a stale value leaks between tests otherwise. `TestEnvironment.Dispose` clears the variable and resets the cache again. The canonical helper is `SetChangeWave` in `src/Build.UnitTests/ChangeWaves_Tests.cs`; copy its shape. Run both tests with `.\.github\skills\verifying-changes\verify-change.ps1 -Filter "*YourTestName*"`.
 
 ## Step 4: Document the Feature
 

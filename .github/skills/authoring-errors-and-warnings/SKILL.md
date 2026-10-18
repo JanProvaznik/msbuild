@@ -41,7 +41,7 @@ Is the condition always wrong (invalid input, impossible state)?
 
 ### New warnings are breaking changes
 
-Builds that run with `-warnaserror`, `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>`, or `<WarningsAsErrors>MSBxxxx</WarningsAsErrors>` fail on any new warning. Whether a new warning needs a ChangeWave, should be a Message instead, or should be an error from the start is decided in [assessing-breaking-changes](../assessing-breaking-changes/SKILL.md); its `compat-scan.sh` flags every new `LogWarning*` call so the question cannot be skipped.
+Builds that run with `-warnaserror`, `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>`, or `<WarningsAsErrors>MSBxxxx</WarningsAsErrors>` fail on any new warning. Whether a new warning needs a ChangeWave, should be a Message instead, or should be an error from the start is decided in [assessing-breaking-changes](../assessing-breaking-changes/SKILL.md); its `compat-scan.ps1` flags every new `LogWarning*` call so the question cannot be skipped.
 
 ## MSB Error Code Assignment
 

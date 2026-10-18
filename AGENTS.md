@@ -21,7 +21,7 @@ Instructions for GitHub Copilot and other AI coding agents working with the MSBu
 
 ## Start Here: the Change Workflow
 
-Every code change follows `.github/skills/msbuild-change-workflow/SKILL.md`. Its Phase 4 defines when a change is done: `.github/skills/verifying-changes/verify-change.sh` and `.github/skills/assessing-breaking-changes/compat-scan.sh` both end in `RESULT: PASS` (or `REVIEW` with every signal answered), and those lines are quoted in your report.
+Every code change follows `.github/skills/msbuild-change-workflow/SKILL.md`. Its Phase 4 defines when a change is done: `.github/skills/verifying-changes/verify-change.ps1` and `.github/skills/assessing-breaking-changes/compat-scan.ps1` both end in `RESULT: PASS` (or `REVIEW` with every signal answered), and those lines are quoted in your report.
 
 ## General
 
@@ -252,7 +252,7 @@ When reviewing PRs, always consider whether the behavior change could be experie
    - Windows: `.\build.cmd -v quiet`
    - macOS/Linux: `./build.sh -v quiet`
 4. Test your changes end-to-end using the bootstrap output: `dotnet build src/Samples/Dependency/Dependency.csproj`
-5. Run `.github/skills/verifying-changes/verify-change.sh` (scoped build with warnings as errors plus the mapped tests) and `.github/skills/assessing-breaking-changes/compat-scan.sh`; quote both `RESULT:` lines
+5. Run `.\.github\skills\verifying-changes\verify-change.ps1` (scoped build with warnings as errors plus the mapped tests) and `.\.github\skills\assessing-breaking-changes\compat-scan.ps1`; quote both `RESULT:` lines
 6. Self-review with the `reviewing-msbuild-code` skill and fix confirmed BLOCKING/MAJOR findings
 7. Commit your changes
 

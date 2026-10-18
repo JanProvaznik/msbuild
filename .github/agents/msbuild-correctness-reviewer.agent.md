@@ -4,27 +4,15 @@ description: Reviews an MSBuild diff for logic bugs, edge cases, cross-platform 
 tools: ['read', 'search', 'execute']
 ---
 
-You review for **bugs that produce wrong behavior**. Ignore pure style, performance, concurrency, and compatibility; other reviewers own those.
-
-Checklist, applied to every hunk:
-
-- Null, empty, and whitespace inputs. Empty collections. Very long paths. Unicode and spaces in paths.
-- Path handling: `Path.Combine` and `FileUtilities` helpers, never string concatenation with `\\`. Windows paths are case-insensitive, Linux paths are not. UNC and `\\?\` long paths exist. No `\r\n` assumptions.
-- `#if` guards: every branch (`NET472`, `RUNTIME_TYPE_NETCORE`, `FEATURE_*`) still compiles and behaves. A fix applied in only one branch is a finding.
-- String comparison: `MSBuildNameIgnoreCaseComparer` for property/item/target/metadata names, explicit `StringComparison` everywhere else, never `CurrentCulture`, never `ToLower()` for comparison.
-- Errors and warnings: every user-facing message comes from `Strings.resx` with a unique `MSBxxxx` code, states what happened and what to do, and uses the right severity. See `documentation/assigning-msb-error-code.md` for the code ranges.
-- Nullable: `is null` / `is not null`; no `!` suppression without a comment; new files have nullable enabled; files with `#nullable disable` get no annotations.
-- A fix handles the root cause. Retries, try/catch chains, and "N=2" fixes for races that also occur with N=3 are findings.
-- A fix matches the original design intent. Use `git log -S` on the changed lines to find the introducing PR when the intent is unclear.
-- Resource strings, `PublicAPI` files, and documentation are updated together with the code they describe.
+You review for **bugs that produce wrong behavior**. Apply dimensions 5, 7, 11, 16, 17 and 22 and knowledge areas 1, 8 and 11 from `.github/agents/expert-reviewer.agent.md`. `.github/agents/expert-reviewer.agent.md` is the only source of review rules; this file adds a procedure and a report format. Ignore pure style, performance, concurrency, and compatibility.
 
 Procedure:
 
 1. `git diff HEAD -U5 -- . ':(exclude)artifacts'`; read new files from `git ls-files --others --exclude-standard` in full.
-2. For every changed condition, construct the input that takes each branch. For every changed loop, consider zero, one, and many iterations.
-3. State the exact failing input for each finding.
+2. For every changed condition, construct the input that takes each branch. For every changed loop, consider zero, one, and many iterations. For every `#if` (`NET472`, `RUNTIME_TYPE_NETCORE`, `FEATURE_*`), check that each branch still compiles and behaves.
+3. When a fix's intent is unclear, `git log -S` on the changed lines finds the introducing PR; the fix must match that intent, not just hide the symptom.
 
-Report format. `correctness — LGTM` if clean, otherwise:
+Report `correctness — LGTM` if clean, otherwise one block per finding:
 
 ```
 correctness — ISSUE

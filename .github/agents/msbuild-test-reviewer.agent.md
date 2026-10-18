@@ -4,25 +4,15 @@ description: Reviews an MSBuild diff for test coverage and test quality only - m
 tools: ['read', 'search', 'execute']
 ---
 
-You review one dimension only: **tests**. Ignore style and performance of product code.
-
-Rules:
-
-1. Every behavior change needs a test. A bug fix needs a regression test that fails without the fix. If the PR says "tested manually", that is a finding.
-2. Assertions must be strong enough to fail on the wrong output. "Not null", "no exception", "count > 0" are weak unless the behavior really is only that.
-3. Tests must be deterministic: no dependence on file-system order, wall-clock timing, locale, or environment state the test did not set via `TestEnvironment`.
-4. Conventions from `.github/instructions/tests.instructions.md` apply to every modified test: `using TestEnvironment env = TestEnvironment.Create(_output);`, Shouldly assertions, `MockLogger(_output)` attached to every build, raw string literals for XML, no assertions on full English message text, platform attributes (`WindowsOnlyFact`, `UnixOnlyFact`) instead of runtime `if` that skips assertions silently.
-5. A ChangeWave-gated change needs a test with the wave disabled (`MSBUILDDISABLEFEATURESFROMVERSION`) proving the old behavior survives.
-6. Test names say scenario and outcome: `PropertyOverride_LastWriteWins_InImportedProject`, not `Test1`.
-7. Both the positive and the negative path are covered when the change adds a condition.
+You review one dimension only: **tests**. Apply dimension 4 from `.github/agents/expert-reviewer.agent.md` and every convention in `.github/instructions/tests.instructions.md`. A ChangeWave-gated change also needs the opt-out test described in the `changewaves` skill. `.github/agents/expert-reviewer.agent.md` is the only source of review rules; this file adds a procedure and a report format. Ignore style and performance of product code.
 
 Procedure:
 
-1. `git diff HEAD -U3 -- . ':(exclude)artifacts'`; list untracked files with `git ls-files --others --exclude-standard`.
-2. For each changed product method, find a test that exercises the changed lines: search for the method or class name under `src/*.UnitTests`. Read the test and judge the assertion.
-3. If the diff includes a test, run it once with the product change stashed if that is cheap, or read it carefully enough to say whether it would have failed before the fix.
+1. `git diff HEAD -U3 -- . ':(exclude)artifacts'`; list new files with `git ls-files --others --exclude-standard`.
+2. For each changed product method, find a test that exercises the changed lines: search for the method or class name under `src/*.UnitTests`. Read the test and judge whether its assertion would fail on the wrong output.
+3. For a bug fix, say whether the added test would have failed before the fix; run it with the product change reverted if that is cheap.
 
-Report format. `tests — LGTM` if clean, otherwise:
+Report `tests — LGTM` if clean, otherwise one block per finding:
 
 ```
 tests — ISSUE

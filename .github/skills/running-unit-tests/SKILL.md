@@ -13,7 +13,7 @@ There are three ways to run tests:
 | Method | When to use |
 |--------|-------------|
 | `dotnet test <project>` or the test exe | Dev loop — one test project, optionally filtered. This skill. |
-| `.github/skills/verifying-changes/verify-change.sh` | Build with warnings as errors plus the test projects mapped from your diff, ending in a `RESULT:` line. This is the done gate; see `verifying-changes`. |
+| `verify-change.ps1` (`.github/skills/verifying-changes/`) | Build with warnings as errors plus the test projects mapped from your diff, ending in a `RESULT:` line. This is the done gate; see `verifying-changes`. |
 | `build.cmd -test` / `build.sh --test` | Whole repo through the Arcade harness. This is what CI runs; it is not required locally. |
 
 This skill is about the first row: the runner's mechanics. It does not decide when you are done.
@@ -37,7 +37,7 @@ This repo uses MTP with the xUnit v3 MTP runner, **not** VSTest. Many familiar `
 - **Don't use** `--filter`, `--nologo`, `--blame`, `--settings *.runsettings`, `--diag`, `--collect`, or `-- RunConfiguration.MaxCpuCount=...` — these are VSTest-only and ignored.
 - **Still works**: `-c`, `-f`, `--no-restore`, `--no-build`, `-v`, `-bl:`, `-p:Property=Value` — these are interpreted by `dotnet test` itself before MTP sees them.
 
-`verify-change.sh` uses exactly this shape and nothing else: `dotnet test <proj> [-f net11.0] --no-build -- --filter-method "*X*" --no-progress`. Everything after `--` goes to the MTP runner; everything before it must be a flag `dotnet test` itself understands.
+`verify-change.ps1` uses exactly this shape and nothing else: `dotnet test <proj> [-f net11.0] --no-build -- --filter-method "*X*" --no-progress`. Everything after `--` goes to the MTP runner; everything before it must be a flag `dotnet test` itself understands.
 
 ## Dev loop: fast and scoped
 
@@ -60,7 +60,7 @@ Aim for sub-30s iterations.
 
 ### Speeding up the dev loop further
 
-These trade safety for speed — use during iteration, **revert before running `verify-change.sh`**:
+These trade safety for speed — use during iteration, **revert before running `verify-change.ps1`**:
 
 - **Single TFM**: pass `-f net11.0`. Halves runtime on Windows by skipping `net472`.
 - **Temporarily relax single-threaded execution**: drop a `xunit.runner.json` next to the test project (or override the existing one) with:
@@ -80,7 +80,7 @@ These trade safety for speed — use during iteration, **revert before running `
 
 ## When you think you are done
 
-Restore any parallelism override, then run `.github/skills/verifying-changes/verify-change.sh` with no filter and quote its `RESULT:` line. That is Gate 4 of `msbuild-change-workflow`; the `verifying-changes` skill explains the output. To hand results to someone else as a file, add `--report-trx --report-trx-filename validation.trx --results-directory artifacts/TestResults` to a `dotnet test` run.
+Restore any parallelism override, then run `.\.github\skills\verifying-changes\verify-change.ps1` with no filter and quote its `RESULT:` line. That is Gate 4 of `msbuild-change-workflow`; the `verifying-changes` skill explains the output. To hand results to someone else as a file, add `--report-trx --report-trx-filename validation.trx --results-directory artifacts/TestResults` to a `dotnet test` run.
 
 ## Reading the summary line
 
@@ -88,7 +88,7 @@ MTP's final summary reports `passed`, `failed`, and `skipped` separately. **Alwa
 
 ## Picking the right project to run
 
-Match the source area you changed to its `*.UnitTests` project. `verify-change.sh` applies this same mapping automatically.
+Match the source area you changed to its `*.UnitTests` project. `verify-change.ps1` applies this same mapping automatically.
 
 | Source area | Test project |
 |-------------|--------------|
@@ -107,7 +107,7 @@ Match the source area you changed to its `*.UnitTests` project. `verify-change.s
 | Fast scoped dev loop | `dotnet test <proj> -f net11.0 -- --filter-method "*X*"` |
 | Direct test exe | `artifacts\bin\<Proj>\Debug\net11.0\<Proj>.exe --filter-method "*X*" --no-progress` |
 | Single test by name | `dotnet test <proj> -- --filter-method "*MyTestMethod*"` |
-| Done gate | `.github/skills/verifying-changes/verify-change.sh` (see `verifying-changes`) |
+| Done gate | `.\.github\skills\verifying-changes\verify-change.ps1` (see `verifying-changes`) |
 | Whole repo, as CI runs it | `.\build.cmd -test` / `./build.sh --test` |
 | TRX report | `--report-trx --report-trx-filename out.trx --results-directory artifacts\TestResults` |
 

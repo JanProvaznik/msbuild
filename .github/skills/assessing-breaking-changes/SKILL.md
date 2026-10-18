@@ -21,15 +21,15 @@ This is the one place that decides whether a change is compatible and whether it
 
 Run this before forming an opinion. It reads the working-tree diff and prints one `SIGNAL` line per compatibility lead, a `WAVE:` verdict, and a `RESULT:` line.
 
-```bash
-.github/skills/assessing-breaking-changes/compat-scan.sh
+```powershell
+.\.github\skills\assessing-breaking-changes\compat-scan.ps1   # pwsh on macOS/Linux
 ```
 
 | It prints | You do |
 |-----------|--------|
 | `RESULT: PASS` | Write "no user-visible behavior change" in the PR and move on. |
 | `RESULT: REVIEW` | Answer every `SIGNAL` in the PR's Compatibility section, one line each: what changes for whom, and why that is acceptable or how it is gated. |
-| `RESULT: FAIL` | A new warning, changed default, removed switch or API, or pinned infra file with no `ChangeWaves.AreFeaturesEnabled` gate. Either add the gate (load the `changewaves` skill) or, if the signal is inside new opt-in behavior, re-run with `--acknowledge "<reason>"` so the reason is on record. |
+| `RESULT: FAIL` | A new warning, changed default, removed switch or API, or pinned infra file with no `ChangeWaves.AreFeaturesEnabled` gate. Either add the gate (load the `changewaves` skill) or, if the signal is inside new opt-in behavior, re-run with `-Acknowledge "<reason>"` so the reason is on record. |
 
 The scan is a heuristic. `public` members on internal types and warnings inside new opt-in features are false positives; say so explicitly rather than silently ignoring them. The scan cannot see semantic changes that keep the same API shape, so still walk the checklist below.
 
