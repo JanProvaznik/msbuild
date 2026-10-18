@@ -221,6 +221,17 @@ namespace Microsoft.Build.Shared
         }
 
         /// <summary>
+        /// Gets a value indicating whether this process can load a task assembly and run its code. A Native AOT process
+        /// cannot: it runs the tasks compiled into it in-proc and every other task in a .NET task host.
+        /// </summary>
+        public static bool CanLoadTaskAssemblies =>
+#if NET
+            System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported;
+#else
+            true;
+#endif
+
+        /// <summary>
         /// Determines whether a task factory should compile for out-of-process execution based on the host context.
         /// </summary>
         /// <param name="taskFactoryEngineContext">The build engine/logging host passed to the task factory's Initialize method.</param>

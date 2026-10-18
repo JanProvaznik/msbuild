@@ -1120,13 +1120,28 @@ namespace Microsoft.Build.BackEnd.Logging
                     centralLogger = new NullCentralLogger();
                 }
 
-                if (!FeatureSwitches.EnableReflectiveLoggerLoading)
-                {
-                    throw CreateReflectiveLoggerLoadingDisabledException();
-                }
-
-                return RegisterDistributedLoggerCore(centralLogger, forwardingLogger, forwardingLogger.CreateForwardingLogger());
+                return RegisterDistributedLoggerCore(centralLogger, forwardingLogger, CreateForwardingLogger(forwardingLogger));
             }
+        }
+
+        /// <summary>
+        /// Creates the forwarding logger a description names. MSBuild's own forwarding loggers are constructed directly;
+        /// any other forwarding logger is loaded by reflection, which a trimmed or Native AOT host cannot do.
+        /// </summary>
+        [RequiresUnreferencedCode("Creates forwarding loggers by reflecting over logger assemblies discovered at runtime, which is incompatible with trimming.")]
+        private static IForwardingLogger CreateForwardingLogger(LoggerDescription description)
+        {
+            if (description.TryCreateWellKnownForwardingLogger() is IForwardingLogger wellKnownForwardingLogger)
+            {
+                return wellKnownForwardingLogger;
+            }
+
+            if (!FeatureSwitches.EnableReflectiveLoggerLoading)
+            {
+                throw CreateReflectiveLoggerLoadingDisabledException();
+            }
+
+            return description.CreateForwardingLogger();
         }
 
         /// <summary>
@@ -1254,14 +1269,9 @@ namespace Microsoft.Build.BackEnd.Logging
 
                 CreateFilterEventSource();
 
-                if (!FeatureSwitches.EnableReflectiveLoggerLoading)
-                {
-                    throw CreateReflectiveLoggerLoadingDisabledException();
-                }
-
                 foreach (LoggerDescription description in descriptions)
                 {
-                    IForwardingLogger forwardingLogger = description.CreateForwardingLogger();
+                    IForwardingLogger forwardingLogger = CreateForwardingLogger(description);
                     forwardingLogger.Verbosity = description.Verbosity;
                     forwardingLogger.Parameters = description.LoggerSwitchParameters;
                     forwardingLogger.NodeId = nodeId;

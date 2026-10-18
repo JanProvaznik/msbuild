@@ -1,0 +1,14 @@
+<Project>
+
+  <!--
+    The Native AOT MSBuild host is intentionally NOT part of the repository's Arcade build (it is not in
+    MSBuild.slnx): this file stops the SDK from importing the repo-root Directory.Build.props, so the host
+    uses plain Microsoft.NET.Sdk defaults. Its ProjectReferences cross this boundary - the referenced
+    MSBuild projects still build with the repo's own props.
+  -->
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+</Project>

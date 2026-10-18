@@ -251,6 +251,38 @@ namespace Microsoft.Build.Utilities
             where TTask : ITask
             => TaskClassRegistry.Register<TTask>(factory);
 
+        /// <summary>
+        /// Registers a task class that the host compiled into itself, so that a <c>&lt;UsingTask&gt;</c> naming the same
+        /// build of the task's assembly uses the compiled-in class instead of loading the assembly.
+        /// </summary>
+        /// <typeparam name="T">
+        /// The task class. The <c>[DynamicallyAccessedMembers]</c> roots its public constructors and properties so a
+        /// trimmer preserves them, keeping construction and parameter binding working.
+        /// </typeparam>
+        /// <param name="assemblyModuleVersionId">
+        /// The module version id (MVID) of the task assembly build that <typeparamref name="T"/> was compiled from. A
+        /// <c>&lt;UsingTask AssemblyFile="..."&gt;</c> uses the compiled-in class only when the file it names has this
+        /// MVID, so a different build of the assembly is still loaded as written. <see cref="Guid.Empty"/> matches any
+        /// file with the assembly's simple name.
+        /// </param>
+        /// <remarks>
+        /// <para>
+        /// Unlike <see cref="RegisterTask{T}()"/>, this does not bypass <c>&lt;UsingTask&gt;</c>: the engine still selects
+        /// the project's matching <c>&lt;UsingTask&gt;</c> (with its <c>TaskFactory</c>, <c>Runtime</c> and
+        /// <c>Architecture</c>) and resolves its assembly; only loading the assembly and finding the type is replaced.
+        /// A <c>&lt;UsingTask AssemblyName="..."&gt;</c> matches by simple name and, when the name carries one, version.
+        /// </para>
+        /// <para>
+        /// Intended for hosts, such as a Native AOT MSBuild, that compile the task assemblies of a specific toolset into
+        /// themselves. Call it during host initialization, before the first build. This method is thread-safe.
+        /// </para>
+        /// </remarks>
+        public static void RegisterPrecompiledTask<
+            [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.PublicProperties)] T>(
+            Guid assemblyModuleVersionId)
+            where T : ITask
+            => PrecompiledTaskRegistry.Register<T>(assemblyModuleVersionId);
+
         #endregion
     }
 }

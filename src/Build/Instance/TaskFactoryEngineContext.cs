@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
+using System.Reflection;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Shared;
 using System.Diagnostics;
@@ -24,7 +25,8 @@ namespace Microsoft.Build.BackEnd
         MarshalByRefObject,
 #endif
         IBuildEngine,
-        ITaskFactoryBuildParameterProvider
+        ITaskFactoryBuildParameterProvider,
+        ITaskAssemblyMetadataLoader
     {
         /// <summary>
         /// Location of the task node in the original file
@@ -78,8 +80,12 @@ namespace Microsoft.Build.BackEnd
             _loggingContext = loggingContext;
             _elementLocation = elementLocation;
             _isMultiThreadedBuild = isMultiThreadedBuild;
-            _forceOutOfProcessExecution = forceOutOfProcessExecution;
+            // A process that cannot load task assemblies (Native AOT) can only run factory-produced tasks out of proc.
+            _forceOutOfProcessExecution = forceOutOfProcessExecution || !TaskFactoryUtilities.CanLoadTaskAssemblies;
         }
+
+        /// <inheritdoc/>
+        public Assembly LoadTaskAssemblyMetadata(string assemblyPath) => TypeLoader.LoadAssemblyMetadata(assemblyPath);
 
         /// <summary>
         /// Returns true in the multiproc case

@@ -1,0 +1,142 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A Native AOT build of the MSBuild command line, bound to one SDK layout.
+
+    The task and SDK-resolver assemblies that ship in that layout (Microsoft.NET.Build.Tasks, NuGet.Build.Tasks, the
+    Roslyn Csc task, Razor/StaticWebAssets, SourceLink, ...) are compiled into the image, keyed by the exact build
+    (module version id) of each file. At run time a <UsingTask> that names one of those files runs the compiled-in task
+    in-proc; any other task assembly (a NuGet package, a project-local task, a different build of an SDK assembly) runs
+    in a .NET task host, which loads it exactly as an in-proc JIT MSBuild would. See README.md.
+
+    Build:   dotnet publish src/MSBuild.Aot -c Release [-p:AotSdkLayout=<dotnet root>/sdk/<version>]
+    Deploy:  copy the published MSBuildAot executable into that SDK directory (next to MSBuild.dll).
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>MSBuildAot</AssemblyName>
+    <RootNamespace>Microsoft.Build.Aot</RootNamespace>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- The compiled-in SDK assemblies were not written for trimming; their warnings are expected (the assemblies are
+         rooted whole below, so reflection over their own types keeps working). -->
+    <NoWarn>$(NoWarn);IL2026;IL2104;IL3050;IL3053;IL2075;IL3000;IL3001;IL2057;IL2072;IL2070;IL2067;IL2080;IL2087;NU1902;NU1903</NoWarn>
+    <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+    <!-- Task code throws and catches exceptions as part of normal operation and reports their stack traces. -->
+    <IlcGenerateStackTraceData>true</IlcGenerateStackTraceData>
+    <!--
+      Native AOT publishing changes some library defaults to favor size. Task code was written against JIT defaults, so
+      restore every one that changes behavior: System.Text.Json reflection serialization (the StaticWebAssets tasks
+      serialize their manifests with it), DefaultValueAttribute (honored by Newtonsoft.Json), and resources of custom
+      types. (Size-optimized LINQ is left on: it only trades speed for size.)
+    -->
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+    <_DefaultValueAttributeSupport>true</_DefaultValueAttributeSupport>
+    <CustomResourceTypesSupport>true</CustomResourceTypesSupport>
+    <!-- DWARF for an image this size overflows the Apple linker; stack traces still carry method names. -->
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <!-- The SDK layout whose tasks are compiled in. Defaults to the repository's bootstrap SDK. -->
+  <PropertyGroup>
+    <AotSdkLayout Condition="'$(AotSdkLayout)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\bin\bootstrap\core\sdk\$(NETCoreSdkVersion)</AotSdkLayout>
+    <AotSdkLayout>$([System.IO.Path]::GetFullPath('$(AotSdkLayout)'))</AotSdkLayout>
+    <AotSharedFrameworkDirectory Condition="'$(AotSharedFrameworkDirectory)' == ''">$([System.IO.Path]::GetFullPath('$(AotSdkLayout)\..\..\shared\Microsoft.NETCore.App\$(BundledNETCoreAppPackageVersion)'))</AotSharedFrameworkDirectory>
+  </PropertyGroup>
+
+  <!--
+    Feature switches baked into the image (substituted at compile time).
+      - EnableReflectiveTaskExecution stays ON: task resolution keeps going through <UsingTask> and the assembly task
+        factory, which resolve compiled-in tasks without loading assemblies and send every other task to a task host.
+      - EnableSdkResolverDynamicLoading OFF: the layout's resolver manifests are served by the compiled-in resolvers;
+        any other resolver manifest fails observably (MSB4282) instead of attempting an assembly load.
+      - EnableReflectiveLoggerLoading OFF: MSBuild's own loggers are constructed directly; a custom -logger fails
+        observably.
+      - The rest mirror MSBuild's trimmed defaults (see src/Framework/buildTransitive/Microsoft.Build.Framework.targets).
+  -->
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="Microsoft.Build.EnableReflectiveTaskExecution" Value="true" Trim="true" />
+    <RuntimeHostConfigurationOption Include="Microsoft.Build.EnableReflectiveTaskParameterTypes" Value="true" Trim="true" />
+    <RuntimeHostConfigurationOption Include="Microsoft.Build.EnableSdkResolverDynamicLoading" Value="false" Trim="true" />
+    <RuntimeHostConfigurationOption Include="Microsoft.Build.EnableReflectiveLoggerLoading" Value="false" Trim="true" />
+    <RuntimeHostConfigurationOption Include="Microsoft.Build.EnableCustomPluginProbing" Value="false" Trim="true" />
+    <RuntimeHostConfigurationOption Include="Microsoft.Build.EnableConfigurationFileToolsets" Value="false" Trim="true" />
+    <RuntimeHostConfigurationOption Include="Microsoft.Build.EnableAllPropertyFunctions" Value="false" Trim="true" />
+    <RuntimeHostConfigurationOption Include="Microsoft.Build.RestrictPropertyFunctionReceivers" Value="true" Trim="true" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="TaskCatalogGenerator\**" />
+    <None Remove="TaskCatalogGenerator\**" />
+    <EmbeddedResource Remove="TaskCatalogGenerator\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MSBuild\MSBuild.csproj" GlobalPropertiesToRemove="RuntimeIdentifier" SetTargetFramework="TargetFramework=net11.0" />
+    <ProjectReference Include="..\Build\Microsoft.Build.csproj" GlobalPropertiesToRemove="RuntimeIdentifier" SetTargetFramework="TargetFramework=net11.0" />
+    <ProjectReference Include="..\Tasks\Microsoft.Build.Tasks.csproj" GlobalPropertiesToRemove="RuntimeIdentifier" SetTargetFramework="TargetFramework=net11.0" />
+    <ProjectReference Include="..\Utilities\Microsoft.Build.Utilities.csproj" GlobalPropertiesToRemove="RuntimeIdentifier" SetTargetFramework="TargetFramework=net11.0" />
+    <ProjectReference Include="..\Framework\Microsoft.Build.Framework.csproj" GlobalPropertiesToRemove="RuntimeIdentifier" SetTargetFramework="TargetFramework=net11.0" />
+  </ItemGroup>
+
+  <!--
+    The engine (Microsoft.Build, Microsoft.Build.Framework) is trim-annotated, so only what reflection needs is kept.
+    Microsoft.Build.Utilities.Core is rooted whole because property functions call
+    [Microsoft.Build.Utilities.ToolLocationHelper]::... by name, and Microsoft.Build.Tasks.Core because several tasks
+    still reflect (for example WriteCodeFragment creating a CodeDom provider); see documentation/aot/follow-up-work.md.
+  -->
+  <ItemGroup>
+    <TrimmerRootAssembly Include="Microsoft.Build.Utilities.Core" />
+  </ItemGroup>
+
+  <!--
+    Scan the SDK layout and generate the registrations and the reference list. Runs before references are resolved so
+    the SDK assemblies flow through normal reference resolution into the compile and the AOT image.
+  -->
+  <Target Name="GeneratePrecompiledToolset" BeforeTargets="ResolveAssemblyReferences" DependsOnTargets="ResolveProjectReferences">
+    <PropertyGroup>
+      <_PrecompiledToolsetSource>$(IntermediateOutputPath)PrecompiledToolset.g.cs</_PrecompiledToolsetSource>
+      <_PrecompiledToolsetReferences>$(IntermediateOutputPath)PrecompiledToolset.references.txt</_PrecompiledToolsetReferences>
+    </PropertyGroup>
+
+    <Error Condition="!Exists('$(AotSdkLayout)\MSBuild.dll')" Text="AotSdkLayout '$(AotSdkLayout)' is not an SDK directory (no MSBuild.dll). Build the repo (./build.sh) or pass -p:AotSdkLayout=&lt;dotnet root&gt;/sdk/&lt;version&gt;." />
+    <Error Condition="!Exists('$(AotSharedFrameworkDirectory)')" Text="Shared framework '$(AotSharedFrameworkDirectory)' not found; pass -p:AotSharedFrameworkDirectory=..." />
+
+    <MSBuild Projects="TaskCatalogGenerator\TaskCatalogGenerator.csproj" Targets="GetTargetPath" Properties="Configuration=Release">
+      <Output TaskParameter="TargetOutputs" PropertyName="_TaskCatalogGeneratorPath" />
+    </MSBuild>
+    <MSBuild Projects="TaskCatalogGenerator\TaskCatalogGenerator.csproj" Targets="Build" Properties="Configuration=Release" />
+
+    <Exec Command="&quot;$(DOTNET_HOST_PATH)&quot; &quot;$(_TaskCatalogGeneratorPath)&quot; &quot;$(AotSdkLayout)&quot; &quot;$(AotSharedFrameworkDirectory)&quot; &quot;$(_PrecompiledToolsetSource)&quot; &quot;$(_PrecompiledToolsetReferences)&quot;" />
+
+    <ReadLinesFromFile File="$(_PrecompiledToolsetReferences)">
+      <Output TaskParameter="Lines" ItemName="_PrecompiledToolsetReferenceLine" />
+    </ReadLinesFromFile>
+
+    <!--
+      Each line is "<assembly path>;<extern alias for task/resolver assemblies, else empty>;<root>". Rooted assemblies are
+      compiled whole because they reflect over their own types (task assemblies, JSON serializers and the NuGet
+      libraries whose models they bind); the rest - notably the Roslyn compiler, reachable only from package validation
+      code - keep just what the compiler can prove is used.
+    -->
+    <ItemGroup>
+      <_PrecompiledToolsetReference Include="@(_PrecompiledToolsetReferenceLine)">
+        <AssemblyPath>$([System.String]::Copy('%(Identity)').Split(';')[0])</AssemblyPath>
+        <Alias>$([System.String]::Copy('%(Identity)').Split(';')[1])</Alias>
+        <Root>$([System.String]::Copy('%(Identity)').Split(';')[2])</Root>
+      </_PrecompiledToolsetReference>
+      <Reference Include="%(_PrecompiledToolsetReference.AssemblyPath)" Aliases="%(_PrecompiledToolsetReference.Alias)" Condition="'%(_PrecompiledToolsetReference.Alias)' != ''" Private="true" />
+      <Reference Include="%(_PrecompiledToolsetReference.AssemblyPath)" Condition="'%(_PrecompiledToolsetReference.Alias)' == ''" Private="true" />
+      <TrimmerRootAssembly Include="$([System.IO.Path]::GetFileNameWithoutExtension('%(_PrecompiledToolsetReference.AssemblyPath)'))" Condition="'%(_PrecompiledToolsetReference.Root)' == 'root'" />
+      <Compile Include="$(_PrecompiledToolsetSource)" />
+      <FileWrites Include="$(_PrecompiledToolsetSource);$(_PrecompiledToolsetReferences)" />
+    </ItemGroup>
+  </Target>
+
+</Project>

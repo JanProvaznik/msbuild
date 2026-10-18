@@ -6,6 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Reflection;
 using Microsoft.Build.BackEnd;
+using Microsoft.Build.BackEnd.Logging;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Shared;
 using InternalLoggerException = Microsoft.Build.Exceptions.InternalLoggerException;
@@ -178,6 +179,63 @@ namespace Microsoft.Build.Logging
         }
 
         /// <summary>
+        /// Creates the forwarding logger this description names when it is one of the forwarding loggers that ship in
+        /// MSBuild itself (the ones the engine and the command line register), by direct construction. These are named
+        /// in descriptions so they can be recreated on out-of-proc nodes; creating them needs no reflection, so they
+        /// work in a trimmed or Native AOT host.
+        /// </summary>
+        /// <returns>The forwarding logger, or <see langword="null"/> if the description names any other logger.</returns>
+        internal IForwardingLogger TryCreateWellKnownForwardingLogger() => TryCreateWellKnownLogger(forwardingLogger: true) as IForwardingLogger;
+
+        /// <summary>
+        /// Creates the logger this description names when it is one of the loggers that ship in MSBuild itself, by direct
+        /// construction (no reflection), so naming them (for example <c>-logger:FileLogger,Microsoft.Build</c>) also works
+        /// in a trimmed or Native AOT host.
+        /// </summary>
+        /// <param name="forwardingLogger">Whether an <see cref="IForwardingLogger"/> is required.</param>
+        /// <returns>The logger, or <see langword="null"/> if the description names any other logger.</returns>
+        private ILogger TryCreateWellKnownLogger(bool forwardingLogger)
+        {
+            string assemblyName;
+            try
+            {
+                assemblyName = _loggerAssembly.AssemblyName is string name
+                    ? new AssemblyName(name).Name
+                    : Path.GetFileNameWithoutExtension(_loggerAssembly.AssemblyFile);
+            }
+            catch (Exception e) when (e is ArgumentException or FileLoadException)
+            {
+                return null;
+            }
+
+            if (string.IsNullOrEmpty(assemblyName) || string.IsNullOrEmpty(_loggerClassName))
+            {
+                return null;
+            }
+
+            ILogger logger =
+                Create<ConfigurableForwardingLogger>(assemblyName, _loggerClassName, static () => new ConfigurableForwardingLogger())
+                ?? Create<CentralForwardingLogger>(assemblyName, _loggerClassName, static () => new CentralForwardingLogger())
+                ?? Create<ForwardingTerminalLogger>(assemblyName, _loggerClassName, static () => new ForwardingTerminalLogger())
+                ?? Create<DistributedFileLogger>(assemblyName, _loggerClassName, static () => new DistributedFileLogger())
+                ?? Create<Experimental.BuildCheck.Infrastructure.BuildCheckForwardingLogger>(assemblyName, _loggerClassName, static () => new Experimental.BuildCheck.Infrastructure.BuildCheckForwardingLogger())
+                ?? Create<Framework.Telemetry.InternalTelemetryForwardingLogger>(assemblyName, _loggerClassName, static () => new Framework.Telemetry.InternalTelemetryForwardingLogger())
+                ?? Create<FileLogger>(assemblyName, _loggerClassName, static () => new FileLogger())
+                ?? Create<ConsoleLogger>(assemblyName, _loggerClassName, static () => new ConsoleLogger())
+                ?? Create<BinaryLogger>(assemblyName, _loggerClassName, static () => new BinaryLogger());
+
+            // Like the reflective path, a forwarding logger must implement IForwardingLogger.
+            return forwardingLogger && logger is not IForwardingLogger ? null : logger;
+
+            static ILogger Create<T>(string assemblyName, string className, Func<T> create)
+                where T : ILogger
+                => string.Equals(assemblyName, typeof(T).Assembly.GetName().Name, StringComparison.OrdinalIgnoreCase)
+                    && TypeLoader.IsPartialTypeNameMatch(typeof(T).FullName, className)
+                        ? create()
+                        : null;
+        }
+
+        /// <summary>
         /// Create an ILogger out of the data in this description. This method may throw a variety of
         /// reflection exceptions if the data is invalid. It is the resposibility of the caller to handle these
         /// exceptions if desired.
@@ -196,7 +254,11 @@ namespace Microsoft.Build.Logging
         [RequiresUnreferencedCode("Loads and instantiates a logger type by reflecting over an assembly discovered at runtime, which is incompatible with trimming.")]
         private ILogger CreateLogger(bool forwardingLogger)
         {
-            ILogger logger = null;
+            ILogger logger = TryCreateWellKnownLogger(forwardingLogger);
+            if (logger is not null)
+            {
+                return logger;
+            }
 
             try
             {

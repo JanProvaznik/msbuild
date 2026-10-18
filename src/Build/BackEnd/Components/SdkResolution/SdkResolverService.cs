@@ -277,7 +277,13 @@ namespace Microsoft.Build.BackEnd.SdkResolution
                 {
                     if (!_manifestToResolvers.TryGetValue(resolverManifest, out newResolvers))
                     {
-                        if (Framework.FeatureSwitches.EnableSdkResolverDynamicLoading)
+                        if (TryGetPrecompiledResolvers(resolverManifest, out IReadOnlyList<SdkResolver> precompiledResolvers))
+                        {
+                            // The host compiled this build of the resolver assembly in: use those resolvers in the
+                            // manifest's place instead of loading the assembly.
+                            newResolvers = precompiledResolvers;
+                        }
+                        else if (Framework.FeatureSwitches.EnableSdkResolverDynamicLoading)
                         {
                             // Loading of the needed resolvers.
                             newResolvers = _sdkResolverLoader.LoadResolversFromManifest(resolverManifest, sdkReferenceLocation);
@@ -305,6 +311,19 @@ namespace Microsoft.Build.BackEnd.SdkResolution
 
             resolvers.Sort((l, r) => l.Priority.CompareTo(r.Priority));
             return resolvers;
+        }
+
+        /// <summary>
+        /// Gets the resolvers the host compiled in (<see cref="SdkResolver.RegisterPrecompiled"/>) for the assembly a
+        /// manifest names, if the manifest's assembly file is the same build.
+        /// </summary>
+        private static bool TryGetPrecompiledResolvers(SdkResolverManifest manifest, out IReadOnlyList<SdkResolver> resolvers)
+        {
+            resolvers = null;
+            return !string.IsNullOrEmpty(manifest.Path)
+                && SdkResolver.TryGetPrecompiledResolvers(Path.GetFileNameWithoutExtension(manifest.Path), out Guid moduleVersionId, out resolvers)
+                && PrecompiledTaskResolver.TryGetModuleVersionId(manifest.Path, out Guid manifestModuleVersionId)
+                && manifestModuleVersionId == moduleVersionId;
         }
 
         private bool TryResolveSdkUsingSpecifiedResolvers(

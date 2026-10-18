@@ -2078,6 +2078,11 @@ namespace Microsoft.Build.BackEnd
             IOutOfProcTaskFactory outOfProcTaskFactory,
             int scheduledNodeId)
         {
+            if (!TaskFactoryUtilities.CanLoadTaskAssemblies)
+            {
+                return CreateTaskHostTaskFromAssemblyMetadata(taskIdentityParameters, outOfProcTaskFactory, scheduledNodeId);
+            }
+
             ITask innerTask;
 
             // ITaskFactory2 is used for compatibility reasons
@@ -2124,6 +2129,54 @@ namespace Microsoft.Build.BackEnd
 
             // Clean up the original task since we're going to wrap it
             _taskFactoryWrapper.TaskFactory.CleanupTask(innerTask);
+
+            return new TaskHostTask(
+                _taskLocation,
+                _taskLoggingContext,
+                _buildComponentHost,
+                taskHostParameters,
+                taskLoadedType,
+                useSidecarTaskHost: true,
+                _projectFile,
+#if FEATURE_APPDOMAIN
+                AppDomainSetup,
+#endif
+                _hostServices,
+                scheduledNodeId,
+                TaskEnvironment);
+        }
+
+        /// <summary>
+        /// In a process that cannot load task assemblies (Native AOT), an out-of-proc factory's compiled task is never
+        /// instantiated here: it is described from the assembly's metadata, as for any task sent to a task host, and runs
+        /// in a .NET task host.
+        /// </summary>
+        [RequiresUnreferencedCode("Describes a task type discovered at runtime, which is incompatible with trimming.")]
+        private ITask CreateTaskHostTaskFromAssemblyMetadata(
+            in TaskHostParameters taskIdentityParameters,
+            IOutOfProcTaskFactory outOfProcTaskFactory,
+            int scheduledNodeId)
+        {
+            string assemblyPath = outOfProcTaskFactory.GetAssemblyPath();
+            Assumed.NotNullOrEmpty(assemblyPath, $"IOutOfProcTaskFactory {_taskFactoryWrapper.TaskFactory.FactoryName} returned null/empty assembly path");
+
+            string taskTypeName = _taskFactoryWrapper.TaskFactory.TaskType?.FullName ?? _taskName;
+            LoadedType taskLoadedType = TypeLoader.Create<ITask>().Load(
+                taskTypeName,
+                AssemblyLoadInfo.Create(null, assemblyPath),
+                _taskLoggingContext.LogWarning,
+                useTaskHost: true);
+            if (taskLoadedType is null)
+            {
+                _taskLoggingContext.LogError(new BuildEventFileInfo(_taskLocation), "TaskLoadFailure", _taskName, assemblyPath, string.Empty);
+                return null;
+            }
+
+            TaskHostParameters taskHostParameters = new(XMakeAttributes.GetCurrentMSBuildRuntime(), XMakeAttributes.GetCurrentMSBuildArchitecture());
+            if (!taskIdentityParameters.IsEmpty)
+            {
+                taskHostParameters = TaskHostParameters.MergeTaskHostParameters(taskHostParameters, taskIdentityParameters);
+            }
 
             return new TaskHostTask(
                 _taskLocation,

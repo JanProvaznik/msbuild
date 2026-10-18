@@ -74,6 +74,13 @@ namespace Microsoft.Build.Shared
         // We need to append Microsoft.Build.Framework from next to the executing assembly first to make sure it's loaded before the runtime variant.
         private static string[] findRuntimeAssembliesWithMicrosoftBuildFramework()
         {
+#if NET
+            if (!System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
+            {
+                return FindNativeAotMetadataAssemblies();
+            }
+#endif
+
             string msbuildDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
             microsoftBuildFrameworkPath = Path.Combine(msbuildDirectory, "Microsoft.Build.Framework.dll");
             string[] msbuildAssemblies = Directory.GetFiles(msbuildDirectory, "*.dll");
@@ -81,6 +88,43 @@ namespace Microsoft.Build.Shared
 
             return [.. runtimeAssemblies, .. msbuildAssemblies];
         }
+
+#if NET
+        /// <summary>
+        /// A Native AOT process has no managed assemblies on disk: its own code is compiled into the executable, and
+        /// there is no shared-framework runtime directory. To describe a task through a <see cref="MetadataLoadContext"/>
+        /// it uses the reference metadata a JIT task host would run against - the managed assemblies of the MSBuild
+        /// toolset it lives in, and the shared framework installed under the dotnet root that owns that toolset.
+        /// </summary>
+        private static string[] FindNativeAotMetadataAssemblies()
+        {
+            string msbuildDirectory = BuildEnvironmentHelper.Instance.CurrentMSBuildToolsDirectory;
+            microsoftBuildFrameworkPath = Path.Combine(msbuildDirectory, "Microsoft.Build.Framework.dll");
+            string[] msbuildAssemblies = Directory.GetFiles(msbuildDirectory, "*.dll");
+
+            // <dotnet root>/sdk/<version>/ -> <dotnet root>/shared/Microsoft.NETCore.App/<version>/
+            string sharedFrameworkDirectory = Path.Combine(FileUtilities.GetFolderAbove(msbuildDirectory, 2), "shared", "Microsoft.NETCore.App");
+            string runtimeDirectory = null;
+            if (Directory.Exists(sharedFrameworkDirectory))
+            {
+                // Prefer the framework this image was compiled against; otherwise the newest installed one.
+                string currentVersion = Path.Combine(sharedFrameworkDirectory, RuntimeInformation.FrameworkDescription.Split(' ')[^1]);
+                runtimeDirectory = Directory.Exists(currentVersion)
+                    ? currentVersion
+                    : Directory.GetDirectories(sharedFrameworkDirectory).OrderByDescending(ParseFrameworkVersion).FirstOrDefault();
+            }
+
+            string[] runtimeAssemblies = runtimeDirectory is null ? [] : Directory.GetFiles(runtimeDirectory, "*.dll");
+            return [.. runtimeAssemblies, .. msbuildAssemblies];
+
+            static Version ParseFrameworkVersion(string directory)
+            {
+                string name = Path.GetFileName(directory);
+                int prereleaseSeparator = name.IndexOf('-');
+                return Version.TryParse(prereleaseSeparator < 0 ? name : name.Substring(0, prereleaseSeparator), out Version version) ? version : new Version();
+            }
+        }
+#endif
 
 #if NETFRAMEWORK
         private static readonly Lazy<string[]> runtimeAssembliesCLR35_20 = new Lazy<string[]>(FindRuntimeAssembliesWithMicrosoftBuildFrameworkCLR2CLR35);
@@ -260,6 +304,21 @@ namespace Microsoft.Build.Shared
                 throw new FileNotFoundException(null, assemblyLoadInfo.AssemblyLocation, e);
             }
         }
+
+        /// <summary>
+        /// Metadata-only assemblies handed out by <see cref="LoadAssemblyMetadata"/>, kept (with their contexts) for the
+        /// lifetime of the process so the types callers hold stay usable.
+        /// </summary>
+        private static readonly ConcurrentDictionary<string, Assembly> s_metadataOnlyAssemblies = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Loads an assembly for metadata inspection only, through a <see cref="MetadataLoadContext"/> that resolves its
+        /// references the same way out-of-proc task loading does. Used to describe a task that this process cannot load.
+        /// </summary>
+        internal static Assembly LoadAssemblyMetadata(string assemblyPath)
+            => s_metadataOnlyAssemblies.GetOrAdd(
+                Path.GetFullPath(assemblyPath),
+                path => CreateMetadataLoadContext(AssemblyLoadInfo.Create(null, path)).LoadFromAssemblyPath(path));
 
         private static MetadataLoadContext CreateMetadataLoadContext(AssemblyLoadInfo assemblyLoadInfo)
         {
