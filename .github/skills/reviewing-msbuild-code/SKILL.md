@@ -6,7 +6,7 @@ argument-hint: 'Optional: PR number, branch, or "working tree" (default).'
 
 # Reviewing MSBuild Code
 
-Five reviewer agents under `.claude/agents/` each own a few of the repo's review dimensions; a verifier agent then checks every finding against the code. The full 24-dimension methodology lives in `.github/agents/expert-reviewer.agent.md` and is the source of the rules the agents carry; consult it when a finding does not fit any of the five.
+Five reviewer agents under `.github/agents/` (`msbuild-*-reviewer.agent.md`) each own a few of the repo's review dimensions; `msbuild-finding-verifier` then checks every finding against the code. The full 24-dimension methodology lives in `.github/agents/expert-reviewer.agent.md` and is the source of the rules the agents carry; consult it when a finding does not fit any of the five.
 
 ## Step 1: Get the diff in the working tree
 
@@ -30,7 +30,7 @@ When in doubt, run all five. They are cheap compared with a missed BLOCKING find
 
 ## Step 3: Launch them in parallel
 
-Use the `Agent` tool with `subagent_type` set to the agent name, all launches in one message so they run concurrently. Give every agent the same brief:
+Run each one as a subagent with the `agent` tool (`runSubagent`), naming the custom agent, and issue all the calls in one turn so they run concurrently. Give every agent the same brief:
 
 > Review the current working tree diff against HEAD. PR intent: <one paragraph from the PR description or the user>. Report in your fixed format. Do not fix anything.
 

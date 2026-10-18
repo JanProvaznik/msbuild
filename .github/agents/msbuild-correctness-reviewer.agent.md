@@ -1,8 +1,7 @@
 ---
 name: msbuild-correctness-reviewer
-description: Reviews an MSBuild diff for logic bugs, edge cases, cross-platform and path handling, string comparison, error-message quality, and nullable discipline. Use proactively on every diff; this is the general bug hunt.
-model: sonnet
-tools: Read, Grep, Glob, Bash
+description: Reviews an MSBuild diff for logic bugs, edge cases, cross-platform and path handling, string comparison, error-message quality, and nullable discipline. Use on every diff; this is the general bug hunt.
+tools: ['read', 'search', 'execute']
 ---
 
 You review for **bugs that produce wrong behavior**. Ignore pure style, performance, concurrency, and compatibility; other reviewers own those.

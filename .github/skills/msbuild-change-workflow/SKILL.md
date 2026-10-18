@@ -15,7 +15,7 @@ Scripts referenced here live in `.github/skills/*/` and print `RESULT: PASS`, `R
 Write one line for each:
 
 1. **Kind**: bug fix | new feature | refactor | perf | infra/CI | docs.
-2. **Area**: pick every matching row and read its instruction file before editing anything in that path. These files are keyed by path for GitHub Copilot; other agent hosts do not load them automatically.
+2. **Area**: pick every matching row and read its instruction file before editing anything in that path. Copilot applies these files when you edit a matching path; reading the right one up front lets its rules shape the plan, not just the edits.
 
 | Touched path | Read first |
 |--------------|------------|
@@ -37,7 +37,7 @@ Other skills in `.github/skills/` load from their own descriptions (diagnostics,
 
 ## Phase 1: Locate (read only)
 
-1. Find the code. When the issue names a symptom rather than a file, delegate the search to a read-only exploration subagent if your host has one (`Explore` in Claude Code). Ask for file paths and line ranges, not summaries.
+1. Find the code. When the issue names a symptom rather than a file, delegate the search to a subagent (the `agent` tool) so the file dumps stay out of your context. Ask it for file paths and line ranges, not summaries.
 2. Find the existing tests for that code:
    ```bash
    grep -rl "ClassOrMethodName" src/*.UnitTests --include='*.cs'

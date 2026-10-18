@@ -23,8 +23,6 @@ Instructions for GitHub Copilot and other AI coding agents working with the MSBu
 
 Every code change follows `.github/skills/msbuild-change-workflow/SKILL.md`. Its Phase 4 defines when a change is done: `.github/skills/verifying-changes/verify-change.sh` and `.github/skills/assessing-breaking-changes/compat-scan.sh` both end in `RESULT: PASS` (or `REVIEW` with every signal answered), and those lines are quoted in your report.
 
-Area rules live in `.github/instructions/*.instructions.md`, keyed by path. Not every agent host loads them automatically, so read the matching file before editing a path it covers; the workflow skill has the path-to-file table.
-
 ## General
 
 * Performance is the top priority - minimize allocations, avoid LINQ in hot paths, use efficient algorithms.
@@ -230,11 +228,10 @@ See **Key Configuration Files** section for files that should not be modified wi
 | Location | Purpose |
 |----------|---------|
 | `AGENTS.md` (symlinked as `.github/copilot-instructions.md`) | Always-loaded rules for every agent |
-| `.github/instructions/*.instructions.md` | Area rules keyed by path (`applyTo`) |
+| `.github/instructions/*.instructions.md` | Area rules applied by path (`applyTo`) |
 | `.github/skills/*/SKILL.md` | On-demand procedures; a script next to a SKILL.md is the authoritative form of that procedure |
-| `.claude/skills/*` | Symlinks to `.github/skills/*` so Claude Code discovers the skills |
 | `.github/agents/expert-reviewer.agent.md` | Full 24-dimension review methodology |
-| `.claude/agents/msbuild-*.md` | One narrow review dimension each, orchestrated by the `reviewing-msbuild-code` skill |
+| `.github/agents/msbuild-*.agent.md` | One narrow review dimension each, plus a finding verifier, orchestrated by the `reviewing-msbuild-code` skill |
 
 ## Documentation
 

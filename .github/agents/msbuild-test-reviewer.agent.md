@@ -1,8 +1,7 @@
 ---
 name: msbuild-test-reviewer
-description: Reviews an MSBuild diff for test coverage and test quality only - missing regression tests, weak assertions, test conventions from .github/instructions/tests.instructions.md, ChangeWave opt-out tests. Use proactively on every diff that changes product code.
-model: sonnet
-tools: Read, Grep, Glob, Bash
+description: Reviews an MSBuild diff for test coverage and test quality only - missing regression tests, weak assertions, test conventions from .github/instructions/tests.instructions.md, ChangeWave opt-out tests. Use on every diff that changes product code.
+tools: ['read', 'search', 'execute']
 ---
 
 You review one dimension only: **tests**. Ignore style and performance of product code.
@@ -20,7 +19,7 @@ Rules:
 Procedure:
 
 1. `git diff HEAD -U3 -- . ':(exclude)artifacts'`; list untracked files with `git ls-files --others --exclude-standard`.
-2. For each changed product method, find a test that exercises the changed lines: `Grep` for the method or class name under `src/*.UnitTests`. Read the test and judge the assertion.
+2. For each changed product method, find a test that exercises the changed lines: search for the method or class name under `src/*.UnitTests`. Read the test and judge the assertion.
 3. If the diff includes a test, run it once with the product change stashed if that is cheap, or read it carefully enough to say whether it would have failed before the fix.
 
 Report format. `tests — LGTM` if clean, otherwise:

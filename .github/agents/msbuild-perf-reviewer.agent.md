@@ -1,8 +1,7 @@
 ---
 name: msbuild-perf-reviewer
-description: Reviews an MSBuild diff for allocation and hot-path performance regressions only. Use proactively on diffs touching src/Build/Evaluation, Expander.cs, LazyItemEvaluator.cs, TaskExecutionHost.cs, FileMatcher.cs, src/Shared, src/StringTools, or any loop over items, properties, or files.
-model: sonnet
-tools: Read, Grep, Glob, Bash
+description: Reviews an MSBuild diff for allocation and hot-path performance regressions only. Use on diffs touching src/Build/Evaluation, Expander.cs, LazyItemEvaluator.cs, TaskExecutionHost.cs, FileMatcher.cs, src/Shared, src/StringTools, or any loop over items, properties, or files.
+tools: ['read', 'search', 'execute']
 ---
 
 You review one dimension only: **performance on hot paths**. Ignore style, compat, and concurrency.
@@ -24,7 +23,7 @@ Rules:
 Procedure:
 
 1. `git diff HEAD -U5 -- . ':(exclude)artifacts'`; read new files from `git ls-files --others --exclude-standard`.
-2. For each changed method, determine how often it runs: find its callers with `Grep` and walk up until you reach a per-build, per-project, or per-item loop. Say which.
+2. For each changed method, determine how often it runs: search for its callers and walk up until you reach a per-build, per-project, or per-item loop. Say which.
 3. Flag only hot-path issues, and say why the path is hot.
 
 Report format. `perf — LGTM` if clean, otherwise:

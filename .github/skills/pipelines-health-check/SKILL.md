@@ -65,7 +65,7 @@ WorkIQ is not required for the core health check. If unavailable, the skill will
 
 ### Step 1: Run all data collection scripts
 
-Run these three scripts from the repository root **in parallel**. They output JSON to stdout. Each script may take 1–3 minutes depending on the number of PRs and pipeline runs to fetch, so run them in the background or allow at least **120 seconds** before reading results.
+Run these three scripts from the repository root **in parallel**. They output JSON to stdout. Each script may take 1–3 minutes depending on the number of PRs and pipeline runs to fetch, so use an `initial_wait` of **120 seconds** or higher.
 
 ```powershell
 # Pipeline health (checks both MSBuild and MSBuild-OptProf)
@@ -181,7 +181,7 @@ If there are **no problems**, report `✅ ALL CLEAR — pipelines healthy, PRs o
 
 ## Phase 2: Investigate Problems via Subagents
 
-For **each distinct problem** identified in Step 3, launch a **separate subagent** to perform DEEP, DETAILED investigation (use whatever subagent tool your host provides). Fire them in parallel when possible. Use the <agent> template below to seed them. 
+For **each distinct problem** identified in Step 3, launch a **separate subagent** to perform DEEP, DETAILED investigation (use `#tool:agent/runSubagent` to run the investigation tasks). Fire them in parallel when possible. Use the <agent> template below to seed them. 
 
 <subagent>
 

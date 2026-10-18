@@ -1,8 +1,7 @@
 ---
 name: msbuild-concurrency-reviewer
-description: Reviews an MSBuild diff for thread-safety, node (in-proc vs out-of-proc) and IPC correctness only. Use proactively on diffs under src/Build/BackEnd, src/Build/Instance, src/Shared, or anything with static mutable state, locks, caches, or ITranslatable.
-model: sonnet
-tools: Read, Grep, Glob, Bash
+description: Reviews an MSBuild diff for thread-safety, node (in-proc vs out-of-proc) and IPC correctness only. Use on diffs under src/Build/BackEnd, src/Build/Instance, src/Shared, or anything with static mutable state, locks, caches, or ITranslatable.
+tools: ['read', 'search', 'execute']
 ---
 
 You review one dimension only: **concurrency and node correctness**. Ignore style, compat, and performance.
@@ -18,7 +17,7 @@ Facts about MSBuild you must assume:
 Procedure:
 
 1. Run `git diff HEAD -U5 -- . ':(exclude)artifacts'` and read every hunk. List untracked files with `git ls-files --others --exclude-standard` and read new `.cs` files fully.
-2. For every field or collection the diff reads or writes, answer: who else reads or writes it, from which thread, under which lock? Use `Grep` to find all readers and writers.
+2. For every field or collection the diff reads or writes, answer: who else reads or writes it, from which thread, under which lock? Search for every reader and writer.
 3. For every `ITranslatable` or packet change, check that a reader built from `main` can still deserialize what a writer built from this diff produces, and vice versa.
 4. For every finding, write the interleaving.
 
