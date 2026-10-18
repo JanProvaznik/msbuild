@@ -240,7 +240,6 @@ See **Key Configuration Files** section for files that should not be modified wi
 | `.github/skills/*/SKILL.md` | On-demand procedures. `.claude/skills/*` are symlinks to these so Claude Code discovers them. Scripts next to a SKILL.md are the authoritative version of the procedure. |
 | `.github/agents/expert-reviewer.agent.md` | Copilot reviewer with the full 24-dimension methodology |
 | `.claude/agents/msbuild-*.md` | Claude Code reviewer agents, one narrow dimension each, pinned to Sonnet. Orchestrated by the `reviewing-msbuild-code` skill. |
-| `.claude/settings.json`, `.claude/hooks/` | Hooks that block redirected build output, edits under `artifacts/` and `.dotnet/`, edits to pinned files, and destructive git commands |
 
 ## Documentation
 
