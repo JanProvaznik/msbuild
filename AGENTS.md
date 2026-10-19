@@ -19,6 +19,10 @@ Instructions for GitHub Copilot and other AI coding agents working with the MSBu
 - xUnit with Shouldly for testing
 - Multi-platform support (Windows, Linux, macOS)
 
+## Start Here: the Change Workflow
+
+Every code change follows `.github/skills/msbuild-change-workflow/SKILL.md`. Its Phase 4 defines when a change is done: `.github/skills/verifying-changes/verify-change.ps1` and `.github/skills/assessing-breaking-changes/compat-scan.ps1` both end in `RESULT: PASS` (or `REVIEW` with every signal answered), and those lines are quoted in your report.
+
 ## General
 
 * Performance is the top priority - minimize allocations, avoid LINQ in hot paths, use efficient algorithms.
@@ -124,7 +128,7 @@ Build individual projects with `dotnet msbuild {path/to/project.csproj} -v:q`.
 
 ### Bootstrap Environment Setup
 
-After building the whole repo, to use the just-built MSBuild to build things use the bootstrap environment (described in [`skills/use-bootstrap-msbuild](.github/skills/use-bootstrap-msbuild/SKILL.md)).
+After building the whole repo, to use the just-built MSBuild to build things use the bootstrap environment (described in [`skills/use-bootstrap-msbuild`](.github/skills/use-bootstrap-msbuild/SKILL.md)): `source artifacts/sdk-build-env.sh` on macOS/Linux, `.\artifacts\msbuild-build-env.ps1` on Windows.
 
 ### Build Troubleshooting
 
@@ -219,6 +223,16 @@ Before completing any change:
 
 See **Key Configuration Files** section for files that should not be modified without explicit request.
 
+## Agent Configuration Layout
+
+| Location | Purpose |
+|----------|---------|
+| `AGENTS.md` (symlinked as `.github/copilot-instructions.md`) | Always-loaded rules for every agent |
+| `.github/instructions/*.instructions.md` | Area rules applied by path (`applyTo`) |
+| `.github/skills/*/SKILL.md` | On-demand procedures; a script next to a SKILL.md is the authoritative form of that procedure |
+| `.github/agents/expert-reviewer.agent.md` | Full 24-dimension review methodology |
+| `.github/agents/msbuild-*.agent.md` | One narrow review dimension each, plus a finding verifier, orchestrated by the `reviewing-msbuild-code` skill |
+
 ## Documentation
 
 When making changes, check if related documentation exists in the `documentation/` folder (including `documentation/specs/`) and update it to reflect your changes. Keep documentation in sync with code changes.
@@ -238,8 +252,9 @@ When reviewing PRs, always consider whether the behavior change could be experie
    - Windows: `.\build.cmd -v quiet`
    - macOS/Linux: `./build.sh -v quiet`
 4. Test your changes end-to-end using the bootstrap output: `dotnet build src/Samples/Dependency/Dependency.csproj`
-5. Run relevant individual tests, not the full test suite
-6. Commit your changes
+5. Run `.\.github\skills\verifying-changes\verify-change.ps1` (scoped build with warnings as errors plus the mapped tests) and `.\.github\skills\assessing-breaking-changes\compat-scan.ps1`; quote both `RESULT:` lines
+6. Self-review with the `reviewing-msbuild-code` skill and fix confirmed BLOCKING/MAJOR findings
+7. Commit your changes
 
 ## Trust These Instructions
 

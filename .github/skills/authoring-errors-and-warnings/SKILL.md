@@ -33,23 +33,15 @@ Is the condition always wrong (invalid input, impossible state)?
 ├── Yes → ERROR (build should fail)
 └── No
     ├── Could this cause subtle build correctness issues?
-    │   ├── Yes, likely → WARNING (but see WarnAsError impact below)
+    │   ├── Yes, likely → WARNING (a breaking change; see below)
     │   └── Yes, maybe → MESSAGE at Normal importance
     └── Is this purely informational?
         └── Yes → MESSAGE at Low importance
 ```
 
-### The WarnAsError Constraint
+### New warnings are breaking changes
 
-**New warnings are breaking changes** for builds using:
-- `-WarnAsError` (CLI)
-- `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>` (project)
-- `<WarningsAsErrors>MSBxxxx</WarningsAsErrors>` (specific codes)
-
-Before adding a new warning, consider:
-1. **Is the warning important enough to justify breaking WarnAsError builds?** If yes, gate behind a ChangeWave (see [changewaves skill](../changewaves/SKILL.md)).
-2. **Could this be a Message instead?** Messages never break builds but still appear in binary logs.
-3. **Should this be an error from the start?** If the condition is always wrong, skip the warning stage.
+Builds that run with `-warnaserror`, `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>`, or `<WarningsAsErrors>MSBxxxx</WarningsAsErrors>` fail on any new warning. Whether a new warning needs a ChangeWave, should be a Message instead, or should be an error from the start is decided in [assessing-breaking-changes](../assessing-breaking-changes/SKILL.md); its `compat-scan.ps1` flags every new `LogWarning*` call so the question cannot be skipped.
 
 ## MSB Error Code Assignment
 
@@ -130,7 +122,7 @@ ProjectErrorUtilities.ThrowInvalidProject(
 - [ ] "Next message code" comment updated in the resx
 - [ ] Message answers: what happened, why, what to do
 - [ ] `{StrBegin}` comment and placeholder documentation added
-- [ ] Severity chosen (error vs warning vs message) with WarnAsError considered
-- [ ] If warning: ChangeWave gating evaluated
+- [ ] Severity chosen (error vs warning vs message)
+- [ ] If warning: compatibility decision recorded per `assessing-breaking-changes`
 - [ ] Full build run to generate `.xlf` files
 - [ ] Test verifies the error is produced with correct code and text

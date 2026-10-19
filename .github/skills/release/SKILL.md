@@ -28,7 +28,7 @@ Each monthly VS release produces:
 
 The process is organized into **6 timeline-gated phases** (0–5), each with an explicit trigger.
 
-> **Execution model**: This skill is designed for an **interactive Copilot session**. The agent walks through each phase step-by-step, but every command that modifies state (git push, DARC writes, pipeline changes, PR creation) requires **user approval** before execution. Read-only queries (DARC get-*, git log, etc.) can run without approval.
+> **Execution model**: This skill is designed for an **interactive agent session**. The agent walks through each phase step-by-step, but every command that modifies state (git push, DARC writes, pipeline changes, PR creation) requires **user approval** before execution. Read-only queries (DARC get-*, git log, etc.) can run without approval.
 
 ## Required Inputs
 
