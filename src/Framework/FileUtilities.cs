@@ -772,7 +772,7 @@ namespace Microsoft.Build.Framework
             char[]? rented = null;
             Span<char> buffer = value.Length <= StackLimit
                 ? stackalloc char[StackLimit]
-                : (rented = ArrayPool<char>.Shared.Rent(value.Length));
+                : (rented = System.Buffers.ArrayPool<char>.Shared.Rent(value.Length));
 
             try
             {
@@ -793,7 +793,7 @@ namespace Microsoft.Build.Framework
             {
                 if (rented is not null)
                 {
-                    ArrayPool<char>.Shared.Return(rented);
+                    System.Buffers.ArrayPool<char>.Shared.Return(rented);
                 }
             }
         }
