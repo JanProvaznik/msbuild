@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+﻿﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
@@ -6,75 +6,47 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Diagnostics.Contracts;
+using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
 using System.Security;
 using Microsoft.Build.Internal;
 using Microsoft.Build.Shared;
 
-/*
-    ==================================================================================================================
-
-    This is the standard Hashset with the following changes:
-
-    * class renamed
-    * require T implements IKeyed, and accept IKeyed directly where necessary
-    * all constructors require a comparer -- an IEqualityComparer<IKeyed> -- to avoid mistakes
-    * change Contains to give you back the found entry, rather than a boolean
-    * change Add so that it always adds, even if there's an entry already present with the same name.
-           We want "replacement" semantics, like a dictionary keyed on name.
-    * constructor that allows the collection to be read-only
-    * implement IDictionary<string, T>
-    * some convenience methods taking 'string' as overloads of methods taking IKeyed
-
-    ==================================================================================================================
-*/
-
 #nullable disable
-
-// The BuildXL package causes an indirect dependency on the RuntimeContracts package, which adds an analyzer which forbids the use of System.Diagnostics.Contract.
-// So effectively if your dependencies use RuntimeContracts, it attempts to force itself on your as well.
-// See: https://github.com/SergeyTeplyakov/RuntimeContracts/issues/12
-#pragma warning disable RA001 // Do not use System.Diagnostics.Contract class.
 
 namespace Microsoft.Build.Collections
 {
     /// <summary>
-    /// Implementation notes:
-    /// This uses an array-based implementation similar to <see cref="Dictionary{TKey, TValue}" />, using a buckets array
-    /// to map hash values to the Slots array. Items in the Slots array that hash to the same value
-    /// are chained together through the "next" indices.
-    ///
-    /// The capacity is always prime; so during resizing, the capacity is chosen as the next prime
-    /// greater than double the last capacity.
-    ///
-    /// The underlying data structures are lazily initialized. Because of the observation that,
-    /// in practice, hashtables tend to contain only a few elements, the initial capacity is
-    /// set very small (3 elements) unless the ctor with a collection is used.
-    ///
-    /// The +/- 1 modifications in methods that add, check for containment, etc allow us to
-    /// distinguish a hash code of 0 from an uninitialized bucket. This saves us from having to
-    /// reset each bucket to -1 when resizing. See Contains, for example.
-    ///
-    /// Set methods such as UnionWith, IntersectWith, ExceptWith, and SymmetricExceptWith modify
-    /// this set.
-    ///
-    /// Some operations can perform faster if we can assume "other" contains unique elements
-    /// according to this equality comparer. The only times this is efficient to check is if
-    /// other is a hashset. Note that checking that it's a hashset alone doesn't suffice; we
-    /// also have to check that the hashset is using the same equality comparer. If other
-    /// has a different equality comparer, it will have unique elements according to its own
-    /// equality comparer, but not necessarily according to ours. Therefore, to go these
-    /// optimized routes we check that other is a hashset using the same equality comparer.
-    ///
-    /// A HashSet with no elements has the properties of the empty set. (See IsSubset, etc. for
-    /// special empty set checks.)
-    ///
-    /// A couple of methods have a special case if other is this (e.g. SymmetricExceptWith).
-    /// If we didn't have these checks, we could be iterating over the set and modifying at
-    /// the same time.
+    /// A set of <see cref="IKeyed"/> entries that behaves like a dictionary keyed on <see cref="IKeyed.Key"/>
+    /// ("last add wins"), and that can be queried with a substring of a larger string without allocating it.
     /// </summary>
-    /// <typeparam name="T"></typeparam>
+    /// <remarks>
+    /// <para>
+    /// Data-oriented layout. The table is split into three flat arrays:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><c>_buckets</c>: an open-addressing (linear probing) index whose length is a power of two.
+    ///   Each word packs the entry index into its low <c>log2(_buckets.Length)</c> bits (index + 1, so that
+    ///   0 means empty) and a fingerprint of the hash into the remaining high bits. A probe therefore
+    ///   rejects almost every non-matching bucket by looking only at this one int array, without
+    ///   touching entry memory.</item>
+    ///   <item><c>_values</c>: the entries, densely packed in insertion order. Enumeration and
+    ///   <see cref="CopyTo(T[], int, int)"/> are straight array scans with no "is this slot used" checks.</item>
+    ///   <item><c>_hashes</c>: the mixed hash of each entry, parallel to <c>_values</c> (structure of arrays).
+    ///   It is cold data, read only when the table is resized or an entry is removed, so it is kept out of
+    ///   the arrays that lookups touch.</item>
+    /// </list>
+    /// <para>
+    /// Removal uses backward-shift deletion (no tombstones), and moves the last entry into the freed
+    /// entry slot so that <c>_values</c> stays dense. Without removals, enumeration order is insertion order.
+    /// </para>
+    /// <para>
+    /// This replaces a fork of the .NET Framework HashSet that used prime-sized bucket arrays (integer
+    /// modulo on every probe), chained slots (array of structs holding hash, value and next index), and
+    /// whose lookup loop fell back to a full string comparison whenever the stored hash did not match.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="T">The type of the entries.</typeparam>
     [DebuggerTypeProxy(typeof(Microsoft.Build.Collections.HashSetDebugView<>))]
     [DebuggerDisplay("Count = {Count}")]
     [SuppressMessage("Microsoft.Naming", "CA1710:IdentifiersShouldHaveCorrectSuffix", Justification = "By design")]
@@ -85,27 +57,44 @@ namespace Microsoft.Build.Collections
     internal class RetrievableEntryHashSet<T> : IRetrievableEntryHashSet<T> // CodeQL [SM02227] The dangerous method is called only in debug build. It's safe for release build.
         where T : class, IKeyed
     {
-        // store lower 31 bits of hash code
-        private const int Lower31BitMask = 0x7FFFFFFF;
-
-        // when constructing a hashset from an existing collection, it may contain duplicates,
-        // so this is used as the max acceptable excess ratio of capacity to count. Note that
-        // this is only used on the ctor and not to automatically shrink if the hashset has, e.g,
-        // a lot of adds followed by removes. Users must explicitly shrink by calling TrimExcess.
-        // This is set to 3 because capacity is acceptable as 2x rounded up to nearest prime.
-        private const int ShrinkThreshold = 3;
-
-        // constants for serialization
         private const String CapacityName = "Capacity";
         private const String ElementsName = "Elements";
         private const String ComparerName = "Comparer";
         private const String VersionName = "Version";
 
+        /// <summary>
+        /// 2^32 / golden ratio. Multiplying by it spreads the comparer's hash over all 32 bits
+        /// (Fibonacci hashing), so the top bits can pick the bucket and the low bits can serve as the fingerprint.
+        /// </summary>
+        private const uint GoldenRatio = 0x9E3779B9u;
+
+        /// <summary>
+        /// Smallest bucket array. Must be a power of two.
+        /// </summary>
+        private const int MinBucketCount = 8;
+
+        /// <summary>
+        /// Packed index: low <see cref="_indexBits"/> bits are entry index + 1 (0 = empty), the rest is a fingerprint.
+        /// </summary>
         private int[] _buckets;
-        private Slot[] _slots;
+
+        /// <summary>
+        /// Entries, dense, in insertion order (until a removal moves the last one into the hole).
+        /// </summary>
+        private T[] _values;
+
+        /// <summary>
+        /// Mixed hash of each entry, parallel to <see cref="_values"/>. Cold: only used for resize and removal.
+        /// </summary>
+        private uint[] _hashes;
+
         private int _count;
-        private int _lastIndex;
-        private int _freeList;
+
+        /// <summary>
+        /// log2(_buckets.Length). Number of low bits of a bucket word that hold the entry index.
+        /// </summary>
+        private int _indexBits;
+
         private IEqualityComparer<string> _comparer;
         private IConstrainedEqualityComparer<string> _constrainedComparer;
         private int _version;
@@ -122,10 +111,6 @@ namespace Microsoft.Build.Collections
 
             _comparer = comparer;
             _constrainedComparer = comparer as IConstrainedEqualityComparer<string>;
-            _lastIndex = 0;
-            _count = 0;
-            _freeList = -1;
-            _version = 0;
         }
 
         public RetrievableEntryHashSet(IEnumerable<T> collection, IEqualityComparer<string> comparer, bool readOnly = false)
@@ -141,9 +126,7 @@ namespace Microsoft.Build.Collections
         }
 
         /// <summary>
-        /// Implementation Notes:
-        /// Since resizes are relatively expensive (require rehashing), this attempts to minimize
-        /// the need to resize by setting the initial capacity based on size of collection.
+        /// Creates a set sized so that <paramref name="suggestedCapacity"/> entries fit without a resize.
         /// </summary>
         public RetrievableEntryHashSet(int suggestedCapacity, IEqualityComparer<string> comparer)
             : this(comparer)
@@ -152,9 +135,7 @@ namespace Microsoft.Build.Collections
         }
 
         /// <summary>
-        /// Implementation Notes:
-        /// Since resizes are relatively expensive (require rehashing), this attempts to minimize
-        /// the need to resize by setting the initial capacity based on size of collection.
+        /// Creates a set containing the entries of <paramref name="collection"/>; later entries win over earlier ones with an equal key.
         /// </summary>
         public RetrievableEntryHashSet(IEnumerable<T> collection, IEqualityComparer<string> comparer)
             : this(comparer)
@@ -164,26 +145,47 @@ namespace Microsoft.Build.Collections
                 throw new ArgumentNullException(nameof(collection));
             }
 
-            Contract.EndContractBlock();
-
-            // to avoid excess resizes, first set size based on collection's count. Collection
-            // may contain duplicates, so call TrimExcess if resulting hashset is larger than
-            // threshold
-            int suggestedCapacity = 0;
-            ICollection<T> coll = collection as ICollection<T>;
-            if (coll != null)
+            if (collection is RetrievableEntryHashSet<T> other && ReferenceEquals(other._comparer, comparer))
             {
-                suggestedCapacity = coll.Count;
+                CopyFrom(other);
+                return;
             }
-            Initialize(suggestedCapacity);
 
-            this.UnionWith(collection);
-            if ((_count == 0 && _slots.Length > HashHelpers.GetMinPrime()) ||
-                (_count > 0 && _slots.Length / _count > ShrinkThreshold))
-            {
-                TrimExcess();
-            }
+            Initialize(collection is ICollection<T> coll ? coll.Count : 0);
+            UnionWith(collection);
         }
+
+        /// <summary>
+        /// Creates a copy of <paramref name="other"/> with the same comparer and entries (not a deep copy).
+        /// </summary>
+        protected RetrievableEntryHashSet(RetrievableEntryHashSet<T> other)
+            : this(other._comparer)
+        {
+            CopyFrom(other);
+        }
+
+        /// <summary>
+        /// Same comparer means same hashes and no duplicates, so copying is three flat array copies
+        /// instead of rehashing and reinserting every key.
+        /// </summary>
+        private void CopyFrom(RetrievableEntryHashSet<T> other)
+        {
+            if (other._count == 0)
+            {
+                return;
+            }
+
+            _buckets = (int[])other._buckets.Clone();
+            _values = (T[])other._values.Clone();
+            _hashes = (uint[])other._hashes.Clone();
+            _indexBits = other._indexBits;
+            _count = other._count;
+        }
+
+        /// <summary>
+        /// The comparer used for keys.
+        /// </summary>
+        internal IEqualityComparer<string> Comparer => _comparer;
 
         protected RetrievableEntryHashSet(SerializationInfo info, StreamingContext context)
         {
@@ -202,12 +204,9 @@ namespace Microsoft.Build.Collections
             get
             {
                 var keys = new string[_count];
-
-                int i = 0;
-                foreach (var item in this)
+                for (int i = 0; i < keys.Length; i++)
                 {
-                    keys[i] = item.Key;
-                    i++;
+                    keys[i] = _values[i].Key;
                 }
 
                 return keys;
@@ -215,20 +214,14 @@ namespace Microsoft.Build.Collections
         }
 
         // Convenience to minimise change to callers used to dictionaries
-        public ICollection<T> Values
-        {
-            get { return this; }
-        }
+        public ICollection<T> Values => this;
 
         #region ICollection<T> methods
 
         // Convenience to minimise change to callers used to dictionaries
         internal T this[string name]
         {
-            get
-            {
-                return Get(name);
-            }
+            get => Get(name);
 
             set
             {
@@ -237,19 +230,11 @@ namespace Microsoft.Build.Collections
             }
         }
 
-        /// <summary>
-        /// Add item to this hashset. This is the explicit implementation of the <see cref="ICollection{T}" />
-        /// interface. The other Add method returns bool indicating whether item was added.
-        /// </summary>
-        /// <param name="item">item to add</param>
-        void ICollection<T>.Add(T item)
-        {
-            AddEvenIfPresent(item);
-        }
+        void ICollection<T>.Add(T item) => AddEvenIfPresent(item);
 
         /// <summary>
-        /// Remove all items from this set. This clears the elements but not the underlying
-        /// buckets and slots array. Follow this call by TrimExcess to release these.
+        /// Remove all items from this set. This clears the elements but keeps the arrays.
+        /// Follow this call by TrimExcess to release these.
         /// </summary>
         public void Clear()
         {
@@ -258,26 +243,18 @@ namespace Microsoft.Build.Collections
                 ErrorUtilities.ThrowInvalidOperation("OM_NotSupportedReadOnlyCollection");
             }
 
-            if (_lastIndex > 0)
+            if (_count > 0)
             {
-                Debug.Assert(_buckets != null, "m_buckets was null but m_lastIndex > 0");
-
-                // clear the elements so that the gc can reclaim the references.
-                // clear only up to m_lastIndex for m_slots
-                Array.Clear(_slots, 0, _lastIndex);
+                Array.Clear(_values, 0, _count);
                 Array.Clear(_buckets, 0, _buckets.Length);
-                _lastIndex = 0;
                 _count = 0;
-                _freeList = -1;
             }
+
             _version++;
         }
 
         // Convenience
-        internal bool Contains(string key)
-        {
-            return Get(key) != null;
-        }
+        internal bool Contains(string key) => Get(key) != null;
 
         bool ICollection<KeyValuePair<string, T>>.Contains(KeyValuePair<string, T> entry)
         {
@@ -285,26 +262,18 @@ namespace Microsoft.Build.Collections
             return Get(entry.Value.Key) != null;
         }
 
-        public bool ContainsKey(string key)
-        {
-            return Get(key) != null;
-        }
+        public bool ContainsKey(string key) => Get(key) != null;
 
         T IDictionary<string, T>.this[string name]
         {
-            get { return Get(name); }
-            set { Add(value); }
+            get => Get(name);
+            set => Add(value);
         }
 
         /// <summary>
-        /// Checks if this hashset contains the item
+        /// Checks if this hashset contains an item with the same key.
         /// </summary>
-        /// <param name="item">item to check for containment</param>
-        /// <returns>true if item contained; false if not</returns>
-        public bool Contains(T item)
-        {
-            return Get(item.Key) != null;
-        }
+        public bool Contains(T item) => Get(item.Key) != null;
 
         // Convenience to minimise change to callers used to dictionaries
         public bool TryGetValue(string key, out T item)
@@ -320,7 +289,8 @@ namespace Microsoft.Build.Collections
         /// <returns>The item, if it was found. Otherwise, default(T).</returns>
         public T Get(string key)
         {
-            return GetCore(key, 0, key?.Length ?? 0);
+            int i = FindEntry(key, 0, key?.Length ?? 0, out _);
+            return i >= 0 ? _values[i] : null;
         }
 
         /// <summary>
@@ -329,7 +299,7 @@ namespace Microsoft.Build.Collections
         /// <param name="key">key to check for containment</param>
         /// <param name="index">The position of the substring within <paramref name="key"/>.</param>
         /// <param name="length">The maximum number of characters in the <paramref name="key"/> to lookup.</param>
-        /// <returns>true if item contained; false if not</returns>
+        /// <returns>The item, if it was found. Otherwise, default(T).</returns>
         public T Get(string key, int index, int length)
         {
             if (length < 0)
@@ -347,51 +317,19 @@ namespace Microsoft.Build.Collections
                 throw new InvalidOperationException("Cannot do a constrained lookup on this collection.");
             }
 
-            return GetCore(key, index, length);
-        }
-
-        /// <summary>
-        /// Gets the item if any with the given name
-        /// </summary>
-        /// <param name="item">item to check for containment</param>
-        /// <param name="index">The position of the substring within <paramref name="item"/>.</param>
-        /// <param name="length">The maximum number of characters in the <paramref name="item"/> to lookup.</param>
-        /// <returns>true if item contained; false if not</returns>
-        private T GetCore(string item, int index, int length)
-        {
-            if (_buckets != null)
-            {
-                int hashCode = InternalGetHashCode(item, index, length);
-                // see note at "HashSet" level describing why "- 1" appears in for loop
-                for (int i = _buckets[hashCode % _buckets.Length] - 1; i >= 0; i = _slots[i].next)
-                {
-                    if (_slots[i].hashCode == hashCode && _constrainedComparer != null ? _constrainedComparer.Equals(_slots[i].value.Key, item, index, length) : _comparer.Equals(_slots[i].value.Key, item))
-                    {
-                        return _slots[i].value;
-                    }
-                }
-            }
-            // either m_buckets is null or wasn't found
-            return default(T);
+            int i = FindEntry(key, index, length, out _);
+            return i >= 0 ? _values[i] : null;
         }
 
         /// <summary>
         /// Copy items in this hashset to array, starting at arrayIndex
         /// </summary>
-        /// <param name="array">array to add items to</param>
-        /// <param name="arrayIndex">index to start at</param>
-        public void CopyTo(T[] array, int arrayIndex)
-        {
-            CopyTo(array, arrayIndex, _count);
-        }
+        public void CopyTo(T[] array, int arrayIndex) => CopyTo(array, arrayIndex, _count);
 
         /// <summary>
         /// Remove entry that compares equal to T
         /// </summary>
-        public bool Remove(T item)
-        {
-            return Remove(item.Key);
-        }
+        public bool Remove(T item) => Remove(item.Key);
 
         bool ICollection<KeyValuePair<string, T>>.Remove(KeyValuePair<string, T> entry)
         {
@@ -411,80 +349,51 @@ namespace Microsoft.Build.Collections
                 ErrorUtilities.ThrowInvalidOperation("OM_NotSupportedReadOnlyCollection");
             }
 
-            if (_buckets != null)
+            int entry = FindEntryWholeKey(item, out int bucket, out _);
+            if (entry < 0)
             {
-                int hashCode = InternalGetHashCode(item);
-                int bucket = hashCode % _buckets.Length;
-                int last = -1;
-                for (int i = _buckets[bucket] - 1; i >= 0; last = i, i = _slots[i].next)
-                {
-                    if (_slots[i].hashCode == hashCode && _comparer.Equals(_slots[i].value.Key, item))
-                    {
-                        if (last < 0)
-                        {
-                            // first iteration; update buckets
-                            _buckets[bucket] = _slots[i].next + 1;
-                        }
-                        else
-                        {
-                            // subsequent iterations; update 'next' pointers
-                            _slots[last].next = _slots[i].next;
-                        }
-                        _slots[i].hashCode = -1;
-                        _slots[i].value = default(T);
-                        _slots[i].next = _freeList;
-
-                        _count--;
-                        _version++;
-                        if (_count == 0)
-                        {
-                            _lastIndex = 0;
-                            _freeList = -1;
-                        }
-                        else
-                        {
-                            _freeList = i;
-                        }
-                        return true;
-                    }
-                }
+                return false;
             }
-            // either m_buckets is null or wasn't found
-            return false;
+
+            DeleteBucket(bucket);
+
+            // Keep _values dense: move the last entry into the hole and repoint its bucket.
+            int last = _count - 1;
+            if (entry != last)
+            {
+                int lastBucket = FindBucketOfEntry(last);
+                _values[entry] = _values[last];
+                _hashes[entry] = _hashes[last];
+                uint word = (uint)_buckets[lastBucket];
+                _buckets[lastBucket] = (int)((word & ~IndexMask) | (uint)(entry + 1));
+            }
+
+            _values[last] = null;
+            _count = last;
+            _version++;
+            return true;
         }
 
         /// <summary>
         /// Number of elements in this hashset
         /// </summary>
-        public int Count
-        {
-            get { return _count; }
-        }
+        public int Count => _count;
 
         /// <summary>
         /// Whether this is readonly
         /// </summary>
-        public bool IsReadOnly
-        {
-            get { return _readOnly; }
-        }
+        public bool IsReadOnly => _readOnly;
 
         /// <summary>
         /// Permanently prevent changes to the set.
         /// </summary>
-        internal void MakeReadOnly()
-        {
-            _readOnly = true;
-        }
+        internal void MakeReadOnly() => _readOnly = true;
 
         #endregion
 
         #region IEnumerable methods
 
-        public Enumerator GetEnumerator()
-        {
-            return new Enumerator(this);
-        }
+        public Enumerator GetEnumerator() => new Enumerator(this);
 
         IEnumerator<KeyValuePair<string, T>> IEnumerable<KeyValuePair<string, T>>.GetEnumerator()
         {
@@ -494,15 +403,9 @@ namespace Microsoft.Build.Collections
             }
         }
 
-        IEnumerator<T> IEnumerable<T>.GetEnumerator()
-        {
-            return new Enumerator(this);
-        }
+        IEnumerator<T> IEnumerable<T>.GetEnumerator() => new Enumerator(this);
 
-        IEnumerator IEnumerable.GetEnumerator()
-        {
-            return new Enumerator(this);
-        }
+        IEnumerator IEnumerable.GetEnumerator() => new Enumerator(this);
 
         #endregion
 
@@ -520,12 +423,10 @@ namespace Microsoft.Build.Collections
             // need to serialize version to avoid problems with serializing while enumerating
             info.AddValue(VersionName, _version);
             info.AddValue(ComparerName, _comparer, typeof(IEqualityComparer<string>));
-            info.AddValue(CapacityName, _buckets == null ? 0 : _buckets.Length);
-            if (_buckets != null)
+            info.AddValue(CapacityName, _values == null ? 0 : _values.Length);
+            if (_values != null)
             {
-                T[] array = new T[_count];
-                CopyTo(array);
-                info.AddValue(ElementsName, array, typeof(T[]));
+                info.AddValue(ElementsName, ToArray(), typeof(T[]));
             }
         }
 
@@ -547,13 +448,9 @@ namespace Microsoft.Build.Collections
             int capacity = _siInfo.GetInt32(CapacityName);
             _comparer = (IEqualityComparer<string>)_siInfo.GetValue(ComparerName, typeof(IEqualityComparer<string>));
             _constrainedComparer = _comparer as IConstrainedEqualityComparer<string>;
-            _freeList = -1;
 
             if (capacity != 0)
             {
-                _buckets = new int[capacity];
-                _slots = new Slot[capacity];
-
                 T[] array = (T[])_siInfo.GetValue(ElementsName, typeof(T[]));
 
                 if (array == null)
@@ -561,15 +458,11 @@ namespace Microsoft.Build.Collections
                     throw new SerializationException();
                 }
 
-                // there are no resizes here because we already set capacity above
+                Initialize(Math.Max(capacity, array.Length));
                 for (int i = 0; i < array.Length; i++)
                 {
                     AddEvenIfPresent(array[i]);
                 }
-            }
-            else
-            {
-                _buckets = null;
             }
 
             _version = _siInfo.GetInt32(VersionName);
@@ -584,10 +477,7 @@ namespace Microsoft.Build.Collections
         /// Add item to this HashSet.
         /// *** MSBUILD NOTE: Always added - overwrite semantics
         /// </summary>
-        public void Add(T item)
-        {
-            AddEvenIfPresent(item);
-        }
+        public void Add(T item) => AddEvenIfPresent(item);
 
         void IDictionary<string, T>.Add(string key, T item)
         {
@@ -608,10 +498,6 @@ namespace Microsoft.Build.Collections
 
         /// <summary>
         /// Take the union of this HashSet with other. Modifies this set.
-        ///
-        /// Implementation note: GetSuggestedCapacity (to increase capacity in advance avoiding
-        /// multiple resizes ended up not being useful in practice; quickly gets to the
-        /// point where it's a wasteful check.
         /// </summary>
         /// <param name="other">enumerable with items to add</param>
         public void UnionWith(IEnumerable<T> other)
@@ -620,7 +506,11 @@ namespace Microsoft.Build.Collections
             {
                 throw new ArgumentNullException(nameof(other));
             }
-            Contract.EndContractBlock();
+
+            if (other is ICollection<T> coll)
+            {
+                EnsureCapacity(_count + coll.Count);
+            }
 
             foreach (T item in other)
             {
@@ -637,15 +527,14 @@ namespace Microsoft.Build.Collections
                 throw new ArgumentException("index");
             }
 
-            int i = index;
-            foreach (var entry in this)
+            for (int i = 0; i < _count; i++)
             {
-                array[i] = new KeyValuePair<string, T>(entry.Key, entry);
-                i++;
+                T entry = _values[i];
+                array[index + i] = new KeyValuePair<string, T>(entry.Key, entry);
             }
         }
 
-        public void CopyTo(T[] array) { CopyTo(array, 0, _count); }
+        public void CopyTo(T[] array) => CopyTo(array, 0, _count);
 
         [SuppressMessage("Microsoft.Usage", "CA2208:InstantiateArgumentExceptionsCorrectly", Justification = "Decently informative for an exception that will probably never actually see the light of day")]
         public void CopyTo(T[] array, int arrayIndex, int count)
@@ -654,7 +543,6 @@ namespace Microsoft.Build.Collections
             {
                 throw new ArgumentNullException(nameof(array));
             }
-            Contract.EndContractBlock();
 
             // check array index valid index into array
             if (arrayIndex < 0)
@@ -676,73 +564,36 @@ namespace Microsoft.Build.Collections
                 throw new ArgumentException("arrayIndex");
             }
 
-            int numCopied = 0;
-            for (int i = 0; i < _lastIndex && numCopied < count; i++)
+            int toCopy = Math.Min(count, _count);
+            if (toCopy > 0)
             {
-                if (_slots[i].hashCode >= 0)
-                {
-                    array[arrayIndex + numCopied] = _slots[i].value;
-                    numCopied++;
-                }
+                Array.Copy(_values, 0, array, arrayIndex, toCopy);
             }
         }
 
         /// <summary>
-        /// Sets the capacity of this list to the size of the list (rounded up to nearest prime),
-        /// unless count is 0, in which case we release references.
-        ///
-        /// This method can be used to minimize a list's memory overhead once it is known that no
-        /// new elements will be added to the list. To completely clear a list and release all
-        /// memory referenced by the list, execute the following statements:
-        ///
-        /// list.Clear();
-        /// list.TrimExcess();
+        /// Shrinks the arrays to the smallest size that holds the current entries,
+        /// unless count is 0, in which case we release them.
         /// </summary>
         public void TrimExcess()
         {
-            Debug.Assert(_count >= 0, "m_count is negative");
+            Debug.Assert(_count >= 0, "_count is negative");
 
             if (_count == 0)
             {
-                // if count is zero, clear references
                 _buckets = null;
-                _slots = null;
+                _values = null;
+                _hashes = null;
+                _indexBits = 0;
                 _version++;
             }
             else
             {
-                Debug.Assert(_buckets != null, "m_buckets was null but m_count > 0");
-
-                // similar to IncreaseCapacity but moves down elements in case add/remove/etc
-                // caused fragmentation
-                int newSize = HashHelpers.GetPrime(_count);
-                Slot[] newSlots = new Slot[newSize];
-                int[] newBuckets = new int[newSize];
-
-                // move down slots and rehash at the same time. newIndex keeps track of current
-                // position in newSlots array
-                int newIndex = 0;
-                for (int i = 0; i < _lastIndex; i++)
+                int bucketCount = BucketCountFor(_count);
+                if (bucketCount < _buckets.Length)
                 {
-                    if (_slots[i].hashCode >= 0)
-                    {
-                        newSlots[newIndex] = _slots[i];
-
-                        // rehash
-                        int bucket = newSlots[newIndex].hashCode % newSize;
-                        newSlots[newIndex].next = newBuckets[bucket] - 1;
-                        newBuckets[bucket] = newIndex + 1;
-
-                        newIndex++;
-                    }
+                    Resize(bucketCount);
                 }
-
-                Debug.Assert(newSlots.Length <= _slots.Length, "capacity increased after TrimExcess");
-
-                _lastIndex = newIndex;
-                _slots = newSlots;
-                _buckets = newBuckets;
-                _freeList = -1;
             }
         }
 
@@ -751,52 +602,100 @@ namespace Microsoft.Build.Collections
         #region Helper methods
 
         /// <summary>
-        /// Initializes buckets and slots arrays. Uses suggested capacity by finding next prime
-        /// greater than or equal to capacity.
+        /// Mask selecting the entry index (+1) part of a bucket word.
         /// </summary>
-        /// <param name="capacity"></param>
-        private void Initialize(int capacity)
+        private uint IndexMask
         {
-            Debug.Assert(_buckets == null, "Initialize was called but m_buckets was non-null");
-
-            int size = HashHelpers.GetPrime(capacity);
-
-            _buckets = new int[size];
-            _slots = new Slot[size];
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => (1u << _indexBits) - 1;
         }
 
         /// <summary>
-        /// Expand to new capacity. New capacity is next prime greater than or equal to suggested
-        /// size. This is called when the underlying array is filled. This performs no
-        /// defragmentation, allowing faster execution; note that this is reasonable since
-        /// AddEvenIfPresent attempts to insert new elements in re-opened spots.
+        /// Maximum number of entries for a bucket array of <paramref name="bucketCount"/> words.
+        /// Keeps the load factor at or below 3/4, which also keeps entry index + 1 strictly below 2^indexBits.
         /// </summary>
-        private void IncreaseCapacity()
+        private static int MaxEntriesFor(int bucketCount) => bucketCount - (bucketCount >> 2);
+
+        /// <summary>
+        /// Smallest power-of-two bucket count that holds <paramref name="entries"/> entries.
+        /// </summary>
+        private static int BucketCountFor(int entries)
         {
-            Debug.Assert(_buckets != null, "IncreaseCapacity called on a set with no elements");
-
-            int newSize = HashHelpers.ExpandPrime(_count);
-            if (newSize <= _count)
+            int bucketCount = MinBucketCount;
+            while (MaxEntriesFor(bucketCount) < entries)
             {
-                throw new ArgumentException("newSize");
+                bucketCount <<= 1;
             }
 
-            // Able to increase capacity; copy elements to larger array and rehash
-            Slot[] newSlots = new Slot[newSize];
-            if (_slots != null)
+            return bucketCount;
+        }
+
+        private void Initialize(int capacity)
+        {
+            Debug.Assert(_buckets == null, "Initialize was called but _buckets was non-null");
+            Allocate(BucketCountFor(capacity));
+        }
+
+        private void Allocate(int bucketCount)
+        {
+            int capacity = MaxEntriesFor(bucketCount);
+            _buckets = new int[bucketCount];
+            _values = new T[capacity];
+            _hashes = new uint[capacity];
+            _indexBits = Log2(bucketCount);
+        }
+
+        private static int Log2(int powerOfTwo)
+        {
+            int bits = 0;
+            while ((1 << bits) < powerOfTwo)
             {
-                Array.Copy(_slots, 0, newSlots, 0, _lastIndex);
+                bits++;
             }
 
-            int[] newBuckets = new int[newSize];
-            for (int i = 0; i < _lastIndex; i++)
+            return bits;
+        }
+
+        private void EnsureCapacity(int entries)
+        {
+            if (_buckets == null)
             {
-                int bucket = newSlots[i].hashCode % newSize;
-                newSlots[i].next = newBuckets[bucket] - 1;
-                newBuckets[bucket] = i + 1;
+                Initialize(entries);
             }
-            _slots = newSlots;
-            _buckets = newBuckets;
+            else if (entries > _values.Length)
+            {
+                Resize(BucketCountFor(entries));
+            }
+        }
+
+        /// <summary>
+        /// Rebuild the bucket index for a new size. Entries keep their positions, and hashes are
+        /// read from the cold hash array, so no key is rehashed.
+        /// </summary>
+        private void Resize(int bucketCount)
+        {
+            Debug.Assert(MaxEntriesFor(bucketCount) >= _count, "Resize would drop entries");
+
+            T[] oldValues = _values;
+            uint[] oldHashes = _hashes;
+            Allocate(bucketCount);
+            Array.Copy(oldValues, _values, _count);
+            Array.Copy(oldHashes, _hashes, _count);
+
+            int[] buckets = _buckets;
+            int shift = 32 - _indexBits;
+            int mask = buckets.Length - 1;
+            for (int i = 0; i < _count; i++)
+            {
+                uint mixed = _hashes[i];
+                int pos = (int)(mixed >> shift);
+                while (buckets[pos] != 0)
+                {
+                    pos = (pos + 1) & mask;
+                }
+
+                buckets[pos] = (int)((mixed << _indexBits) | (uint)(i + 1));
+            }
         }
 
         /// <summary>
@@ -804,8 +703,6 @@ namespace Microsoft.Build.Collections
         /// Returns true if added and false if already present
         /// ** MSBUILD: Modified so that it DOES add even if present. It will return false in that case, though.**
         /// </summary>
-        /// <param name="value">value to find</param>
-        /// <returns></returns>
         private bool AddEvenIfPresent(T value)
         {
             if (_readOnly)
@@ -819,43 +716,190 @@ namespace Microsoft.Build.Collections
             }
 
             string key = value.Key;
-            int hashCode = InternalGetHashCode(key);
-            int bucket = hashCode % _buckets.Length;
-            for (int i = _buckets[hashCode % _buckets.Length] - 1; i >= 0; i = _slots[i].next)
+            int existing = FindEntryWholeKey(key, out int bucket, out uint mixed);
+            if (existing >= 0)
             {
-                if (_slots[i].hashCode == hashCode && _comparer.Equals(_slots[i].value.Key, key))
+                // NOTE: this must add EVEN IF it is already present,
+                // as it may be a different object with the same name,
+                // and we want "last wins" semantics
+                _values[existing] = value;
+                return false;
+            }
+
+            if (_count == _values.Length)
+            {
+                Resize(_buckets.Length << 1);
+                bucket = (int)(mixed >> (32 - _indexBits));
+                int mask = _buckets.Length - 1;
+                while (_buckets[bucket] != 0)
                 {
-                    // NOTE: this must add EVEN IF it is already present,
-                    // as it may be a different object with the same name,
-                    // and we want "last wins" semantics
-                    _slots[i].value = value;
-                    return false;
+                    bucket = (bucket + 1) & mask;
                 }
             }
-            int index;
-            if (_freeList >= 0)
-            {
-                index = _freeList;
-                _freeList = _slots[index].next;
-            }
-            else
-            {
-                if (_lastIndex == _slots.Length)
-                {
-                    IncreaseCapacity();
-                    // this will change during resize
-                    bucket = hashCode % _buckets.Length;
-                }
-                index = _lastIndex;
-                _lastIndex++;
-            }
-            _slots[index].hashCode = hashCode;
-            _slots[index].value = value;
-            _slots[index].next = _buckets[bucket] - 1;
-            _buckets[bucket] = index + 1;
-            _count++;
+
+            int index = _count;
+            _values[index] = value;
+            _hashes[index] = mixed;
+            _buckets[bucket] = (int)((mixed << _indexBits) | (uint)(index + 1));
+            _count = index + 1;
             _version++;
             return true;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static uint Mix(int hash) => unchecked((uint)hash * GoldenRatio);
+
+        private int WholeKeyHash(string key)
+        {
+            // Workaround Comparers that throw ArgumentNullException for GetHashCode(null).
+            return key == null ? 0 : _comparer.GetHashCode(key);
+        }
+
+        /// <summary>
+        /// Lookup used by Add and Remove: compares whole keys with the main comparer.
+        /// Returns the entry index, or -1. <paramref name="bucket"/> is the bucket holding the entry,
+        /// or, if not found, the empty bucket where it would be inserted. <paramref name="mixed"/> is the key's mixed hash.
+        /// </summary>
+        private int FindEntryWholeKey(string key, out int bucket, out uint mixed)
+        {
+            mixed = Mix(WholeKeyHash(key));
+            if (_buckets == null)
+            {
+                bucket = -1;
+                return -1;
+            }
+
+            int[] buckets = _buckets;
+            T[] values = _values;
+            int indexBits = _indexBits;
+            uint indexMask = (1u << indexBits) - 1;
+            uint fingerprint = mixed << indexBits;
+            int mask = buckets.Length - 1;
+            int pos = (int)(mixed >> (32 - indexBits));
+
+            while (true)
+            {
+                uint word = (uint)buckets[pos];
+                if (word == 0)
+                {
+                    bucket = pos;
+                    return -1;
+                }
+
+                if ((word & ~indexMask) == fingerprint)
+                {
+                    int i = (int)(word & indexMask) - 1;
+                    if (_comparer.Equals(values[i].Key, key))
+                    {
+                        bucket = pos;
+                        return i;
+                    }
+                }
+
+                pos = (pos + 1) & mask;
+            }
+        }
+
+        /// <summary>
+        /// Lookup used by Get: uses the constrained comparer when there is one, so that
+        /// a substring of <paramref name="key"/> can be looked up without allocating it.
+        /// </summary>
+        private int FindEntry(string key, int index, int length, out int bucket)
+        {
+            if (_buckets == null)
+            {
+                bucket = -1;
+                return -1;
+            }
+
+            IConstrainedEqualityComparer<string> constrained = _constrainedComparer;
+            if (constrained == null)
+            {
+                return FindEntryWholeKey(key, out bucket, out _);
+            }
+
+            uint mixed = Mix(constrained.GetHashCode(key, index, length));
+            int[] buckets = _buckets;
+            T[] values = _values;
+            int indexBits = _indexBits;
+            uint indexMask = (1u << indexBits) - 1;
+            uint fingerprint = mixed << indexBits;
+            int mask = buckets.Length - 1;
+            int pos = (int)(mixed >> (32 - indexBits));
+
+            while (true)
+            {
+                uint word = (uint)buckets[pos];
+                if (word == 0)
+                {
+                    bucket = pos;
+                    return -1;
+                }
+
+                if ((word & ~indexMask) == fingerprint)
+                {
+                    int i = (int)(word & indexMask) - 1;
+                    if (constrained.Equals(values[i].Key, key, index, length))
+                    {
+                        bucket = pos;
+                        return i;
+                    }
+                }
+
+                pos = (pos + 1) & mask;
+            }
+        }
+
+        /// <summary>
+        /// Finds the bucket that points at entry <paramref name="entry"/>, by probing from its home position.
+        /// </summary>
+        private int FindBucketOfEntry(int entry)
+        {
+            uint mixed = _hashes[entry];
+            uint target = (uint)(entry + 1);
+            uint indexMask = IndexMask;
+            int mask = _buckets.Length - 1;
+            int pos = (int)(mixed >> (32 - _indexBits));
+            while (((uint)_buckets[pos] & indexMask) != target)
+            {
+                Debug.Assert(_buckets[pos] != 0, "entry is not in the bucket index");
+                pos = (pos + 1) & mask;
+            }
+
+            return pos;
+        }
+
+        /// <summary>
+        /// Empties a bucket using backward-shift deletion, so probe sequences never need tombstones.
+        /// </summary>
+        private void DeleteBucket(int hole)
+        {
+            int[] buckets = _buckets;
+            int mask = buckets.Length - 1;
+            int shift = 32 - _indexBits;
+            uint indexMask = IndexMask;
+            int pos = hole;
+
+            while (true)
+            {
+                pos = (pos + 1) & mask;
+                uint word = (uint)buckets[pos];
+                if (word == 0)
+                {
+                    break;
+                }
+
+                int home = (int)(_hashes[(int)(word & indexMask) - 1] >> shift);
+
+                // The entry at pos can move into the hole if its home is not cyclically in (hole, pos].
+                if (((pos - home) & mask) >= ((pos - hole) & mask))
+                {
+                    buckets[hole] = (int)word;
+                    hole = pos;
+                }
+            }
+
+            buckets[hole] = 0;
         }
 
         /// <summary>
@@ -874,10 +918,10 @@ namespace Microsoft.Build.Collections
                 return false;
             }
 
-            T ours;
-            foreach (T element in other)
+            for (int i = 0; i < other._count; i++)
             {
-                if (!TryGetValue(element.Key, out ours) || !Object.ReferenceEquals(element, ours))
+                T element = other._values[i];
+                if (!TryGetValue(element.Key, out T ours) || !Object.ReferenceEquals(element, ours))
                 {
                     return false;
                 }
@@ -886,11 +930,9 @@ namespace Microsoft.Build.Collections
             return true;
         }
 
-
         /// <summary>
         /// Copies this to an array. Used for DebugView
         /// </summary>
-        /// <returns></returns>
         internal T[] ToArray()
         {
             T[] newArray = new T[Count];
@@ -898,46 +940,7 @@ namespace Microsoft.Build.Collections
             return newArray;
         }
 
-        private int InternalGetHashCode(string item, int index, int length)
-        {
-            // No need to check for null 'item' as we own all comparers
-            if (_constrainedComparer != null)
-            {
-                return _constrainedComparer.GetHashCode(item, index, length) & Lower31BitMask;
-            }
-
-            return InternalGetHashCode(item);
-        }
-
-        /// <summary>
-        /// Workaround Comparers that throw ArgumentNullException for GetHashCode(null).
-        /// </summary>
-        /// <param name="item"></param>
-        /// <returns>hash code</returns>
-        private int InternalGetHashCode(string item)
-        {
-            if (item == null)
-            {
-                return 0;
-            }
-            return _comparer.GetHashCode(item) & Lower31BitMask;
-        }
-
         #endregion
-
-        // used for set checking operations (using enumerables) that rely on counting
-        internal struct ElementCount
-        {
-            internal int uniqueCount;
-            internal int unfoundCount;
-        }
-
-        internal struct Slot
-        {
-            internal int hashCode;      // Lower 31 bits of hash code, -1 if unused
-            internal T value;
-            internal int next;          // Index of next entry, -1 if last
-        }
 
 #if !SILVERLIGHT
         [Serializable()]
@@ -947,9 +950,9 @@ namespace Microsoft.Build.Collections
 #endif
         public struct Enumerator : IEnumerator<T>, System.Collections.IEnumerator
         {
-            private RetrievableEntryHashSet<T> _set;
+            private readonly RetrievableEntryHashSet<T> _set;
+            private readonly int _version;
             private int _index;
-            private int _version;
             private T _current;
 
             internal Enumerator(RetrievableEntryHashSet<T> set)
@@ -971,37 +974,29 @@ namespace Microsoft.Build.Collections
                     throw new InvalidOperationException();
                 }
 
-                while (_index < _set._lastIndex)
+                if (_index < _set._count)
                 {
-                    if (_set._slots[_index].hashCode >= 0)
-                    {
-                        _current = _set._slots[_index].value;
-                        _index++;
-                        return true;
-                    }
+                    _current = _set._values[_index];
                     _index++;
+                    return true;
                 }
-                _index = _set._lastIndex + 1;
+
+                _index = _set._count + 1;
                 _current = default(T);
                 return false;
             }
 
-            public T Current
-            {
-                get
-                {
-                    return _current;
-                }
-            }
+            public T Current => _current;
 
             Object System.Collections.IEnumerator.Current
             {
                 get
                 {
-                    if (_index == 0 || _index == _set._lastIndex + 1)
+                    if (_index == 0 || _index == _set._count + 1)
                     {
                         throw new InvalidOperationException();
                     }
+
                     return Current;
                 }
             }
