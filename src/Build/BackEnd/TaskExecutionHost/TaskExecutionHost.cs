@@ -440,12 +440,34 @@ namespace Microsoft.Build.BackEnd
         private TaskFactoryWrapper CreateIntrinsicTaskFactoryWrapper(
             [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.PublicProperties)] Type intrinsicTaskType)
         {
-            Assembly taskExecutionHostAssembly = typeof(TaskExecutionHost).Assembly;
+            LoadedType loadedType = intrinsicTaskType == typeof(MSBuild) ? IntrinsicTaskTypes.MSBuildTask : IntrinsicTaskTypes.CallTargetTask;
+            Assumed.True(loadedType.Type == intrinsicTaskType, "Unknown intrinsic task type.");
+
             return new TaskFactoryWrapper(
                 new IntrinsicTaskFactory(intrinsicTaskType),
-                new LoadedType(intrinsicTaskType, AssemblyLoadInfo.Create(taskExecutionHostAssembly.FullName, null), taskExecutionHostAssembly, typeof(ITaskItem)),
+                loadedType,
                 _taskName,
                 TaskHostParameters.Empty);
+        }
+
+        /// <summary>
+        /// The reflected description (attributes, parameter properties) of the two intrinsic engine tasks.
+        /// It is a fixed property of types compiled into this assembly, so it is computed once per process when
+        /// first needed, instead of re-running attribute and property reflection on every MSBuild/CallTarget call
+        /// (hundreds per build: <c>ResolveProjectReferences</c>, <c>DispatchToInnerBuilds</c>, ...).
+        /// </summary>
+        private static class IntrinsicTaskTypes
+        {
+            internal static readonly LoadedType MSBuildTask = Create(typeof(MSBuild));
+
+            internal static readonly LoadedType CallTargetTask = Create(typeof(CallTarget));
+
+            private static LoadedType Create(
+                [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.PublicProperties)] Type intrinsicTaskType)
+            {
+                Assembly taskExecutionHostAssembly = typeof(TaskExecutionHost).Assembly;
+                return new LoadedType(intrinsicTaskType, AssemblyLoadInfo.Create(taskExecutionHostAssembly.FullName, null), taskExecutionHostAssembly, typeof(ITaskItem));
+            }
         }
 
         /// <summary>

@@ -752,12 +752,50 @@ namespace Microsoft.Build.Framework
                 return value;
             }
 
-            // For Unix-like systems, we may want to convert backslashes to slashes
-            Span<char> newValue = ConvertToUnixSlashes(value.ToCharArray());
+            // Only backslashes are ever rewritten. Without one, the adjusted value would be identical to the input,
+            // so skip the copy and the directory-existence probe entirely. This is the overwhelmingly common case.
+            if (value.IndexOf('\\') < 0)
+            {
+                return value;
+            }
 
-            // Find the part of the name we want to check, that is remove quotes, if present
-            bool shouldAdjust = newValue.IndexOf('/') != -1 && LooksLikeUnixFilePath(RemoveQuotes(newValue), baseDirectory);
-            return shouldAdjust ? newValue.ToString() : value;
+            return TryAdjustBackslashes(value.AsSpan(), baseDirectory, out string? adjusted) ? adjusted : value;
+        }
+
+        /// <summary>
+        /// Converts backslashes to slashes (collapsing runs of separators) in a scratch buffer, and returns the
+        /// result as a new string only if it looks like an existing Unix path. Allocates nothing otherwise.
+        /// </summary>
+        private static bool TryAdjustBackslashes(ReadOnlySpan<char> value, string baseDirectory, [NotNullWhen(true)] out string? adjusted)
+        {
+            const int StackLimit = 256;
+            char[]? rented = null;
+            Span<char> buffer = value.Length <= StackLimit
+                ? stackalloc char[StackLimit]
+                : (rented = ArrayPool<char>.Shared.Rent(value.Length));
+
+            try
+            {
+                value.CopyTo(buffer);
+                Span<char> newValue = CollapseSlashes(buffer.Slice(0, value.Length));
+
+                // Find the part of the name we want to check, that is remove quotes, if present
+                if (newValue.IndexOf('/') != -1 && LooksLikeUnixFilePath(RemoveQuotes(newValue), baseDirectory))
+                {
+                    adjusted = newValue.ToString();
+                    return true;
+                }
+
+                adjusted = null;
+                return false;
+            }
+            finally
+            {
+                if (rented is not null)
+                {
+                    ArrayPool<char>.Shared.Return(rented);
+                }
+            }
         }
 
         /// <summary>
@@ -784,17 +822,13 @@ namespace Microsoft.Build.Framework
                 }
             }
 
-            // For Unix-like systems, we may want to convert backslashes to slashes
-            Span<char> newValue = ConvertToUnixSlashes(value.ToArray());
+            // See the string overload: without a backslash the result always equals the input.
+            if (value.Span.IndexOf('\\') < 0)
+            {
+                return value;
+            }
 
-            // Find the part of the name we want to check, that is remove quotes, if present
-            bool shouldAdjust = newValue.IndexOf('/') != -1 && LooksLikeUnixFilePath(RemoveQuotes(newValue), baseDirectory);
-            return shouldAdjust ? newValue.ToString().AsMemory() : value;
-        }
-
-        private static Span<char> ConvertToUnixSlashes(Span<char> path)
-        {
-            return path.IndexOf('\\') == -1 ? path : CollapseSlashes(path);
+            return TryAdjustBackslashes(value.Span, baseDirectory, out string? adjusted) ? adjusted.AsMemory() : value;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

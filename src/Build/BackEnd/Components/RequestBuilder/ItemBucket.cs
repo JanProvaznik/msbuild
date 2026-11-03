@@ -58,15 +58,6 @@ namespace Microsoft.Build.BackEnd
         #region Constructors
 
         /// <summary>
-        /// Private constructor for creating comparison bucket.
-        /// </summary>
-        private ItemBucket(Dictionary<string, string> metadata)
-        {
-            _metadata = metadata;
-            // do nothing
-        }
-
-        /// <summary>
         /// Creates an instance of this class using the given bucket data.
         /// </summary>
         /// <param name="itemNames">Item types being batched on: null indicates no batching is occurring</param>
@@ -122,23 +113,6 @@ namespace Microsoft.Build.BackEnd
         public int CompareTo(ItemBucket other)
         {
             return HashTableUtility.Compare(_metadata, other._metadata);
-        }
-
-        /// <summary>
-        /// Constructs a token bucket object that can be compared against other
-        /// buckets. This dummy bucket is a patently invalid bucket, and cannot
-        /// be used for any other operations besides comparison.
-        /// </summary>
-        /// <remarks>
-        /// PERF NOTE: A dummy bucket is intentionally very light-weight, and it
-        /// allocates a minimum of memory compared to a real bucket.
-        /// </remarks>
-        /// <returns>An item bucket that is invalid for everything except comparisons.</returns>
-        internal static ItemBucket GetDummyBucketForComparisons(Dictionary<string, string> metadata)
-        {
-            ItemBucket bucket = new ItemBucket(metadata);
-
-            return bucket;
         }
 
         #endregion

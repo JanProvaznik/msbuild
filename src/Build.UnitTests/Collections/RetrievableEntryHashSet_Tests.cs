@@ -62,7 +62,7 @@ public class RetrievableEntryHashSet_Tests
                         set.TrimExcess();
                         break;
                     default:
-                        oracle.TryGetValue(name, out Entry expected);
+                        oracle.TryGetValue(name, out Entry? expected);
                         set.Get(name).ShouldBeSameAs(expected);
                         if (comparer is IConstrainedEqualityComparer<string>)
                         {
