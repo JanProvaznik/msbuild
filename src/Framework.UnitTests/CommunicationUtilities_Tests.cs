@@ -15,20 +15,37 @@ public class CommunicationUtilitiesTests
     /// <summary>
     /// Verify our custom way of getting env vars gives the same results as the BCL.
     /// </summary>
-    [ActiveIssue("https://github.com/dotnet/msbuild/issues/14541")]
     [Fact]
     public void GetEnvVars()
     {
         IDictionary<string, string> envVars = CommunicationsUtilities.GetEnvironmentVariables();
         IDictionary referenceVars = Environment.GetEnvironmentVariables();
-        IDictionary<string, string> referenceVars2 = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+        // Our dictionary ignores case in names, so variables whose names differ only by case (possible on Unix)
+        // collapse into a single entry. Which name and which value of such a group is kept is unspecified.
+        Dictionary<string, List<string>> referenceValuesByName = new(CommunicationsUtilities.EnvironmentVariableComparer);
         foreach (DictionaryEntry item in referenceVars)
         {
-            referenceVars2.Add((string)item.Key!, (string)item.Value!);
+            string name = (string)item.Key;
+            if (!referenceValuesByName.TryGetValue(name, out List<string>? values))
+            {
+                values = [];
+                referenceValuesByName.Add(name, values);
+            }
+
+            values.Add((string?)item.Value ?? string.Empty);
         }
 
-        Helpers.AssertCollectionsValueEqual(envVars, referenceVars2);
+        // One entry for every name that is distinct ignoring case...
+        envVars.Count.ShouldBe(referenceValuesByName.Count);
+
+        // ...and every entry has a name the BCL reports and a value the BCL reports for that name ignoring case.
+        // For a name that is unique ignoring case, this is exactly the BCL's value.
+        foreach (KeyValuePair<string, string> envVar in envVars)
+        {
+            referenceVars.Contains(envVar.Key).ShouldBeTrue(envVar.Key);
+            referenceValuesByName[envVar.Key].ShouldContain(envVar.Value, envVar.Key);
+        }
     }
 
     /// <summary>
