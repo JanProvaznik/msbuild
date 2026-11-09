@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -180,7 +181,6 @@ namespace Microsoft.Build.UnitTests
             }
         }
 
-        [ActiveIssue("https://github.com/dotnet/msbuild/issues/14626", TestPlatforms.Linux)]
         [Theory]
         [MemberData(nameof(EnvironmentTypes))]
         public void TaskEnvironment_SetEnvironment_ShouldReplaceAllVariables(string environmentType)
@@ -191,7 +191,10 @@ namespace Microsoft.Build.UnitTests
             string var2Name = $"{prefix}_VAR2";
             string var3Name = $"{prefix}_VAR3";
 
-            var originalEnvironment = taskEnvironment.GetEnvironmentVariables().ToDictionary(k => k.Key, v => v.Value);
+            // The Stub variant replaces the environment of the test process itself, so snapshot it with the BCL.
+            // TaskEnvironment.GetEnvironmentVariables() is keyed case-insensitively and cannot represent variables
+            // whose names differ only by case, which are distinct variables on Unix.
+            IDictionary originalProcessEnvironment = Environment.GetEnvironmentVariables();
 
             try
             {
@@ -213,11 +216,34 @@ namespace Microsoft.Build.UnitTests
             }
             finally
             {
-                taskEnvironment.SetEnvironment(originalEnvironment);
                 DisposeTaskEnvironment(taskEnvironment);
-                Environment.SetEnvironmentVariable(var1Name, null);
-                Environment.SetEnvironmentVariable(var2Name, null);
-                Environment.SetEnvironmentVariable(var3Name, null);
+                RestoreProcessEnvironment(originalProcessEnvironment);
+            }
+        }
+
+        /// <summary>
+        /// Restores the environment of the test process to a snapshot taken with <see cref="Environment.GetEnvironmentVariables()"/>.
+        /// Deliberately does not use the API under test: <see cref="TaskEnvironment.SetEnvironment"/> compares names
+        /// case-insensitively, so it cannot restore one of two variables whose names differ only by case.
+        /// </summary>
+        private static void RestoreProcessEnvironment(IDictionary snapshot)
+        {
+            foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+            {
+                if (!snapshot.Contains(entry.Key))
+                {
+                    Environment.SetEnvironmentVariable((string)entry.Key, null);
+                }
+            }
+
+            foreach (DictionaryEntry entry in snapshot)
+            {
+                string name = (string)entry.Key;
+                string? value = (string?)entry.Value;
+                if (Environment.GetEnvironmentVariable(name) != value)
+                {
+                    Environment.SetEnvironmentVariable(name, value);
+                }
             }
         }
 
