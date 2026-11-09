@@ -304,6 +304,27 @@ namespace Microsoft.Build.BackEnd
             var buckets = new List<ItemBucket>();
             FrozenSet<string> itemNames = itemListsToBeBatched.Keys.ToFrozenSet(MSBuildNameIgnoreCaseComparer.Default);
 
+            // Structure of arrays over the consumed metadata: the same keys apply to every item, so they are laid out
+            // once, and each item's values go into one reused scratch array aligned with them. Buckets are found by
+            // comparing value arrays position by position. A per-item dictionary (and dummy bucket) is no longer built;
+            // a dictionary is only materialized when a new bucket is created, and there are far fewer buckets than items.
+            int metadataCount = consumedMetadataReferences.Count;
+            string[] qualifiedNames = new string[metadataCount];
+            string[] itemNamesForMetadata = new string[metadataCount];
+            string[] metadataNames = new string[metadataCount];
+            int k = 0;
+            foreach (KeyValuePair<string, MetadataReference> consumedMetadataReference in consumedMetadataReferences)
+            {
+                qualifiedNames[k] = consumedMetadataReference.Key;
+                itemNamesForMetadata[k] = consumedMetadataReference.Value.ItemName;
+                metadataNames[k] = consumedMetadataReference.Value.MetadataName;
+                k++;
+            }
+
+            // Parallel to buckets, kept in the same sorted order: each bucket's metadata values.
+            var bucketValues = new List<string[]>();
+            string[] values = new string[metadataCount];
+
             // Get and iterate through the list of item names that we're supposed to batch on.
             foreach (KeyValuePair<string, ICollection<ProjectItemInstance>> entry in itemListsToBeBatched)
             {
@@ -319,14 +340,11 @@ namespace Microsoft.Build.BackEnd
                     foreach (ProjectItemInstance item in items)
                     {
                         // Get this item's values for all the metadata consumed by the batchable object.
-                        Dictionary<string, string> itemMetadataValues = GetItemMetadataValues(item, consumedMetadataReferences, elementLocation);
-
-                        // put the metadata into a dummy bucket we can use for searching
-                        ItemBucket dummyBucket = ItemBucket.GetDummyBucketForComparisons(itemMetadataValues);
+                        GetItemMetadataValues(item, itemNamesForMetadata, metadataNames, values, elementLocation);
 
                         // look through all previously created buckets to find a bucket whose items have the same values as
                         // this item for all metadata consumed by the batchable object
-                        int matchingBucketIndex = buckets.BinarySearch(dummyBucket);
+                        int matchingBucketIndex = BinarySearch(bucketValues, values);
 
                         ItemBucket matchingBucket;
 
@@ -338,6 +356,12 @@ namespace Microsoft.Build.BackEnd
                         }
                         else
                         {
+                            var itemMetadataValues = new Dictionary<string, string>(metadataCount, MSBuildNameIgnoreCaseComparer.Default);
+                            for (int i = 0; i < metadataCount; i++)
+                            {
+                                itemMetadataValues[qualifiedNames[i]] = values[i];
+                            }
+
                             matchingBucket = new ItemBucket(itemNames, itemMetadataValues, lookup, buckets.Count);
                             if (loggingContext != null)
                             {
@@ -350,6 +374,8 @@ namespace Microsoft.Build.BackEnd
                             // the index -- see MSDN for more information on the return value
                             // from the List.BinarySearch() method
                             buckets.Insert(~matchingBucketIndex, matchingBucket);
+                            bucketValues.Insert(~matchingBucketIndex, values);
+                            values = new string[metadataCount];
                         }
 
                         // We already have a bucket for this type of item, so add this item to
@@ -380,32 +406,26 @@ namespace Microsoft.Build.BackEnd
         }
 
         /// <summary>
-        /// Gets the values of the specified metadata for the given item.
-        /// The keys in the dictionary returned may be qualified and/or unqualified, exactly
-        /// as they are found in the metadata reference.
-        /// For example if %(x) is found, the key is "x", if %(z.x) is found, the key is "z.x".
-        /// This dictionary in each bucket is used by Expander to expand exactly the same metadata references, so
-        /// %(x) is expanded using the key "x", and %(z.x) is expanded using the key "z.x".
+        /// Gets the values of the given metadata on the given item into <paramref name="values"/>, aligned with
+        /// <paramref name="metadataNames"/>. Metadata qualified with another item type has an empty value.
         /// </summary>
-        /// <returns>the metadata values</returns>
-        private static Dictionary<string, string> GetItemMetadataValues(
+        private static void GetItemMetadataValues(
             ProjectItemInstance item,
-            Dictionary<string, MetadataReference> consumedMetadataReferences,
+            string[] itemNamesForMetadata,
+            string[] metadataNames,
+            string[] values,
             ElementLocation elementLocation)
         {
-            var itemMetadataValues = new Dictionary<string, string>(consumedMetadataReferences.Count, MSBuildNameIgnoreCaseComparer.Default);
-
-            foreach (KeyValuePair<string, MetadataReference> consumedMetadataReference in consumedMetadataReferences)
+            for (int i = 0; i < metadataNames.Length; i++)
             {
-                string metadataQualifiedName = consumedMetadataReference.Key;
-                string metadataItemName = consumedMetadataReference.Value.ItemName;
-                string metadataName = consumedMetadataReference.Value.MetadataName;
+                string metadataItemName = itemNamesForMetadata[i];
+                string metadataName = metadataNames[i];
 
                 if (
                         (metadataItemName != null) &&
                         (!String.Equals(item.ItemType, metadataItemName, StringComparison.OrdinalIgnoreCase)))
                 {
-                    itemMetadataValues[metadataQualifiedName] = String.Empty;
+                    values[i] = String.Empty;
                 }
                 else
                 {
@@ -413,7 +433,7 @@ namespace Microsoft.Build.BackEnd
                     {
                         // This returns String.Empty for both metadata that is undefined and metadata that has
                         // an empty value; they are treated the same.
-                        itemMetadataValues[metadataQualifiedName] = ((IItem)item).GetMetadataValueEscaped(metadataName);
+                        values[i] = ((IItem)item).GetMetadataValueEscaped(metadataName);
                     }
                     catch (InvalidOperationException e)
                     {
@@ -422,8 +442,51 @@ namespace Microsoft.Build.BackEnd
                     }
                 }
             }
+        }
 
-            return itemMetadataValues;
+        /// <summary>
+        /// Binary search over buckets' metadata value arrays, ordered position by position with a
+        /// case-insensitive ordinal comparison (the same order <see cref="ItemBucket.CompareTo"/> imposes).
+        /// Returns the index of the match, or the bitwise complement of the insertion point.
+        /// </summary>
+        private static int BinarySearch(List<string[]> sortedValues, string[] values)
+        {
+            int low = 0;
+            int high = sortedValues.Count - 1;
+            while (low <= high)
+            {
+                int mid = low + ((high - low) >> 1);
+                int comparison = CompareValues(sortedValues[mid], values);
+                if (comparison == 0)
+                {
+                    return mid;
+                }
+
+                if (comparison < 0)
+                {
+                    low = mid + 1;
+                }
+                else
+                {
+                    high = mid - 1;
+                }
+            }
+
+            return ~low;
+        }
+
+        private static int CompareValues(string[] left, string[] right)
+        {
+            for (int i = 0; i < left.Length; i++)
+            {
+                int comparison = String.Compare(left[i], right[i], StringComparison.OrdinalIgnoreCase);
+                if (comparison != 0)
+                {
+                    return comparison;
+                }
+            }
+
+            return 0;
         }
 
         #endregion

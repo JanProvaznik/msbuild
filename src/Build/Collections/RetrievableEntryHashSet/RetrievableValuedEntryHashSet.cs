@@ -36,6 +36,15 @@ namespace Microsoft.Build.Collections
         {
         }
 
+        /// <summary>
+        /// Initializes a new instance of the RetrievableValuedEntryHashSet class holding the same entries and comparer as <paramref name="other"/>.
+        /// </summary>
+        /// <param name="other">The set to copy. Entries are shared, not cloned.</param>
+        public RetrievableValuedEntryHashSet(RetrievableValuedEntryHashSet<T> other)
+            : base(other)
+        {
+        }
+
         /// <inheritdoc />
         public bool TryGetEscapedValue(string key, out string escapedValue)
         {

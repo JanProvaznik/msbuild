@@ -79,6 +79,32 @@ namespace Microsoft.Build.Collections
         }
 
         /// <summary>
+        /// Create a new dictionary holding the same entries as another one.
+        /// </summary>
+        /// <remarks>
+        /// Copying a dictionary is common (configuration metadata, global properties of MSBuild task calls,
+        /// project instance copies). When the source is backed by the flat hash set, this copies its arrays
+        /// rather than rehashing and reinserting every property.
+        /// </remarks>
+        internal PropertyDictionary(PropertyDictionary<T> other)
+        {
+            using (other._lock.EnterDisposableReadLock())
+            {
+                if (other._properties is RetrievableValuedEntryHashSet<T> hashSet && ReferenceEquals(hashSet.Comparer, MSBuildNameIgnoreCaseComparer.Default))
+                {
+                    _properties = new RetrievableValuedEntryHashSet<T>(hashSet);
+                    return;
+                }
+            }
+
+            _properties = new RetrievableValuedEntryHashSet<T>(MSBuildNameIgnoreCaseComparer.Default);
+            foreach (T element in other)
+            {
+                Set(element);
+            }
+        }
+
+        /// <summary>
         /// Creates empty dictionary, specifying a comparer
         /// </summary>
         internal PropertyDictionary(MSBuildNameIgnoreCaseComparer comparer)
