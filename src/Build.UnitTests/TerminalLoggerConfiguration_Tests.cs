@@ -4,6 +4,7 @@
 #nullable disable
 using System;
 using System.Collections.Generic;
+using Microsoft.Build.Framework.Logging;
 using Microsoft.Build.Framework.Telemetry;
 using Microsoft.Build.UnitTests.Shared;
 using Shouldly;
@@ -72,7 +73,7 @@ public class TerminalLoggerConfiguration_Tests : IDisposable
             output.ShouldContain($"{expectedTelemetry.EventName}:{pair.Key}={pair.Value}");
         }
 
-        // Test if there is ANSI clear screen sequence, which shall only occur when the terminal logger was enabled.
+        // Test if there is the colorized build result, which shall only occur when the terminal logger was enabled.
         ShouldBeTerminalLog(output);
     }
 
@@ -101,7 +102,7 @@ public class TerminalLoggerConfiguration_Tests : IDisposable
             output.ShouldContain($"{expectedTelemetry.EventName}:{pair.Key}={pair.Value}");
         }
 
-        // Test if there is ANSI clear screen sequence, which shall only occur when the terminal logger was enabled.
+        // Test that there is neither the colorized build result nor a live frame, which shall only occur when the terminal logger was enabled.
         ShouldNotBeTerminalLog(output);
     }
 
@@ -128,7 +129,7 @@ public class TerminalLoggerConfiguration_Tests : IDisposable
             output.ShouldContain($"{expectedTelemetry.EventName}:{pair.Key}={pair.Value}");
         }
 
-        // Test if there is ANSI clear screen sequence, which shall only occur when the terminal logger was enabled.
+        // Test if there is the colorized build result, which shall only occur when the terminal logger was enabled.
         ShouldBeTerminalLog(output);
     }
 
@@ -157,7 +158,7 @@ public class TerminalLoggerConfiguration_Tests : IDisposable
             output.ShouldContain($"{expectedTelemetry.EventName}:{pair.Key}={pair.Value}");
         }
 
-        // Test if there is ANSI clear screen sequence, which shall only occur when the terminal logger was enabled.
+        // Test if there is the colorized build result, which shall only occur when the terminal logger was enabled.
         ShouldBeTerminalLog(output);
     }
 
@@ -185,7 +186,7 @@ public class TerminalLoggerConfiguration_Tests : IDisposable
             output.ShouldContain($"{expectedTelemetry.EventName}:{pair.Key}={pair.Value}");
         }
 
-        // Test if there is ANSI clear screen sequence, which shall only occur when the terminal logger was enabled.
+        // Test if there is the colorized build result, which shall only occur when the terminal logger was enabled.
         ShouldBeTerminalLog(output);
     }
 
@@ -214,7 +215,7 @@ public class TerminalLoggerConfiguration_Tests : IDisposable
             output.ShouldContain($"{expectedTelemetry.EventName}:{pair.Key}={pair.Value}");
         }
 
-        // Test if there is ANSI clear screen sequence, which shall only occur when the terminal logger was enabled.
+        // Test that there is neither the colorized build result nor a live frame, which shall only occur when the terminal logger was enabled.
         ShouldNotBeTerminalLog(output);
     }
 
@@ -232,10 +233,24 @@ public class TerminalLoggerConfiguration_Tests : IDisposable
         success.ShouldBeTrue();
         output.ShouldContain("loggingConfiguration:TerminalLogger=True");
         ShouldBeTerminalLog(output);
+
+        // The target runs for a second (WaitForTerminalLoggerRefresh), so the refresher thread must have rendered a live frame.
+        output.ShouldContain(AnsiCodes.HideCursor);
         output.ShouldContain("Build succeeded.");
     }
 
-    private static void ShouldBeTerminalLog(string output) => output.ShouldContain("\x1b[?25l");
+    /// <summary>
+    /// The start of the green build result which the terminal logger writes in its build summary when the build succeeds.
+    /// Unlike the live node frames, which are rendered only when a 30Hz timer tick lands while a target is running,
+    /// the summary is written on every build. Neither the console logger with redirected output nor the MockLogger emit it.
+    /// </summary>
+    private static readonly string s_terminalLoggerSucceededMarker = $"{AnsiCodes.CSI}{(int)TerminalColor.Green}{AnsiCodes.SetColor}";
 
-    private static void ShouldNotBeTerminalLog(string output) => output.ShouldNotContain("\x1b[?25l");
+    private static void ShouldBeTerminalLog(string output) => output.ShouldContain(s_terminalLoggerSucceededMarker);
+
+    private static void ShouldNotBeTerminalLog(string output)
+    {
+        output.ShouldNotContain(s_terminalLoggerSucceededMarker);
+        output.ShouldNotContain(AnsiCodes.HideCursor);
+    }
 }
