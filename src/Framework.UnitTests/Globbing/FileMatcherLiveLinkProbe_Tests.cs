@@ -352,7 +352,26 @@ public sealed class FileMatcherLiveLinkProbe_Tests
 
         foreach (string path in paths)
         {
-            FileMatcher.ShouldSkipRecursiveDirectory(path).ShouldBe(OriginalShouldSkip(path), path);
+            // Compare against the original disposition of the same link observation. macOS does not answer
+            // readlink consistently for a link to a link spelled with a trailing separator, so two live
+            // resolutions of such a path can legitimately disagree.
+            bool resolved = false;
+            FileSystemInfo? observedTarget = null;
+            bool actual = FileMatcher.ShouldSkipRecursiveDirectory(
+                path,
+                resolveLinkTarget: (directory, returnFinalTarget) =>
+                {
+                    directory.ShouldBe(path);
+                    returnFinalTarget.ShouldBeTrue();
+                    resolved.ShouldBeFalse();
+                    resolved = true;
+                    return observedTarget = Directory.ResolveLinkTarget(directory, returnFinalTarget);
+                });
+
+            bool expected = resolved
+                ? observedTarget is not null && IsSubdirectoryOf(path, observedTarget.FullName, FileUtilities.PathComparison)
+                : OriginalShouldSkip(path);
+            actual.ShouldBe(expected, path);
         }
         FileMatcher.ShouldSkipRecursiveDirectory(ancestor).ShouldBeTrue();
         FileMatcher.ShouldSkipRecursiveDirectory(second).ShouldBeTrue();
