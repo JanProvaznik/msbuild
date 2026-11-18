@@ -23,7 +23,16 @@ Build MSBuild to create the bootstrap directory:
 ./build.sh
 ```
 
-This creates the bootstrap at `artifacts\bin\bootstrap\` with your changes.
+This creates the bootstrap at `artifacts\bin\bootstrap\` with your changes, plus an environment script that puts the bootstrap SDK on `PATH` and sets `DOTNET_*` variables:
+
+```bash
+source artifacts/sdk-build-env.sh      # Linux/macOS, current shell only
+```
+```powershell
+.\artifacts\msbuild-build-env.ps1       # Windows
+```
+
+After sourcing, `dotnet --version` prints the preview SDK from `global.json`. If it prints an installed stable SDK, the script did not take effect; source it again in the same shell you will build from.
 
 Rerun this after making any code change. If run in the default mode, there may be some errors on subsequent builds about locked files (due to MSBuild worker node processes lingering). If so, run `./artifacts/bin/bootstrap/core/dotnet build-server shutdown`.
 
@@ -68,6 +77,14 @@ artifacts\bin\bootstrap\net472\MSBuild\Current\Bin\MSBuild.exe <path-to-repro.cs
 ### Repro works with bootstrap but not with installed MSBuild
 
 Your fix is working! The repro uses your local changes while the installed MSBuild has the bug.
+
+## What to report
+
+Paste these three things, not a description of them:
+
+1. The `MSBuild.dll` timestamp or `git rev-parse --short HEAD` plus `git status --short`, proving which code the bootstrap contains.
+2. The exact command line you ran against the repro, including `-bl` if you captured a binlog.
+3. The relevant output lines: the error before the fix, the clean result after. If you only ran the "after" case, say so; it is not a verified fix until both are shown.
 
 ## Quick Reference
 

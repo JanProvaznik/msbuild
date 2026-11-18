@@ -1,6 +1,6 @@
 ---
 name: running-unit-tests
-description: Guide for running MSBuild unit tests efficiently. Use when running, scoping, filtering, or speeding up unit tests in this repository, or when finalizing a change with a heavier validation pass. Covers xUnit v3 + Microsoft.Testing.Platform (MTP) specifics and which `dotnet test` flags do and don't apply.
+description: Reference for the MSBuild test runner. Use when running, scoping, filtering, or speeding up unit tests in this repository, or when a `dotnet test` flag seems to do nothing. Covers xUnit v3 + Microsoft.Testing.Platform (MTP) specifics, which `dotnet test` flags do and don't apply, TFMs, and running a test exe directly. Whether a change is done is decided by verifying-changes, not here.
 argument-hint: Run, filter, scope, or speed up MSBuild unit tests.
 ---
 
@@ -8,14 +8,15 @@ argument-hint: Run, filter, scope, or speed up MSBuild unit tests.
 
 This repo uses **xUnit v3** with the **Microsoft.Testing.Platform (MTP)** runner. Test projects are built as `OutputType=Exe`, so each test assembly is a self-contained host process — *not* a classic VSTest assembly.
 
-There are **two ways to run tests**:
+There are three ways to run tests:
 
 | Method | When to use |
 |--------|-------------|
-| `dotnet test <project>` | Dev loop — run a single test project, optionally filtered |
-| `build.cmd -test` / `build.sh --test` | Final validation — builds everything and runs all test projects via the repo's Arcade harness |
+| `dotnet test <project>` or the test exe | Dev loop — one test project, optionally filtered. This skill. |
+| `verify-change.ps1` (`.github/skills/verifying-changes/`) | Build with warnings as errors plus the test projects mapped from your diff, ending in a `RESULT:` line. This is the done gate; see `verifying-changes`. |
+| `build.cmd -test` / `build.sh --test` | Whole repo through the Arcade harness. This is what CI runs; it is not required locally. |
 
-Use a **fast, scoped** `dotnet test` loop while iterating, and the **full `build.cmd -test`** pass before declaring the change done.
+This skill is about the first row: the runner's mechanics. It does not decide when you are done.
 
 ## Repo-specific knobs to know about
 
@@ -36,7 +37,7 @@ This repo uses MTP with the xUnit v3 MTP runner, **not** VSTest. Many familiar `
 - **Don't use** `--filter`, `--nologo`, `--blame`, `--settings *.runsettings`, `--diag`, `--collect`, or `-- RunConfiguration.MaxCpuCount=...` — these are VSTest-only and ignored.
 - **Still works**: `-c`, `-f`, `--no-restore`, `--no-build`, `-v`, `-bl:`, `-p:Property=Value` — these are interpreted by `dotnet test` itself before MTP sees them.
 
-For comprehensive MTP vs VSTest flag reference, see the `run-tests` skill from the `dotnet-test` plugin.
+`verify-change.ps1` uses exactly this shape and nothing else: `dotnet test <proj> [-f net11.0] --no-build -- --filter-method "*X*" --no-progress`. Everything after `--` goes to the MTP runner; everything before it must be a flag `dotnet test` itself understands.
 
 ## Dev loop: fast and scoped
 
@@ -59,9 +60,9 @@ Aim for sub-30s iterations.
 
 ### Speeding up the dev loop further
 
-These trade safety for speed — use during iteration, **revert before final validation**:
+These trade safety for speed — use during iteration, **revert before running `verify-change.ps1`**:
 
--- **Single TFM**: pass `-f net11.0`. Halves runtime on Windows by skipping `net472`.
+- **Single TFM**: pass `-f net11.0`. Halves runtime on Windows by skipping `net472`.
 - **Temporarily relax single-threaded execution**: drop a `xunit.runner.json` next to the test project (or override the existing one) with:
   ```json
   {
@@ -77,28 +78,9 @@ These trade safety for speed — use during iteration, **revert before final val
 - **Narrow with traits**: `--filter-trait Category=mytraitduringdev` if you've tagged a focused subset.
 - **Skip code coverage on Linux/macOS**: run the test exe directly without `--coverage`. This repo does not expose a supported `dotnet test` property switch to disable the auto-added coverage arguments.
 
-## Final validation pass
+## When you think you are done
 
-Before saying "done," run the heavy configuration. Don't skip TFMs and don't keep parallel-overrides.
-
-1. **Restore parallelism settings** (revert any local `xunit.runner.json` change).
-2. **Run all TFMs for affected projects**:
-   ```powershell
-   dotnet test src\Build.UnitTests\Microsoft.Build.Engine.UnitTests.csproj -c Release
-   dotnet test src\Tasks.UnitTests\Microsoft.Build.Tasks.UnitTests.csproj -c Release
-   # Add other UnitTests projects whose code paths you touched
-   ```
-3. **For broad changes (engine, framework, shared)**, run the full repo test suite (~9 minutes — do not cancel):
-   ```powershell
-   .\build.cmd -test -c Release       # Windows
-   ./build.sh --test -c Release       # Linux/macOS
-   ```
-4. **Capture a TRX** if reporting results to the user or CI:
-   ```powershell
-   dotnet test <project> -c Release `
-     --report-trx --report-trx-filename validation.trx `
-     --results-directory artifacts\TestResults
-   ```
+Restore any parallelism override, then run `.\.github\skills\verifying-changes\verify-change.ps1` with no filter and quote its `RESULT:` line. That is Gate 4 of `msbuild-change-workflow`; the `verifying-changes` skill explains the output. To hand results to someone else as a file, add `--report-trx --report-trx-filename validation.trx --results-directory artifacts/TestResults` to a `dotnet test` run.
 
 ## Reading the summary line
 
@@ -106,7 +88,7 @@ MTP's final summary reports `passed`, `failed`, and `skipped` separately. **Alwa
 
 ## Picking the right project to run
 
-Match the source area you changed to its `*.UnitTests` project:
+Match the source area you changed to its `*.UnitTests` project. `verify-change.ps1` applies this same mapping automatically.
 
 | Source area | Test project |
 |-------------|--------------|
@@ -125,12 +107,13 @@ Match the source area you changed to its `*.UnitTests` project:
 | Fast scoped dev loop | `dotnet test <proj> -f net11.0 -- --filter-method "*X*"` |
 | Direct test exe | `artifacts\bin\<Proj>\Debug\net11.0\<Proj>.exe --filter-method "*X*" --no-progress` |
 | Single test by name | `dotnet test <proj> -- --filter-method "*MyTestMethod*"` |
-| Final per-project validation | `dotnet test <proj> -c Release` (all TFMs) |
-| Final full validation | `.\build.cmd -test -c Release` / `./build.sh --test -c Release` |
+| Done gate | `.\.github\skills\verifying-changes\verify-change.ps1` (see `verifying-changes`) |
+| Whole repo, as CI runs it | `.\build.cmd -test` / `./build.sh --test` |
 | TRX report | `--report-trx --report-trx-filename out.trx --results-directory artifacts\TestResults` |
 
 ## See also
 
+- `.github/skills/verifying-changes/SKILL.md` — the scoped verification script and how to read its verdict.
 - `.github/instructions/tests.instructions.md` — test authoring conventions (xUnit v3, Shouldly, `TestEnvironment`, `MockLogger`).
 - `src/Shared/UnitTests/xunit.runner.json` — repo-wide xUnit settings.
 - `src/Directory.Build.targets` — `XunitOptions`, auto trait filters, coverage wiring.

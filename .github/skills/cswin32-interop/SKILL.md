@@ -151,7 +151,7 @@ if (length > 0) path = buffer.Slice(0, length).ToString();
 No blanket `NoWarn` — handle semantically:
 - `if (IsWindows)` satisfies `[SupportedOSPlatform]` — no pragma needed
 - `if (IsUnixLike)` satisfies `[UnsupportedOSPlatform("windows")]`
-- **Never use `!IsWindows`** — use `else if (IsUnixLike)`. See `documentation/specs/CA1416-analyzer-analysis.md`
+- **Never use `!IsWindows`** — use `else if (IsUnixLike)`; the analyzer cannot prove the negation satisfies `[UnsupportedOSPlatform]`
 - Use versioned `[SupportedOSPlatform("windows6.1")]` on methods calling CsWin32 APIs
 - `#pragma warning disable CA1416` only for **static local functions** (analyzer limitation)
 - CS0592 prevents `[SupportedOSPlatform]` on `partial struct` — put on individual members instead
